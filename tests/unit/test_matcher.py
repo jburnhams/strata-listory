@@ -124,7 +124,7 @@ def test_errors_are_reported_clearly(fake_urlopen, monkeypatch, tmp_path):
     fake_urlopen.reply(http_error(503), http_error(503), [raw('Dune')], http_error(503), http_error(503), http_error(503))      # an outage is retried twice, then reported
     assert src.search('fff')[0]['title'] == 'Dune'
     with pytest.raises(matcher.MatchError, match='answered 503'): src.search('ggg')
-    monkeypatch.delenv('APP_ADB_KEY'); monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.delenv('APP_ADB_KEY'); monkeypatch.setenv('HOME', str(tmp_path)); monkeypatch.setenv('USERPROFILE', str(tmp_path))
     with pytest.raises(matcher.MatchError, match='no AudiobookDB API key'): matcher.key()
     (tmp_path / '.config' / 'strata-listory').mkdir(parents=True); (tmp_path / '.config' / 'strata-listory' / 'audiobookdb.key').write_text(' adb_file \n')
     assert matcher.key() == 'adb_file'

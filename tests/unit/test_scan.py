@@ -9,7 +9,7 @@ def tree(root, *paths):
 
 
 def found(root):
-    return {os.path.relpath(c['path'], root): c for c in scan.scan(str(root))}
+    return {os.path.relpath(c['path'], root).replace(os.sep, '/'): c for c in scan.scan(str(root))}      # forward slashes on every OS
 
 
 @pytest.mark.parametrize('name, parent, expect', [
