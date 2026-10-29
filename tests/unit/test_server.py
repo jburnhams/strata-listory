@@ -54,3 +54,12 @@ def test_settings_roundtrip_and_server_main(client, tmp_path, monkeypatch):
     monkeypatch.setattr(uvicorn, 'run', lambda app, host, port, log_level: runs.append((host, port, log_level)))
     server_app.main(['--host', '127.0.0.1', '--port', '8360'])
     assert runs == [('127.0.0.1', 8360, 'warning')]
+
+
+def test_corrupt_database_gives_503(client, monkeypatch):
+    from app import db
+    client.post('/api/books', json=dict(title='a'))
+    monkeypatch.setattr(db, '_checked', set())
+    with open(db.path(), 'wb') as f: f.write(b'junk' * 200)
+    r = client.get('/api/books')
+    assert r.status_code == 503 and 'restore' in r.json()['detail']

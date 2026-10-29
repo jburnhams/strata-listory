@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import __version__, catalogue, settings
+from app import __version__, catalogue, db, settings
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 LANDING = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'landing.html')
@@ -52,6 +52,7 @@ def create_app():
     def guard(fn, *a, **kw):
         try: return fn(*a, **kw)
         except catalogue.CatalogueError as e: raise HTTPException(400, str(e))
+        except db.CorruptDatabase as e: raise HTTPException(503, str(e))
         except catalogue.NotFound: raise HTTPException(404, 'no such book')
 
     @app.get('/', response_class=HTMLResponse)
@@ -74,7 +75,7 @@ def create_app():
         return settings.all_settings()
 
     @app.get('/api/books')
-    def get_books(q: str = '', status: str | None = None): return catalogue.list_books(q, status)
+    def get_books(q: str = '', status: str | None = None): return guard(catalogue.list_books, q, status)
 
     @app.post('/api/books')
     def post_book(b: BookIn): return guard(catalogue.add_book, **b.model_dump())

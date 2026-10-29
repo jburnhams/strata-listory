@@ -1,10 +1,9 @@
-"""The audiobook catalogue: one record per book, kept in `<data_dir>/catalogue.json` (file-locked, written atomically).
+"""The audiobook catalogue: one record per book, in the SQLite database `<data_dir>/catalogue.db` (see db.py; backed up automatically, see backup.py).
 
 A book is a dict: id, title, author, narrator, series, series_position, duration_seconds, path (where the audio lives, optional), status (one of STATUSES), added (UTC ISO time)."""
-import json, os
 from datetime import datetime, timezone
 
-from app import oslib, settings
+from app import db
 
 STATUSES = ('unlistened', 'listening', 'finished')
 TEXT_FIELDS = ('title', 'author', 'narrator', 'series', 'path')
@@ -42,65 +41,58 @@ def clean(fields: dict, partial: bool = False) -> dict:
     return out
 
 
-def _store_path() -> str:
-    return os.path.join(settings.data_dir(), 'catalogue.json')
+COLUMNS = 'id, title, author, narrator, series, series_position, duration_seconds, path, status, added'
 
 
-def _read() -> list[dict]:
-    try:
-        with open(_store_path(), encoding='utf8') as f: data = json.load(f)
-    except (OSError, ValueError): return []
-    return data if isinstance(data, list) else []
-
-
-def _write(items: list[dict]):
-    tmp = _store_path() + '.tmp'
-    with open(tmp, 'w', encoding='utf8') as f: json.dump(items, f, indent=1)
-    os.replace(tmp, _store_path())
-
-
-def _locked():
-    os.makedirs(settings.data_dir(), exist_ok=True)
-    return open(_store_path() + '.lock', 'a+', encoding='utf8')
+def _one(c, book_id):
+    r = c.execute(f'SELECT {COLUMNS} FROM books WHERE id=?', (book_id,)).fetchone()
+    if r is None: raise NotFound(book_id)
+    return dict(r)
 
 
 def list_books(query: str = '', status: str | None = None) -> list[dict]:
     """Books sorted by author, series (in order) and title; `query` matches title, author, narrator or series (case-insensitive substring), `status` filters on one status."""
-    q = (query or '').strip().lower()
-    books = [b for b in _read() if (not status or b.get('status') == status) and (not q or any(q in (b.get(k) or '').lower() for k in ('title', 'author', 'narrator', 'series')))]
-    return sorted(books, key=lambda b: ((b.get('author') or '').lower(), (b.get('series') or '').lower(), b.get('series_position') or 0, (b.get('title') or '').lower()))
+    q = (query or '').strip().lower(); where, args = [], []
+    if status: where.append('status=?'); args.append(status)
+    if q: where.append("(instr(lower(title), ?) OR instr(lower(author), ?) OR instr(lower(narrator), ?) OR instr(lower(series), ?))"); args += [q] * 4
+    c = db.connect()
+    try: return [dict(r) for r in c.execute(f"SELECT {COLUMNS} FROM books {'WHERE ' + ' AND '.join(where) if where else ''} ORDER BY lower(author), lower(series), COALESCE(series_position, 0), lower(title), id", args)]
+    finally: c.close()
 
 
 def get_book(book_id: int) -> dict:
-    for b in _read():
-        if b['id'] == book_id: return b
-    raise NotFound(book_id)
+    c = db.connect()
+    try: return _one(c, book_id)
+    finally: c.close()
 
 
 def add_book(**fields) -> dict:
     """Validate and store a new book; returns the created record."""
-    rec = clean(fields)
-    with _locked() as lf, oslib.file_lock(lf):
-        items = _read()
-        rec = dict(id=max((b['id'] for b in items), default=0) + 1, **rec, added=datetime.now(timezone.utc).isoformat())
-        _write(items + [rec])
-    return rec
+    rec = clean(fields); c = db.connect()
+    try:
+        with c:
+            cur = c.execute('INSERT INTO books (title, author, narrator, series, series_position, duration_seconds, path, status, added) VALUES (:title, :author, :narrator, :series, :series_position, :duration_seconds, :path, :status, :added)',
+                            dict(rec, added=datetime.now(timezone.utc).isoformat()))
+        return _one(c, cur.lastrowid)
+    finally: c.close()
 
 
 def update_book(book_id: int, **fields) -> dict:
     """Change the given fields of a book; returns the updated record."""
-    changes = clean(fields, partial=True)
-    with _locked() as lf, oslib.file_lock(lf):
-        items = _read()
-        for b in items:
-            if b['id'] == book_id: b.update(changes); _write(items); return b
-    raise NotFound(book_id)
+    changes = clean(fields, partial=True); c = db.connect()
+    try:
+        with c:
+            _one(c, book_id)
+            if changes: c.execute(f"UPDATE books SET {', '.join(f'{k}=:{k}' for k in changes)} WHERE id=:id", dict(changes, id=book_id))
+        return _one(c, book_id)
+    finally: c.close()
 
 
 def remove_book(book_id: int) -> dict:
     """Delete a book from the catalogue (never touches audio files); returns the removed record."""
-    with _locked() as lf, oslib.file_lock(lf):
-        items = _read()
-        for b in items:
-            if b['id'] == book_id: _write([x for x in items if x is not b]); return b
-    raise NotFound(book_id)
+    c = db.connect()
+    try:
+        with c:
+            b = _one(c, book_id); c.execute('DELETE FROM books WHERE id=?', (book_id,))
+        return b
+    finally: c.close()

@@ -11,6 +11,7 @@ scripts/setup_env.sh                          # macOS / Linux (or scripts\setup_
 ./app doctor                                  # check the environment
 ./app add "Dune" --author "Frank Herbert" --series Dune --series-position 1
 ./app list                                    # the catalogue (search with ./app list herbert --status unlistened)
+./app backup                                  # back up the database now (also automatic daily)
 ./app serve                                   # web UI + API on http://127.0.0.1:8360/
 ```
 
@@ -20,11 +21,11 @@ For hot-reload frontend development, run `./app serve` in one terminal and `cd w
 
 There was no feature list, so these are guesses to be corrected:
 
-- Single user, local-first, no accounts; data lives in `data/catalogue.json` (or the folder set with `./app set data_dir`), a plain JSON file written atomically and file-locked.
+- Single user, local-first, no accounts; data lives in `data/catalogue.json` (or the folder set with `./app set data_dir`), a SQLite database (WAL mode). Keep the data folder on a local disk, not an SMB share, because SQLite locking is unreliable over SMB.
 - A book has: title (required), author, narrator, series and position, duration, path to the audio, and a listening status (`unlistened`, `listening`, `finished`). Titles are not unique, so an audiobook can be catalogued twice.
 - Books are entered by hand for now. The catalogue never reads, moves or deletes audio files.
 - `library_dir` ("audiobook folder") is a setting only; nothing uses it yet. It is reserved for the folder scan.
-- JSON storage is fine for a few thousand books. SQLite is the likely next step once scanning and processing add more data per book.
+- **Backups:** the database is checked for corruption when a process first opens it (a corrupt one is refused with advice to restore), and a verified copy is taken automatically at most once a day, before a schema migration and before a restore, into `<data_dir>/backups/`. Kept: the newest of each of the last 7 days and 4 weeks, plus safety copies for 30 days. `./app backup` backs up now, `./app backups` lists them, `./app restore [file]` restores (default newest; the current database is kept as a `pre-restore` copy). These are on the same disk as the database, so they protect against corruption and mistakes, not disk loss; the nightly restic backup of `$HOME` covers that when the data folder is under it.
 
 ## Documentation
 

@@ -1,7 +1,7 @@
 """Command line: `doctor` checks the environment, `add`/`list`/`show`/`edit`/`remove` manage the audiobook catalogue, `set` changes settings, `serve` starts the web server."""
 import argparse, importlib, json, sys
 
-from app import __version__, catalogue, settings
+from app import __version__, backup, catalogue, db, settings
 
 CHECKS = (('fastapi', 'fastapi'), ('uvicorn', 'uvicorn'), ('pydantic', 'pydantic'))
 
@@ -60,6 +60,24 @@ def cmd_remove(args):
     print(f"removed #{b['id']} {b['title']}"); return 0
 
 
+def cmd_backup(args):
+    p = backup.backup('manual'); print(p or 'no database yet, nothing to back up'); return 0
+
+
+def cmd_backups(args):
+    bs = backup.list_backups()
+    if not bs: print('  (no backups yet: ./app backup)'); return 0
+    for b in bs: print(f"  {b['taken']:%Y-%m-%d %H:%M:%S}  {b['reason'] or 'daily':12} {b['path']}")
+    return 0
+
+
+def cmd_restore(args):
+    path = args.backup or (next(iter(backup.list_backups()), None) or sys.exit('no backups to restore'))['path']
+    try: safety = backup.restore(path)
+    except ValueError as e: sys.exit(str(e))
+    print(f'restored {path}' + (f'; the previous database is kept as {safety}' if safety else '')); return 0
+
+
 def cmd_set(args):
     if args.value is None: print(f'{args.key} = {settings.all_settings().get(args.key)}'); return 0
     try: settings.save({args.key: None if args.value == 'default' else args.value})
@@ -83,6 +101,11 @@ def main(argv=None):
     sh = sub.add_parser('show', help='show one book as JSON'); sh.add_argument('id', type=int); sh.set_defaults(fn=cmd_show)
     ed = sub.add_parser('edit', help='change fields of a book'); ed.add_argument('id', type=int); book_fields(ed, edit=True); ed.set_defaults(fn=cmd_edit)
     rm = sub.add_parser('remove', help='remove a book from the catalogue (audio files are never touched)'); rm.add_argument('id', type=int); rm.set_defaults(fn=cmd_remove)
+    sub.add_parser('backup', help='back up the catalogue database now').set_defaults(fn=cmd_backup)
+    sub.add_parser('backups', help='list the automatic backups').set_defaults(fn=cmd_backups)
+    rs = sub.add_parser('restore', help='replace the catalogue with a backup (default: the newest); the current one is kept'); rs.add_argument('backup', nargs='?', help='path from `backups`'); rs.set_defaults(fn=cmd_restore)
     s = sub.add_parser('set', help='show or change a setting (data_dir, library_dir); value "default" resets it'); s.add_argument('key'); s.add_argument('value', nargs='?'); s.set_defaults(fn=cmd_set)
     v = sub.add_parser('serve', help='start the web server'); v.add_argument('--host', default='127.0.0.1'); v.add_argument('--port', type=int, default=8360); v.set_defaults(fn=cmd_serve)
-    a = p.parse_args(argv); return a.fn(a)
+    a = p.parse_args(argv)
+    try: return a.fn(a)
+    except db.CorruptDatabase as e: sys.exit(str(e))

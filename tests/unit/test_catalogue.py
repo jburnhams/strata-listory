@@ -1,7 +1,7 @@
 import os
 import pytest
 from hypothesis import given, strategies as st
-from app import catalogue, settings
+from app import backup, catalogue, db
 
 
 def test_add_applies_defaults_and_assigns_increasing_ids():
@@ -45,12 +45,15 @@ def test_list_sorts_searches_and_filters():
     assert catalogue.list_books('nothing') == []
 
 
-def test_corrupt_or_non_list_store_reads_as_empty():
-    p = os.path.join(settings.data_dir(), 'catalogue.json')
-    for text in ('{bad json', '{"not": "a list"}'):
-        with open(p, 'w', encoding='utf8') as f: f.write(text)
-        assert catalogue.list_books() == []
-    assert catalogue.add_book(title='Recovered')['id'] == 1
+def test_a_corrupt_database_is_refused_with_restore_advice(monkeypatch):
+    catalogue.add_book(title='Good')
+    good = backup.backup('manual')
+    monkeypatch.setattr(db, '_checked', set())              # a new process opening the database
+    with open(db.path(), 'wb') as f: f.write(b'not a database' * 100)
+    with pytest.raises(db.CorruptDatabase, match='./app restore'): catalogue.list_books()
+    safety = backup.restore(good)
+    assert safety is None                                   # the damaged file is not worth keeping
+    assert [b['title'] for b in catalogue.list_books()] == ['Good']
 
 
 @given(title=st.text(min_size=1, max_size=40).filter(lambda s: s.strip()))

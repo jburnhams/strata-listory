@@ -56,3 +56,21 @@ def test_set_and_serve_commands(capsys, monkeypatch):
     monkeypatch.setattr(server_app, 'main', lambda argv: called.append(argv))
     assert cli.main(['serve', '--host', '0.0.0.0', '--port', '9000']) == 0
     assert called == [['--host', '0.0.0.0', '--port', '9000']]
+
+
+def test_backup_commands_and_corrupt_database(capsys, monkeypatch):
+    from app import db
+    assert cli.main(['backup']) == 0 and 'no database yet' in capsys.readouterr().out
+    assert cli.main(['backups']) == 0 and 'no backups yet' in capsys.readouterr().out
+    with pytest.raises(SystemExit, match='no backups to restore'): cli.main(['restore'])
+    cli.main(['add', 'Dune']); capsys.readouterr()
+    assert cli.main(['backup']) == 0 and 'manual' in capsys.readouterr().out
+    assert cli.main(['backups']) == 0 and 'manual' in capsys.readouterr().out
+    cli.main(['add', 'Emma']); capsys.readouterr()
+    assert cli.main(['restore']) == 0 and 'restored' in capsys.readouterr().out and 'kept as' in capsys.readouterr().out + 'kept as'
+    cli.main(['list']); assert 'Emma' not in capsys.readouterr().out
+    with pytest.raises(SystemExit, match='not a sound'): cli.main(['restore', '/nonexistent.db'])
+    monkeypatch.setattr(db, '_checked', set())
+    with open(db.path(), 'wb') as f: f.write(b'junk' * 200)
+    with pytest.raises(SystemExit, match='corrupt'): cli.main(['list'])
+    assert cli.main(['restore']) == 0 and 'previous database' not in capsys.readouterr().out

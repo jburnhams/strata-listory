@@ -11,7 +11,9 @@ Catalogue and process my audiobook collection locally: first a catalogue of book
   - `server/app.py`: FastAPI application serving JSON endpoints under `/api/*` (`/api/books` is the catalogue) and the built React single-page app at `/` (falling back to `server/landing.html` when `web/` has not been built yet).
   - `settings.py`: persistent user configuration (`data_dir`, `library_dir`) in `~/.app/settings.json` (`APP_HOME` override) with atomic file writes.
   - `oslib.py`: cross-platform primitives (file locks, process liveness, process tree termination, priority, CLI command builder) isolating POSIX vs Windows differences in one place.
-  - `catalogue.py`: the audiobook catalogue: book validation and a file-locked JSON store (`<data_dir>/catalogue.json`) with add, list/search, get, update and remove.
+  - `db.py`: SQLite connection, schema migrations (`PRAGMA user_version`), corruption check and daily automatic backup on first open.
+  - `backup.py`: verified online backups to `<data_dir>/backups/`, pruning (7 days, 4 weeks, 30 days for `pre-*`), restore.
+  - `catalogue.py`: the audiobook catalogue: book validation and add, list/search, get, update and remove on the `books` table.
 - **React frontend (`web/`)**:
   - React 19, TypeScript, Vite 7, Tailwind CSS v4 (`@tailwindcss/vite`).
   - Hash-based routing (`web/src/route.ts`) and a typed `fetch` client (`web/src/api.ts`) with `withBase()` so the same build works at `/` or behind a reverse proxy at `/<subpath>/`.

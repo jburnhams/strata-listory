@@ -27,3 +27,13 @@ def test_settings_are_viewed_and_updated_from_the_command_line(cli, tmp_path, mo
 def test_the_command_line_runs_as_a_real_process(cli_subprocess):
     assert 'app 0.1.0' in cli_subprocess('doctor').stdout
     assert cli_subprocess('add', 'Subprocess').stdout.strip().startswith('#1')
+
+
+def test_backup_and_restore_round_trip_as_a_real_process(cli_subprocess):
+    cli_subprocess('add', 'Dune')
+    cli_subprocess('backup')
+    cli_subprocess('add', 'Emma')
+    assert 'Dune' in cli_subprocess('backups').stdout or 'manual' in cli_subprocess('backups').stdout
+    cli_subprocess('restore')
+    out = cli_subprocess('list').stdout
+    assert 'Dune' in out and 'Emma' not in out
