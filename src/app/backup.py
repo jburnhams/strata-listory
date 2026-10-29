@@ -1,13 +1,13 @@
 """Automatic backups of the catalogue database.
 
 Files: `<data_dir>/backups/catalogue-YYYYmmdd-HHMMSS[-reason].db`, made with SQLite's online backup API (safe while the app is running), verified with an integrity check, and written under a temporary name first so a half-written backup never looks real.
-Policy: one per day when the database is opened (db.py), before a schema migration, before a restore, and on demand (`./app backup`). Pruning keeps the newest backup of each of the last 7 days and each of the last 4 weeks, and never deletes a `pre-*` backup newer than 30 days."""
+Policy: one per day when the database is opened (db.py), before a schema migration, before a restore, and on demand (`./app backup`). Pruning keeps the newest backup of each of the last 7 days and each of the last 4 weeks, and never deletes a manual or `pre-*` backup newer than 30 days (so a restore's own safety copy cannot prune the backup being restored)."""
 import os, re, shutil, sqlite3
 from datetime import datetime, timedelta, timezone
 
 from app import settings
 
-KEEP_DAYS, KEEP_WEEKS, KEEP_PRE_DAYS, INTERVAL = 7, 4, 30, timedelta(hours=24)
+KEEP_DAYS, KEEP_WEEKS, KEEP_SPECIAL_DAYS, INTERVAL = 7, 4, 30, timedelta(hours=24)
 NAME = re.compile(r'^catalogue-(\d{8}-\d{6})(?:-([a-z-]+))?\.db$')
 
 
@@ -63,7 +63,7 @@ def prune(now: datetime | None = None):
     now = now or datetime.now(timezone.utc); keep = set(); days = {}; weeks = {}
     for b in list_backups():                                   # newest first, so setdefault keeps the newest of each day / week
         age = now - b['taken']
-        if b['reason'].startswith('pre') and age < timedelta(days=KEEP_PRE_DAYS): keep.add(b['path'])
+        if b['reason'] and age < timedelta(days=KEEP_SPECIAL_DAYS): keep.add(b['path'])
         if age < timedelta(days=KEEP_DAYS): days.setdefault(b['taken'].date(), b['path'])
         if age < timedelta(weeks=KEEP_WEEKS): weeks.setdefault(b['taken'].isocalendar()[:2], b['path'])
     keep |= set(days.values()) | set(weeks.values())
@@ -74,7 +74,8 @@ def prune(now: datetime | None = None):
 def restore(p: str) -> str | None:
     """Replace the live database with the backup at `p` (checked first); the current one is kept as a `pre-restore` backup. Returns that safety copy's path."""
     if not os.path.isfile(p) or not check(p): raise ValueError(f'{p} is not a sound database backup')
+    tmp = _db() + '.restoring'; shutil.copyfile(p, tmp)       # copied first: the safety backup below prunes, and must not be able to remove `p`
     safety = backup('pre-restore') if os.path.exists(_db()) and check(_db()) else None
     for ext in ('-wal', '-shm'):
         if os.path.exists(_db() + ext): os.remove(_db() + ext)
-    tmp = _db() + '.restoring'; shutil.copyfile(p, tmp); os.replace(tmp, _db()); return safety
+    os.replace(tmp, _db()); return safety

@@ -49,6 +49,7 @@ def test_migration_backs_up_an_existing_database(monkeypatch):
 
 def test_prune_keeps_recent_days_weeks_and_pre_backups():
     keep = [make('', timedelta(hours=1)), make('', timedelta(days=3)), make('pre-restore', timedelta(days=20)), make('', timedelta(days=15))]
+    keep.append(make('manual', timedelta(days=5)))
     gone = [make('', timedelta(hours=2)), make('', timedelta(days=60)), make('pre-migration', timedelta(days=40))]
     backup.prune()
     left = {b['path'] for b in backup.list_backups()}
@@ -60,3 +61,11 @@ def test_failed_integrity_check_discards_the_new_backup(monkeypatch):
     monkeypatch.setattr(backup, 'check', lambda p: False)
     with pytest.raises(RuntimeError, match='integrity'): backup.backup()
     assert backup.list_backups() == [] and not [n for n in os.listdir(backup.folder()) if n.endswith('.tmp')]
+
+
+def test_restore_works_even_if_the_backup_is_old_and_would_be_pruned():
+    catalogue.add_book(title='Before'); snap = backup.backup('manual')
+    catalogue.add_book(title='After')
+    os.replace(snap, snap2 := os.path.join(backup.folder(), 'catalogue-20200101-000000.db'))      # an old, unnamed-reason file
+    backup.restore(snap2)
+    assert [b['title'] for b in catalogue.list_books()] == ['Before']
