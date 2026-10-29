@@ -4,7 +4,7 @@ import os, socket, sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'utils'))
-TUNING = ('APP_GREETING',)
+TUNING = ('APP_LIBRARY',)
 
 
 def pytest_collection_modifyitems(items):

@@ -26,9 +26,9 @@ CI (`.github/workflows/`): `unit.yml` (lint, unit tests with coverage on Linux f
 
 - `unit/`: fast, isolated, synthetic data and fakes; no external services or network.
 - `integration/`: the CLI (in process and as a real process) and the HTTP API over real on-disk files. Not part of the coverage gate.
-- Both suites are hermetic (autouse in `conftest.py`): `~`, `APP_HOME` and `APP_DATA` point into a tmp dir outside `tmp_path`, tuning/override variables (`APP_GREETING`) are removed, and any outbound (non-loopback) connection fails the test.
+- Both suites are hermetic (autouse in `conftest.py`): `~`, `APP_HOME` and `APP_DATA` point into a tmp dir outside `tmp_path`, tuning/override variables (`APP_LIBRARY`) are removed, and any outbound (non-loopback) connection fails the test.
 - `utils/`: helpers importable by name in any test (`from fakes import FakeUrlopen, FakePopen, FakeRun`; `tests/utils` is on `pythonpath`).
-- One test file per module (`greet.py` -> `unit/test_greet.py`; add to the existing file if there is one).
+- One test file per module (`catalogue.py` -> `unit/test_catalogue.py`; add to the existing file if there is one).
 
 ## Who owns which files (so parallel branches don't conflict)
 

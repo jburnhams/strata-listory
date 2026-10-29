@@ -16,42 +16,37 @@ def test_doctor_success_and_missing_module(capsys, monkeypatch):
     assert 'MISSING  uvicorn' in capsys.readouterr().out
 
 
-def test_hello_and_messages_commands(capsys):
-    assert cli.main(['hello']) == 0
-    assert capsys.readouterr().out.strip() == 'Hello, World!'
+def test_catalogue_commands(capsys):
+    assert cli.main(['list']) == 0
+    assert 'no books yet' in capsys.readouterr().out
 
-    assert cli.main(['hello', 'Alice', '--greeting', 'Hi', '--save', '--json']) == 0
-    rec = json.loads(capsys.readouterr().out)
-    assert rec['message'] == 'Hi, Alice!' and rec['id'] == 1
+    assert cli.main(['add', 'Dune', '--author', 'Frank Herbert', '--series', 'Dune', '--series-position', '1', '--duration-seconds', '75600']) == 0
+    assert capsys.readouterr().out.strip() == '#1    Dune [Dune #1] - Frank Herbert  21h00  (unlistened)'
+    assert cli.main(['add', 'Emma', '--series', 'Solo', '--json']) == 0
+    assert json.loads(capsys.readouterr().out)['id'] == 2
+    assert cli.main(['add', 'Anon']) == 0
+    assert 'unknown author' in capsys.readouterr().out
 
-    assert cli.main(['messages']) == 0
-    assert 'Hi, Alice!' in capsys.readouterr().out
+    assert cli.main(['list', 'herbert']) == 0 and capsys.readouterr().out.count('\n') == 1
+    assert cli.main(['list', '--json']) == 0 and len(json.loads(capsys.readouterr().out)) == 3
+    assert cli.main(['show', '1']) == 0 and json.loads(capsys.readouterr().out)['title'] == 'Dune'
+    assert cli.main(['edit', '1', '--status', 'finished']) == 0 and '(finished)' in capsys.readouterr().out
+    assert cli.main(['edit', '1', '--narrator', 'Scott Brick', '--json']) == 0 and json.loads(capsys.readouterr().out)['narrator'] == 'Scott Brick'
+    assert cli.main(['remove', '1']) == 0 and 'removed #1 Dune' in capsys.readouterr().out
 
-    assert cli.main(['messages', '--json']) == 0
-    assert len(json.loads(capsys.readouterr().out)) == 1
-
-    assert cli.main(['messages', '--clear']) == 0
-    assert 'cleared 1 message(s)' in capsys.readouterr().out
-
-    assert cli.main(['messages']) == 0
-    assert 'no messages yet' in capsys.readouterr().out
-
-    assert cli.main(['messages', '--clear', '--json']) == 0
-    assert json.loads(capsys.readouterr().out) == {'cleared': 0}
-
-    with pytest.raises(SystemExit, match='name is too long'):
-        cli.main(['hello', 'x' * 121])
+    with pytest.raises(SystemExit, match='title is required'): cli.main(['add', ' '])
+    with pytest.raises(SystemExit, match='no such book'): cli.main(['remove', '1'])
 
 
 def test_set_and_serve_commands(capsys, monkeypatch):
-    assert cli.main(['set', 'greeting']) == 0
-    assert 'greeting = Hello' in capsys.readouterr().out
+    assert cli.main(['set', 'library_dir']) == 0
+    assert 'library_dir = ' in capsys.readouterr().out
 
-    assert cli.main(['set', 'greeting', 'Howdy']) == 0
-    assert 'greeting = Howdy' in capsys.readouterr().out
+    assert cli.main(['set', 'library_dir', '/books']) == 0
+    assert 'library_dir = /books' in capsys.readouterr().out
 
-    assert cli.main(['set', 'greeting', 'default']) == 0
-    assert 'greeting = Hello' in capsys.readouterr().out
+    assert cli.main(['set', 'library_dir', 'default']) == 0
+    assert 'library_dir = ' in capsys.readouterr().out
 
     with pytest.raises(SystemExit, match='unknown setting'):
         cli.main(['set', 'bad_key', 'val'])

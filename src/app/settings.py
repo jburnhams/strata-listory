@@ -1,15 +1,14 @@
 """User settings: one JSON file, `~/.app/settings.json` (the folder can be moved with the APP_HOME environment variable).
 
   data_dir   where application data files live. Default: `data/` in this repository (gitignored) until configured.
-  greeting   default greeting word used by `greet.py` (default: 'Hello').
+  library_dir  the folder the audiobook files live in (optional; not used yet, reserved for scanning). Default: unset.
 
-The environment variables APP_DATA and APP_GREETING override the file (handy for tests and one-off runs)."""
+The environment variables APP_DATA and APP_LIBRARY override the file (handy for tests and one-off runs)."""
 import json, os
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_DATA_DIR = os.path.join(REPO, 'data')
-DEFAULT_GREETING = 'Hello'
-KNOWN = ('data_dir', 'greeting')
+KNOWN = ('data_dir', 'library_dir')
 
 
 def home():
@@ -44,10 +43,10 @@ def data_dir():
     p = os.path.abspath(os.path.expanduser(p)); os.makedirs(p, exist_ok=True); return p
 
 
-def greeting():
-    """The configured greeting word (e.g. 'Hello')."""
-    g = (os.environ.get('APP_GREETING') or load().get('greeting') or DEFAULT_GREETING).strip()
-    return g or DEFAULT_GREETING
+def library_dir():
+    """The configured audiobook folder, or '' when none is set."""
+    p = (os.environ.get('APP_LIBRARY') or load().get('library_dir') or '').strip()
+    return os.path.abspath(os.path.expanduser(p)) if p else ''
 
 
-def all_settings(): return dict(data_dir=data_dir(), greeting=greeting())
+def all_settings(): return dict(data_dir=data_dir(), library_dir=library_dir())

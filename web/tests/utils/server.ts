@@ -1,20 +1,20 @@
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
-import type { MessageRecord, Settings } from '../../src/api'
+import { STATUSES, type Book, type Settings } from '../../src/api'
 
-export const defaultSettings: Settings = { data_dir: '/tmp/appdata', greeting: 'Hello' }
-export const initialMessages: MessageRecord[] = [
-  { id: 1, name: 'World', greeting: 'Hello', message: 'Hello, World!', created: '2026-10-29T12:00:00Z' },
+export const defaultSettings: Settings = { data_dir: '/tmp/appdata', library_dir: '' }
+export const initialBooks: Book[] = [
+  { id: 1, title: 'Dune', author: 'Frank Herbert', narrator: '', series: 'Dune', series_position: 1, duration_seconds: 75600, path: '', status: 'unlistened', added: '2026-10-29T12:00:00Z' },
 ]
 
 export const mock = {
   settings: { ...defaultSettings },
-  messages: [...initialMessages],
+  books: [...initialBooks],
 }
 
 export const resetMock = () => {
   mock.settings = { ...defaultSettings }
-  mock.messages = [...initialMessages]
+  mock.books = [...initialBooks]
 }
 
 // Every endpoint the app calls has a handler here; one without a handler fails the test (setup.ts: onUnhandledFrame 'error').
@@ -27,26 +27,30 @@ export const handlers = [
     mock.settings = { ...mock.settings, ...body }
     return HttpResponse.json(mock.settings)
   }),
-  http.get('/api/hello', ({ request }) => {
-    const u = new URL(request.url)
-    const name = u.searchParams.get('name') || 'World'
-    const greeting = u.searchParams.get('greeting') || mock.settings.greeting
-    return HttpResponse.json({ name, greeting, message: `${greeting}, ${name}!` })
+  http.get('/api/books', ({ request }) => {
+    const u = new URL(request.url), q = (u.searchParams.get('q') || '').toLowerCase(), status = u.searchParams.get('status')
+    return HttpResponse.json(mock.books.filter(b => (!status || b.status === status) && (!q || `${b.title} ${b.author}`.toLowerCase().includes(q))))
   }),
-  http.get('/api/messages', () => HttpResponse.json(mock.messages)),
-  http.post('/api/messages', async ({ request }) => {
-    const b = (await request.json()) as { name?: string; greeting?: string }
-    const name = (b.name || 'World').trim()
-    if (name === 'bad') return HttpResponse.json({ detail: 'invalid name' }, { status: 400 })
-    const greeting = (b.greeting || mock.settings.greeting).trim()
-    const entry: MessageRecord = { id: mock.messages.length + 1, name, greeting, message: `${greeting}, ${name}!`, created: '2026-10-29T12:01:00Z' }
-    mock.messages = [entry, ...mock.messages]
+  http.post('/api/books', async ({ request }) => {
+    const b = (await request.json()) as Partial<Book>
+    if (!(b.title || '').trim()) return HttpResponse.json({ detail: 'a title is required' }, { status: 400 })
+    const entry: Book = { id: mock.books.length + 1, title: b.title!.trim(), author: b.author || '', narrator: '', series: '', series_position: null, duration_seconds: null, path: '', status: 'unlistened', added: '2026-10-29T12:01:00Z' }
+    mock.books = [...mock.books, entry]
     return HttpResponse.json(entry)
   }),
-  http.delete('/api/messages', () => {
-    const cleared = mock.messages.length
-    mock.messages = []
-    return HttpResponse.json({ cleared })
+  http.patch('/api/books/:id', async ({ request, params }) => {
+    const b = (await request.json()) as { status?: Book['status'] }
+    if (b.status && !STATUSES.includes(b.status)) return HttpResponse.json({ detail: 'bad status' }, { status: 400 })
+    const cur = mock.books.find(x => x.id === Number(params.id))
+    if (!cur) return HttpResponse.json({ detail: 'no such book' }, { status: 404 })
+    Object.assign(cur, b)
+    return HttpResponse.json(cur)
+  }),
+  http.delete('/api/books/:id', ({ params }) => {
+    const cur = mock.books.find(x => x.id === Number(params.id))
+    if (!cur) return HttpResponse.json({ detail: 'no such book' }, { status: 404 })
+    mock.books = mock.books.filter(x => x !== cur)
+    return HttpResponse.json(cur)
   }),
 ]
 

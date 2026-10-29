@@ -1,5 +1,10 @@
 # Progress log
 
+## 2026-10-29: start of the audiobook app
+
+- Turned the template into Strata Listory. Replaced `greet.py` with `catalogue.py` and the greeting UI with a library page; the `greeting` setting became `library_dir`. Kept the template structure, tooling, test layout and coverage gates unchanged.
+- Assumptions (single user, JSON store, manual entry, no file access yet) are listed in the README; no feature list was given.
+
 ## 2026-10-29: template extraction
 
 - Extracted the shared Python + React full-stack structure from `strata-360` and `strata-stills` into `python-app-template`.

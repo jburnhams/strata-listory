@@ -5,7 +5,7 @@ vitest 4, Testing Library, user-event, msw (backend mocks). Run from `web/`: `np
 ## Layout
 
 - `unit/`: node environment, no DOM. Pure functions (`logic.test.ts`).
-- `integration/`: jsdom. Components rendered with Testing Library against a mocked backend (`App.test.tsx`, `GreetingPage.test.tsx`, `SettingsPage.test.tsx`).
+- `integration/`: jsdom. Components rendered with Testing Library against a mocked backend (`App.test.tsx`, `LibraryPage.test.tsx`, `SettingsPage.test.tsx`).
 - `utils/`: `server.ts` is the one msw server and its default happy-path handlers: **every endpoint the app calls needs a handler there** (an unmocked request fails the test); `setup.ts` is the jsdom setup; `render.tsx` provides `setup()` (Testing Library `render` + `userEvent.setup()`).
 - One test file per area of the app; add to the existing file if there is one.
 
@@ -28,6 +28,6 @@ vitest 4, Testing Library, user-event, msw (backend mocks). Run from `web/`: `np
 | `src/App.tsx` | 100 | done | Covered by integration/App.test.tsx |
 | `src/api.ts` | 100 | done | Covered by unit/logic.test.ts and integration tests |
 | `src/route.ts` | 100 | done | Covered by unit/logic.test.ts and navigation tests |
-| `src/components/GreetingPage.tsx` | 100 | done | Covered by integration/GreetingPage.test.tsx |
+| `src/components/LibraryPage.tsx` | 100 | done | Covered by integration/LibraryPage.test.tsx |
 | `src/components/SettingsPage.tsx` | 100 | done | Covered by integration/SettingsPage.test.tsx |
 | `src/components/ui.tsx` | 100 | done | Shared UI primitives |

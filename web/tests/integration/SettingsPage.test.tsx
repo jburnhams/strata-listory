@@ -7,12 +7,12 @@ describe('SettingsPage', () => {
     const { user } = setup(<SettingsPage />)
     expect(await screen.findByText('/tmp/appdata')).toBeInTheDocument()
 
-    await user.type(screen.getByLabelText('Default greeting'), 'Howdy')
+    await user.type(screen.getByLabelText('Audiobook folder'), '/srv/audiobooks')
     await user.type(screen.getByLabelText('Data folder'), '/var/appdata')
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
 
     expect(await screen.findByText('Saved')).toBeInTheDocument()
-    expect(await screen.findByText('Howdy')).toBeInTheDocument()
+    expect(await screen.findByText('/srv/audiobooks')).toBeInTheDocument()
 
     await user.clear(screen.getByLabelText('Data folder'))
     await user.type(screen.getByLabelText('Data folder'), 'relative/path')
