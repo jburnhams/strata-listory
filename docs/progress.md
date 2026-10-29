@@ -1,5 +1,12 @@
 # Progress log
 
+## 2026-10-29: scanning and matching
+
+- Surveyed `~/audio` (read-only SMB mount): 428 GB, 28,000 mp3 + 355 m4b + 94 m4a in 1,183 folders. Layouts vary: author folders with book subfolders, `Title (Unabridged)` folders of chapter files, CD1/CD2 and "(Disc N)" splits, loose files, an `Audible/` folder named `Author Year Title [ASIN]`, and lots of radio (Desert Island Discs, comedy, BBC dramas).
+- Scanner on that library: ~5,700 candidates, ~2,300 books, ~3,400 radio episodes. First version split chapter files into thousands of "books" (10,900 candidates); fixed by treating numbered/chapter-named files, disc folders and `Title 02-10` siblings as one book.
+- AudiobookDB (beta, ~218K books, successor to Audnexus): ASIN lookup found only 1 of 12 of the `Audible/` ASINs, but title search found most of the same books. On 40 Audible folders title search matched 65% with a naive scorer (some misses were parsing artefacts). Later in the day the service returned 503 for a while, so matching retries 502/503/504 and reports failures plainly.
+- Matching never changes a book directly: it records a suggestion with a score and the user confirms or ignores it. Radio is never looked up (saves budget, avoids noise).
+
 ## 2026-10-29: start of the audiobook app
 
 - Turned the template into Strata Listory. Replaced `greet.py` with `catalogue.py` and the greeting UI with a library page; the `greeting` setting became `library_dir`. Kept the template structure, tooling, test layout and coverage gates unchanged.

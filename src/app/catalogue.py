@@ -1,13 +1,17 @@
 """The audiobook catalogue: one record per book, in the SQLite database `<data_dir>/catalogue.db` (see db.py; backed up automatically, see backup.py).
 
-A book is a dict: id, title, author, narrator, series, series_position, duration_seconds, path (where the audio lives, optional), status (one of STATUSES), added (UTC ISO time)."""
+A book is a dict: id, title, author, narrator, series, series_position, duration_seconds, path (where the audio lives, optional), status (one of STATUSES), added (UTC ISO time); from scanning also asin, kind (KINDS), review (REVIEWS), file_count, and while matching suggestion (see matcher.py) and match_score."""
+import json, os
 from datetime import datetime, timezone
 
 from app import db
 
 STATUSES = ('unlistened', 'listening', 'finished')
-TEXT_FIELDS = ('title', 'author', 'narrator', 'series', 'path')
-EDITABLE = TEXT_FIELDS + ('series_position', 'duration_seconds', 'status')
+KINDS = ('book', 'radio')                                   # radio: broadcast episodes and the like that scanning found next to the books
+REVIEWS = ('new', 'suggested', 'confirmed', 'ignored')      # new: scanned, not matched; suggested: a match awaits review; confirmed: accepted (or entered by hand); ignored: not wanted
+TEXT_FIELDS = ('title', 'author', 'narrator', 'series', 'path', 'asin')
+CHOICES = dict(status=STATUSES, kind=KINDS, review=REVIEWS)
+EDITABLE = TEXT_FIELDS + ('series_position', 'duration_seconds', 'status', 'kind', 'review', 'file_count')
 
 
 class CatalogueError(ValueError):
@@ -27,8 +31,8 @@ def clean(fields: dict, partial: bool = False) -> dict:
         if k in TEXT_FIELDS:
             v = (v or '').strip()
             if len(v) > 300: raise CatalogueError(f'{k} is too long (at most 300 characters)')
-        elif k == 'status':
-            if v not in STATUSES: raise CatalogueError(f'status must be one of {", ".join(STATUSES)}')
+        elif k in CHOICES:
+            if v not in CHOICES[k]: raise CatalogueError(f'{k} must be one of {", ".join(CHOICES[k])}')
         elif v is not None:
             try: v = float(v) if k == 'series_position' else int(v)
             except (TypeError, ValueError): raise CatalogueError(f'{k} must be a number')
@@ -36,27 +40,33 @@ def clean(fields: dict, partial: bool = False) -> dict:
         out[k] = v
     if not partial:
         if not out.get('title'): raise CatalogueError('a title is required')
-        out = dict(dict(author='', narrator='', series='', path='', series_position=None, duration_seconds=None, status='unlistened'), **out)
+        out = dict(dict(author='', narrator='', series='', path='', asin='', series_position=None, duration_seconds=None, file_count=None, status='unlistened', kind='book', review='confirmed'), **out)
     elif 'title' in out and not out['title']: raise CatalogueError('a title is required')
     return out
 
 
-COLUMNS = 'id, title, author, narrator, series, series_position, duration_seconds, path, status, added'
+COLUMNS = 'id, title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count, suggestion, match_score'
+
+
+def _row(r) -> dict:
+    d = dict(r); d['suggestion'] = json.loads(d['suggestion']) if d['suggestion'] else None      # None: matching not tried yet; {}: tried, nothing found
+    return d
 
 
 def _one(c, book_id):
     r = c.execute(f'SELECT {COLUMNS} FROM books WHERE id=?', (book_id,)).fetchone()
     if r is None: raise NotFound(book_id)
-    return dict(r)
+    return _row(r)
 
 
-def list_books(query: str = '', status: str | None = None) -> list[dict]:
+def list_books(query: str = '', status: str | None = None, review: str | None = None, kind: str | None = None) -> list[dict]:
     """Books sorted by author, series (in order) and title; `query` matches title, author, narrator or series (case-insensitive substring), `status` filters on one status."""
     q = (query or '').strip().lower(); where, args = [], []
-    if status: where.append('status=?'); args.append(status)
+    for col, val in (('status', status), ('review', review), ('kind', kind)):
+        if val: where.append(f'{col}=?'); args.append(val)
     if q: where.append("(instr(lower(title), ?) OR instr(lower(author), ?) OR instr(lower(narrator), ?) OR instr(lower(series), ?))"); args += [q] * 4
     c = db.connect()
-    try: return [dict(r) for r in c.execute(f"SELECT {COLUMNS} FROM books {'WHERE ' + ' AND '.join(where) if where else ''} ORDER BY lower(author), lower(series), COALESCE(series_position, 0), lower(title), id", args)]
+    try: return [_row(r) for r in c.execute(f"SELECT {COLUMNS} FROM books {'WHERE ' + ' AND '.join(where) if where else ''} ORDER BY lower(author), lower(series), COALESCE(series_position, 0), lower(title), id", args)]
     finally: c.close()
 
 
@@ -71,7 +81,7 @@ def add_book(**fields) -> dict:
     rec = clean(fields); c = db.connect()
     try:
         with c:
-            cur = c.execute('INSERT INTO books (title, author, narrator, series, series_position, duration_seconds, path, status, added) VALUES (:title, :author, :narrator, :series, :series_position, :duration_seconds, :path, :status, :added)',
+            cur = c.execute('INSERT INTO books (title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count) VALUES (:title, :author, :narrator, :series, :series_position, :duration_seconds, :path, :status, :added, :asin, :kind, :review, :file_count)',
                             dict(rec, added=datetime.now(timezone.utc).isoformat()))
         return _one(c, cur.lastrowid)
     finally: c.close()
@@ -96,3 +106,49 @@ def remove_book(book_id: int) -> dict:
             b = _one(c, book_id); c.execute('DELETE FROM books WHERE id=?', (book_id,))
         return b
     finally: c.close()
+
+
+def add_scanned(candidates) -> dict:
+    """Store scan candidates (scan.scan) as `new` books, skipping paths already in the catalogue; returns {added, existing}. A rescan refreshes the file count of known paths and nothing else."""
+    added = existing = 0; c = db.connect()
+    try:
+        with c:
+            for k in candidates:
+                if c.execute('SELECT 1 FROM books WHERE path=?', (k['path'],)).fetchone():
+                    c.execute('UPDATE books SET file_count=? WHERE path=?', (k['file_count'], k['path'])); existing += 1; continue
+                rec = clean(dict(title=k['title'] or os.path.basename(k['path']), author=k['author'], narrator=k['narrator'], series_position=k['series_position'], path=k['path'], asin=k['asin'], kind=k['kind'], review='new', file_count=k['file_count']))
+                c.execute('INSERT INTO books (title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count) VALUES (:title, :author, :narrator, :series, :series_position, :duration_seconds, :path, :status, :added, :asin, :kind, :review, :file_count)', dict(rec, added=datetime.now(timezone.utc).isoformat()))
+                added += 1
+        return dict(added=added, existing=existing)
+    finally: c.close()
+
+
+def set_suggestion(book_id: int, suggestion: dict, score: float | None):
+    """Record the outcome of matching: a suggestion (review -> `suggested`) or {} when nothing was found (stays `new`, but is not tried again)."""
+    c = db.connect()
+    try:
+        with c:
+            _one(c, book_id)
+            c.execute('UPDATE books SET suggestion=?, match_score=?, review=CASE WHEN ? THEN \'suggested\' ELSE review END WHERE id=?', (json.dumps(suggestion), score, bool(suggestion), book_id))
+        return _one(c, book_id)
+    finally: c.close()
+
+
+def pending_match(limit: int) -> list[dict]:
+    """Scanned books (not radio) whose matching has not been tried yet."""
+    c = db.connect()
+    try: return [_row(r) for r in c.execute(f"SELECT {COLUMNS} FROM books WHERE review='new' AND kind='book' AND suggestion IS NULL ORDER BY id LIMIT ?", (limit,))]
+    finally: c.close()
+
+
+def confirm(book_id: int) -> dict:
+    """Accept a book: apply its suggestion's title, author and series (when there is one), and mark it confirmed."""
+    b = get_book(book_id); sug = b['suggestion'] or {}
+    changes = dict(review='confirmed')
+    for k in ('title', 'author', 'series', 'series_position'):
+        if sug.get(k) not in (None, ''): changes[k] = sug[k]
+    return update_book(book_id, **changes)
+
+
+def ignore(book_id: int) -> dict:
+    return update_book(book_id, review='ignored')

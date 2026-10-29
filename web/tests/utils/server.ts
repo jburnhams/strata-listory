@@ -4,7 +4,7 @@ import { STATUSES, type Book, type Settings } from '../../src/api'
 
 export const defaultSettings: Settings = { data_dir: '/tmp/appdata', library_dir: '' }
 export const initialBooks: Book[] = [
-  { id: 1, title: 'Dune', author: 'Frank Herbert', narrator: '', series: 'Dune', series_position: 1, duration_seconds: 75600, path: '', status: 'unlistened', added: '2026-10-29T12:00:00Z' },
+  { id: 1, title: 'Dune', author: 'Frank Herbert', narrator: '', series: 'Dune', series_position: 1, duration_seconds: 75600, path: '', status: 'unlistened', added: '2026-10-29T12:00:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null },
 ]
 
 export const mock = {
@@ -28,13 +28,13 @@ export const handlers = [
     return HttpResponse.json(mock.settings)
   }),
   http.get('/api/books', ({ request }) => {
-    const u = new URL(request.url), q = (u.searchParams.get('q') || '').toLowerCase(), status = u.searchParams.get('status')
-    return HttpResponse.json(mock.books.filter(b => (!status || b.status === status) && (!q || `${b.title} ${b.author}`.toLowerCase().includes(q))))
+    const u = new URL(request.url), q = (u.searchParams.get('q') || '').toLowerCase(), status = u.searchParams.get('status'), review = u.searchParams.get('review'), kind = u.searchParams.get('kind')
+    return HttpResponse.json(mock.books.filter(b => (!status || b.status === status) && (!review || b.review === review) && (!kind || b.kind === kind) && (!q || `${b.title} ${b.author}`.toLowerCase().includes(q))))
   }),
   http.post('/api/books', async ({ request }) => {
     const b = (await request.json()) as Partial<Book>
     if (!(b.title || '').trim()) return HttpResponse.json({ detail: 'a title is required' }, { status: 400 })
-    const entry: Book = { id: mock.books.length + 1, title: b.title!.trim(), author: b.author || '', narrator: '', series: '', series_position: null, duration_seconds: null, path: '', status: 'unlistened', added: '2026-10-29T12:01:00Z' }
+    const entry: Book = { id: mock.books.length + 1, title: b.title!.trim(), author: b.author || '', narrator: '', series: '', series_position: null, duration_seconds: null, path: '', status: 'unlistened', added: '2026-10-29T12:01:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null }
     mock.books = [...mock.books, entry]
     return HttpResponse.json(entry)
   }),
@@ -45,6 +45,29 @@ export const handlers = [
     if (!cur) return HttpResponse.json({ detail: 'no such book' }, { status: 404 })
     Object.assign(cur, b)
     return HttpResponse.json(cur)
+  }),
+  http.post('/api/scan', () => {
+    mock.books = [...mock.books,
+      { ...initialBooks[0], id: 10, title: 'dune messiah', author: '', review: 'new', file_count: 12 },
+      { ...initialBooks[0], id: 11, title: 'Show S01E01', author: '', review: 'new', kind: 'radio', file_count: 1 }]
+    return HttpResponse.json({ found: 2, added: 2, existing: 0 })
+  }),
+  http.post('/api/match', () => {
+    const b = mock.books.find(x => x.id === 10)!
+    Object.assign(b, { review: 'suggested', match_score: 0.7, suggestion: { title: 'Dune Messiah', author: 'Frank Herbert', series: 'Dune Chronicles' } })
+    return HttpResponse.json({ tried: 1, suggested: 1, none: 0, remaining: 0 })
+  }),
+  http.post('/api/books/:id/confirm', ({ params }) => {
+    const b = mock.books.find(x => x.id === Number(params.id))
+    if (!b) return HttpResponse.json({ detail: 'no such book' }, { status: 404 })
+    Object.assign(b, { review: 'confirmed', title: b.suggestion?.title || b.title, author: b.suggestion?.author || b.author })
+    return HttpResponse.json(b)
+  }),
+  http.post('/api/books/:id/ignore', ({ params }) => {
+    const b = mock.books.find(x => x.id === Number(params.id))
+    if (!b) return HttpResponse.json({ detail: 'no such book' }, { status: 404 })
+    b.review = 'ignored'
+    return HttpResponse.json(b)
   }),
   http.delete('/api/books/:id', ({ params }) => {
     const cur = mock.books.find(x => x.id === Number(params.id))

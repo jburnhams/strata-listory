@@ -3,7 +3,7 @@
     ./app serve [--host 127.0.0.1] [--port 8360]
 
 API (JSON): GET /api/health; GET /api/settings; PUT /api/settings {data_dir?, library_dir?};
-GET /api/books?q=&status=; POST /api/books {title, author?, narrator?, series?, series_position?, duration_seconds?, path?, status?};
+GET /api/books?q=&status=&review=&kind=; POST /api/scan {folder?}; POST /api/match?limit=; POST /api/books/{id}/confirm|ignore; POST /api/books {title, author?, narrator?, series?, series_position?, duration_seconds?, path?, status?};
 GET|PATCH|DELETE /api/books/{id}.
 The page at / serves `src/app/server/static/index.html` when built (`cd web && npm run build`), else the plain stand-in `landing.html`."""
 import os
@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import __version__, catalogue, db, settings
+from app import __version__, catalogue, db, matcher, scan, settings
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 LANDING = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'landing.html')
@@ -32,7 +32,12 @@ class BookIn(BaseModel):
     series_position: float | None = None
     duration_seconds: int | None = None
     path: str = ''
+    asin: str = ''
     status: str = 'unlistened'
+
+
+class ScanIn(BaseModel):
+    folder: str | None = None
 
 
 class BookPatch(BaseModel):
@@ -75,10 +80,28 @@ def create_app():
         return settings.all_settings()
 
     @app.get('/api/books')
-    def get_books(q: str = '', status: str | None = None): return guard(catalogue.list_books, q, status)
+    def get_books(q: str = '', status: str | None = None, review: str | None = None, kind: str | None = None): return guard(catalogue.list_books, q, status, review, kind)
 
     @app.post('/api/books')
     def post_book(b: BookIn): return guard(catalogue.add_book, **b.model_dump())
+
+    @app.post('/api/scan')
+    def post_scan(b: ScanIn):
+        folder = b.folder or settings.library_dir()
+        if not folder or not os.path.isdir(folder): raise HTTPException(400, 'set the audiobook folder in Settings first' if not folder else f'not a folder: {folder}')
+        found = list(scan.scan(folder))
+        return guard(lambda: dict(found=len(found), **catalogue.add_scanned(found)))
+
+    @app.post('/api/match')
+    def post_match(limit: int = 25):
+        try: return guard(matcher.match_pending, max(1, min(limit, 200)))
+        except matcher.MatchError as e: raise HTTPException(502, str(e))
+
+    @app.post('/api/books/{book_id}/confirm')
+    def confirm_book(book_id: int): return guard(catalogue.confirm, book_id)
+
+    @app.post('/api/books/{book_id}/ignore')
+    def ignore_book(book_id: int): return guard(catalogue.ignore, book_id)
 
     @app.get('/api/books/{book_id}')
     def get_book(book_id: int): return guard(catalogue.get_book, book_id)

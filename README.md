@@ -12,6 +12,10 @@ scripts/setup_env.sh                          # macOS / Linux (or scripts\setup_
 ./app add "Dune" --author "Frank Herbert" --series Dune --series-position 1
 ./app list                                    # the catalogue (search with ./app list herbert --status unlistened)
 ./app backup                                  # back up the database now (also automatic daily)
+./app set library_dir ~/audio                 # where the audiobooks live
+./app scan                                    # find books (read-only), add them as `new`; --dry-run just counts
+./app match                                   # look new books up on audiobookdb.org and record suggestions
+./app list --review suggested                 # check them; ./app confirm ID applies a suggestion, ./app ignore ID drops one
 ./app serve                                   # web UI + API on http://127.0.0.1:8360/
 ```
 
@@ -23,8 +27,11 @@ There was no feature list, so these are guesses to be corrected:
 
 - Single user, local-first, no accounts; data lives in `data/catalogue.json` (or the folder set with `./app set data_dir`), a SQLite database (WAL mode). Keep the data folder on a local disk, not an SMB share, because SQLite locking is unreliable over SMB.
 - A book has: title (required), author, narrator, series and position, duration, path to the audio, and a listening status (`unlistened`, `listening`, `finished`). Titles are not unique, so an audiobook can be catalogued twice.
-- Books are entered by hand for now. The catalogue never reads, moves or deletes audio files.
-- `library_dir` ("audiobook folder") is a setting only; nothing uses it yet. It is reserved for the folder scan.
+- Books can still be entered by hand. Scanning reads folder and file names only (no tags or durations yet) and never writes to, moves or deletes audio files.
+- `library_dir` ("audiobook folder") is the folder `scan` walks. Tested against a ~430 GB library of ~28,000 files: about 5,700 candidates, roughly 2,300 books and the rest radio/podcast episodes (kind `radio`, never looked up).
+- **Scan heuristics** (`src/app/scan.py`): a single `.m4b`/`.m4a` is a book; a folder of numbered or chapter-named mp3s is one book; folders split as CD1/CD2, "(Disc 3)" or "Title 02-10" are one book; a folder of unrelated tracks gives one candidate per file. Titles, authors, ASINs (`[B004EVP6BY]`), series numbers and "read by" are parsed from names like `Author 2008 Title [ASIN]`, `Author - Title (Unabridged)` and `Title by Author`. Expect some mistakes, which is why everything starts as `new` and goes through review.
+- **Matching** (`src/app/matcher.py`): [AudiobookDB](https://audiobookdb.org) (a free community catalogue, beta) is the first source. An ASIN in the folder name is looked up first, then a title search scored on title and author similarity; the best candidate scoring 0.6 or more is recorded as a *suggestion* (0.85 or more is "likely right"). A suggestion changes nothing until confirmed. Needs a free API key in `~/.config/strata-listory/audiobookdb.key` or `APP_ADB_KEY`. Their terms are respected: personal use, responses cached 7 days, attribution shown in the UI, no cover art or descriptions used. The service is a beta and sometimes returns 503; calls are retried and the failure reported.
+- **Review states:** `new` (scanned), `suggested` (a match awaits review), `confirmed` (accepted, or entered by hand), `ignored`.
 - **Backups:** the database is checked for corruption when a process first opens it (a corrupt one is refused with advice to restore), and a verified copy is taken automatically at most once a day, before a schema migration and before a restore, into `<data_dir>/backups/`. Kept: the newest of each of the last 7 days and 4 weeks, plus manual and safety copies for 30 days. `./app backup` backs up now, `./app backups` lists them, `./app restore [file]` restores (default newest; the current database is kept as a `pre-restore` copy). These are on the same disk as the database, so they protect against corruption and mistakes, not disk loss; the nightly restic backup of `$HOME` covers that when the data folder is under it.
 
 ## Documentation
