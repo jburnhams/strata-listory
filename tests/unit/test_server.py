@@ -13,7 +13,7 @@ def client():
 def test_landing_page_and_built_static_index(tmp_path, monkeypatch):
     monkeypatch.setattr(server_app, 'STATIC', str(tmp_path / 'no_static'))
     c = TestClient(create_app())
-    assert 'python-app-template' in c.get('/').text and 'Say hello' in c.get('/').text
+    assert 'strata-listory' in c.get('/').text and 'Add book' in c.get('/').text
     assert c.get('/api/health').json()['ok'] is True
 
     static = tmp_path / 'static'; (static / 'assets').mkdir(parents=True)
@@ -25,29 +25,41 @@ def test_landing_page_and_built_static_index(tmp_path, monkeypatch):
     assert 'console.log(1)' in c2.get('/assets/main.js').text
 
 
-def test_hello_and_messages_lifecycle(client):
-    assert client.get('/api/hello').json() == dict(name='World', greeting='Hello', message='Hello, World!')
-    assert client.get('/api/hello', params=dict(name='Ada', greeting='Hi')).json()['message'] == 'Hi, Ada!'
-    assert client.get('/api/hello', params=dict(name='x' * 121)).status_code == 400
-
-    assert client.get('/api/messages').json() == []
-    m = client.post('/api/messages', json=dict(name='Ada', greeting='Hi')).json()
-    assert m['id'] == 1 and m['message'] == 'Hi, Ada!'
-    assert client.post('/api/messages', json=dict(name='x' * 121)).status_code == 400
-    assert len(client.get('/api/messages').json()) == 1
-    assert client.delete('/api/messages').json() == dict(cleared=1)
-    assert client.get('/api/messages').json() == []
+def test_book_lifecycle(client):
+    assert client.get('/api/books').json() == []
+    b = client.post('/api/books', json=dict(title='Dune', author='Frank Herbert')).json()
+    assert b['id'] == 1 and b['status'] == 'unlistened'
+    assert client.post('/api/books', json=dict(title='')).status_code == 400
+    assert client.get('/api/books/1').json()['title'] == 'Dune'
+    assert client.patch('/api/books/1', json=dict(status='finished')).json()['status'] == 'finished'
+    assert client.patch('/api/books/1', json=dict(status='lost')).status_code == 400
+    assert [x['title'] for x in client.get('/api/books', params=dict(q='herbert', status='finished')).json()] == ['Dune']
+    assert client.get('/api/books', params=dict(status='unlistened')).json() == []
+    assert client.delete('/api/books/1').json()['title'] == 'Dune'
+    for call in (client.get, client.delete): assert call('/api/books/1').status_code == 404
+    assert client.patch('/api/books/1', json=dict(title='x')).status_code == 404
 
 
 def test_settings_roundtrip_and_server_main(client, tmp_path, monkeypatch):
     assert client.put('/api/settings', json=dict(data_dir='relative/path')).status_code == 400
-    new_dir = str(tmp_path / 'custom_data')
+    assert client.put('/api/settings', json=dict(library_dir='relative/path')).status_code == 400
+    new_dir, lib = str(tmp_path / 'custom_data'), str(tmp_path / 'books')
     monkeypatch.delenv('APP_DATA', raising=False)
-    res = client.put('/api/settings', json=dict(data_dir=new_dir, greeting='Hey')).json()
-    assert res == dict(data_dir=new_dir, greeting='Hey')
-    assert client.get('/api/settings').json() == dict(data_dir=new_dir, greeting='Hey')
+    res = client.put('/api/settings', json=dict(data_dir=new_dir, library_dir=lib)).json()
+    assert res == dict(data_dir=new_dir, library_dir=lib)
+    assert client.get('/api/settings').json() == res
+    assert client.put('/api/settings', json=dict(library_dir='')).json()['library_dir'] == ''      # empty resets
 
     runs = []
     monkeypatch.setattr(uvicorn, 'run', lambda app, host, port, log_level: runs.append((host, port, log_level)))
     server_app.main(['--host', '127.0.0.1', '--port', '8360'])
     assert runs == [('127.0.0.1', 8360, 'warning')]
+
+
+def test_corrupt_database_gives_503(client, monkeypatch):
+    from app import db
+    client.post('/api/books', json=dict(title='a'))
+    monkeypatch.setattr(db, '_checked', set())
+    with open(db.path(), 'wb') as f: f.write(b'junk' * 200)
+    r = client.get('/api/books')
+    assert r.status_code == 503 and 'restore' in r.json()['detail']

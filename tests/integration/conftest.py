@@ -17,7 +17,7 @@ class Result:
 
 @pytest.fixture
 def cli():
-    """`cli('hello', 'World', '--json')` -> Result(stdout, stderr, code), in this process. Raises AssertionError with the output on a non-zero exit unless `check=False`."""
+    """`cli('add', 'Dune', '--json')` -> Result(stdout, stderr, code), in this process. Raises AssertionError with the output on a non-zero exit unless `check=False`."""
     from app import cli as C
 
     def run(*args, check=True):

@@ -124,4 +124,4 @@ def test_lower_priority_and_venv_python(monkeypatch):
 
 def test_cli_command_runs_the_cli():
     out = subprocess.run([*oslib.cli_command(), '--help'], capture_output=True, text=True, timeout=60)
-    assert out.returncode == 0 and 'hello' in out.stdout, out.stderr[-300:]
+    assert out.returncode == 0 and 'usage' in out.stdout, out.stderr[-300:]

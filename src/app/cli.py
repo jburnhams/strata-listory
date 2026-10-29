@@ -1,7 +1,7 @@
-"""Command line: `doctor` checks the environment, `hello` prints or records a greeting, `serve` starts the web server."""
+"""Command line: `doctor` checks the environment, `add`/`list`/`show`/`edit`/`remove` manage the audiobook catalogue, `set` changes settings, `serve` starts the web server."""
 import argparse, importlib, json, sys
 
-from app import __version__, greet, settings
+from app import __version__, backup, catalogue, db, settings
 
 CHECKS = (('fastapi', 'fastapi'), ('uvicorn', 'uvicorn'), ('pydantic', 'pydantic'))
 
@@ -14,24 +14,68 @@ def doctor(args):
     return 0 if ok else 1
 
 
-def cmd_hello(args):
-    try:
-        rec = greet.add_message(args.name, args.greeting) if args.save else greet.format_greeting(args.name, args.greeting)
-    except greet.GreetingError as e: sys.exit(str(e))
-    if args.json: print(json.dumps(rec)); return 0
-    print(rec['message']); return 0
+def _fmt_duration(sec):
+    return '' if not sec else f'{sec // 3600}h{sec % 3600 // 60:02d}'
 
 
-def cmd_messages(args):
-    if args.clear:
-        res = greet.clear_messages()
-        print(json.dumps(res) if args.json else f"cleared {res['cleared']} message(s)")
-        return 0
-    items = greet.list_messages()
-    if args.json: print(json.dumps(items, indent=1)); return 0
-    if not items: print('  (no messages yet: ./app hello World --save)'); return 0
-    for m in items: print(f"  #{m['id']:<4} {m['message']:30} ({m['created']})")
+def _line(b):
+    series = f" [{b['series']} #{b['series_position']:g}]" if b.get('series') and b.get('series_position') is not None else (f" [{b['series']}]" if b.get('series') else '')
+    return f"  #{b['id']:<4} {b['title']}{series} - {b['author'] or 'unknown author'}  {_fmt_duration(b['duration_seconds'])}  ({b['status']})".rstrip()
+
+
+def _fields(args):
+    return {k: v for k in catalogue.EDITABLE if (v := getattr(args, k, None)) is not None}
+
+
+def _run(fn, *a, **kw):
+    try: return fn(*a, **kw)
+    except catalogue.CatalogueError as e: sys.exit(str(e))
+    except catalogue.NotFound: sys.exit('no such book')
+
+
+def cmd_add(args):
+    b = _run(catalogue.add_book, **_fields(args))
+    print(json.dumps(b) if args.json else _line(b)); return 0
+
+
+def cmd_list(args):
+    books = catalogue.list_books(args.query or '', args.status)
+    if args.json: print(json.dumps(books, indent=1)); return 0
+    if not books: print('  (no books yet: ./app add "Title" --author "Name")'); return 0
+    for b in books: print(_line(b))
     return 0
+
+
+def cmd_show(args):
+    print(json.dumps(_run(catalogue.get_book, args.id), indent=1)); return 0
+
+
+def cmd_edit(args):
+    b = _run(catalogue.update_book, args.id, **_fields(args))
+    print(json.dumps(b) if args.json else _line(b)); return 0
+
+
+def cmd_remove(args):
+    b = _run(catalogue.remove_book, args.id)
+    print(f"removed #{b['id']} {b['title']}"); return 0
+
+
+def cmd_backup(args):
+    p = backup.backup('manual'); print(p or 'no database yet, nothing to back up'); return 0
+
+
+def cmd_backups(args):
+    bs = backup.list_backups()
+    if not bs: print('  (no backups yet: ./app backup)'); return 0
+    for b in bs: print(f"  {b['taken']:%Y-%m-%d %H:%M:%S}  {b['reason'] or 'daily':12} {b['path']}")
+    return 0
+
+
+def cmd_restore(args):
+    path = args.backup or (next(iter(backup.list_backups()), None) or sys.exit('no backups to restore'))['path']
+    try: safety = backup.restore(path)
+    except ValueError as e: sys.exit(str(e))
+    print(f'restored {path}' + (f'; the previous database is kept as {safety}' if safety else '')); return 0
 
 
 def cmd_set(args):
@@ -49,8 +93,19 @@ def cmd_serve(args):
 def main(argv=None):
     p = argparse.ArgumentParser(prog='app'); sub = p.add_subparsers(dest='cmd', required=True)
     sub.add_parser('doctor', help='check the environment').set_defaults(fn=doctor)
-    h = sub.add_parser('hello', help='print a greeting (and optionally record it)'); h.add_argument('name', nargs='?', default='World'); h.add_argument('--greeting', help='override the default greeting word'); h.add_argument('--save', action='store_true', help='record the greeting in the message log'); h.add_argument('--json', action='store_true'); h.set_defaults(fn=cmd_hello)
-    m = sub.add_parser('messages', help='list or clear recorded greetings'); m.add_argument('--clear', action='store_true'); m.add_argument('--json', action='store_true'); m.set_defaults(fn=cmd_messages)
-    s = sub.add_parser('set', help='show or change a setting (data_dir, greeting); value "default" resets it'); s.add_argument('key'); s.add_argument('value', nargs='?'); s.set_defaults(fn=cmd_set)
+    def book_fields(sp, edit=False):
+        sp.add_argument('--title' if edit else 'title', **(dict(help='new title') if edit else {})); sp.add_argument('--author'); sp.add_argument('--narrator'); sp.add_argument('--series'); sp.add_argument('--series-position', dest='series_position', type=float)
+        sp.add_argument('--duration-seconds', dest='duration_seconds', type=int); sp.add_argument('--path', help='where the audio files live'); sp.add_argument('--status', choices=catalogue.STATUSES); sp.add_argument('--json', action='store_true')
+    ad = sub.add_parser('add', help='add a book to the catalogue'); book_fields(ad); ad.set_defaults(fn=cmd_add)
+    ls = sub.add_parser('list', help='list the catalogue'); ls.add_argument('query', nargs='?', help='match title, author, narrator or series'); ls.add_argument('--status', choices=catalogue.STATUSES); ls.add_argument('--json', action='store_true'); ls.set_defaults(fn=cmd_list)
+    sh = sub.add_parser('show', help='show one book as JSON'); sh.add_argument('id', type=int); sh.set_defaults(fn=cmd_show)
+    ed = sub.add_parser('edit', help='change fields of a book'); ed.add_argument('id', type=int); book_fields(ed, edit=True); ed.set_defaults(fn=cmd_edit)
+    rm = sub.add_parser('remove', help='remove a book from the catalogue (audio files are never touched)'); rm.add_argument('id', type=int); rm.set_defaults(fn=cmd_remove)
+    sub.add_parser('backup', help='back up the catalogue database now').set_defaults(fn=cmd_backup)
+    sub.add_parser('backups', help='list the automatic backups').set_defaults(fn=cmd_backups)
+    rs = sub.add_parser('restore', help='replace the catalogue with a backup (default: the newest); the current one is kept'); rs.add_argument('backup', nargs='?', help='path from `backups`'); rs.set_defaults(fn=cmd_restore)
+    s = sub.add_parser('set', help='show or change a setting (data_dir, library_dir); value "default" resets it'); s.add_argument('key'); s.add_argument('value', nargs='?'); s.set_defaults(fn=cmd_set)
     v = sub.add_parser('serve', help='start the web server'); v.add_argument('--host', default='127.0.0.1'); v.add_argument('--port', type=int, default=8360); v.set_defaults(fn=cmd_serve)
-    a = p.parse_args(argv); return a.fn(a)
+    a = p.parse_args(argv)
+    try: return a.fn(a)
+    except db.CorruptDatabase as e: sys.exit(str(e))

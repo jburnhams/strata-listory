@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-Template extracted from `strata-360` and `strata-stills`: Python backend (FastAPI + CLI) and React frontend (TypeScript + Vite + Tailwind CSS v4), with hermetic unit and integration test suites, coverage ratchets and multi-OS GitHub Actions CI.
+Strata Listory, an app to catalogue and process audiobooks, built on the template extracted from `strata-360` and `strata-stills`: Python backend (FastAPI + CLI) and React frontend (TypeScript + Vite + Tailwind CSS v4), with hermetic unit and integration test suites, coverage ratchets and multi-OS GitHub Actions CI.
 
 - Python application code lives in `src/app/`; the React web app lives in `web/src/` and builds into `src/app/server/static/`, which `./app serve` serves at `/`.
 - Python tests live under `tests/`, grouped by type:
@@ -13,7 +13,7 @@ Template extracted from `strata-360` and `strata-stills`: Python backend (FastAP
   - `pytest tests/unit --cov` runs the unit suite with coverage (random order via pytest-randomly; `-n auto` runs in parallel; `diff-cover` checks the lines a change touches).
   - `pytest tests/integration -n auto` runs the integration suite.
   - `ruff check src tests` lints for syntax errors and undefined names.
-  - `./app doctor` checks the environment; `./app hello [name]` prints and records a greeting; `./app serve` runs the web server on port 8360.
+  - `./app doctor` checks the environment; `./app add|list|show|edit|remove` manage the audiobook catalogue; `./app serve` runs the web server on port 8360.
 - Commands (web, from `web/`): `npm install`, `npm run dev` (proxies `/api` to `./app serve` on 8360), `npm run build` (writes into `src/app/server/static/`), `npm run typecheck`, `npm run test:unit` (node), `npm run test:integration` (jsdom + msw), `npm run test:coverage:gate` (unit + integration together, what CI gates on: floors in `web/coverage-floor.json`), `npm run test:coverage` (unit only, informational), `npm run test:coverage:all` (unit + integration, no gate).
 - Python coverage is calculated from the unit suite only (`fail_under` in `pyproject.toml`). Web coverage is gated on unit + integration together (`web/coverage-floor.json`, read by `web/vitest.gate.config.ts`). Both floors only ratchet up.
 - Style: dense, comment-the-why, long lines are fine (ruff line-length 400), pytest style tests (`def test_...` with `assert`; use `monkeypatch`/`tmp_path` instead of patching globals by hand).
