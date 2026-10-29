@@ -17,7 +17,7 @@ def test_defaults_and_env_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv('APP_LIBRARY', '  ~/books  ')
     assert settings.home() == str(custom_home)
     assert settings.data_dir() == str(custom_data) and custom_data.is_dir()
-    assert settings.library_dir() == os.path.expanduser('~/books')
+    assert settings.library_dir() == os.path.abspath(os.path.expanduser('~/books'))
 
 
 def test_save_load_and_reset():

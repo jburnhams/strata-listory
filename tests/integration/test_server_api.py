@@ -14,6 +14,6 @@ def test_books_created_via_http_are_shared_with_the_cli(client, cli):
     assert client.delete('/api/books/1').status_code == 200 and len(client.get('/api/books').json()) == 1
 
 
-def test_settings_changes_persist(client):
-    assert client.put('/api/settings', json=dict(library_dir='/srv/books')).json()['library_dir'].endswith('books')
+def test_settings_changes_persist(client, tmp_path):
+    assert client.put('/api/settings', json=dict(library_dir=str(tmp_path / 'books'))).json()['library_dir'].endswith('books')      # absolute on every OS (a bare '/srv' is not on Windows)
     assert client.put('/api/settings', json=dict(library_dir='relative')).status_code == 400
