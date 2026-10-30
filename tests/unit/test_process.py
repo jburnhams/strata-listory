@@ -283,3 +283,11 @@ def test_real_quiet_book_with_loud_clicks_stays_clear_of_clipping(tmp_path):
     assert p['loudness']['gain_db'] > 6 and p['loudness']['TP'] > -2                                  # wants a big boost but the clicks leave no headroom
     res = R.execute(b, p)
     assert res['true_peak_after'] <= R.CLIP_CEILING and res['loudness_after'] > res['loudness_before'] + 3
+
+
+@needs_ffmpeg
+def test_plan_warns_when_the_source_already_clips(tmp_path):
+    d = tmp_path / 'Hot'; d.mkdir()
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=f=220:d=30', '-af', 'volume=24,aeval=clip(val(0)\\,-1\\,1)', '-c:a', 'libmp3lame', '-b:a', '128k', str(d / '01.mp3')], check=True)       # pushed past full scale
+    b = catalogue.add_book(title='Hot', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
+    assert p['loudness']['TP'] > 0 and any('already clips' in w for w in p['warnings'])

@@ -47,7 +47,7 @@ function ProcessedSection({ p }: { p: Processed }) {
     <Section title="Final library">
       {p.status !== 'done' ? <p className="text-sm text-red-600">Processing failed: {p.error}</p> : (
         <Rows rows={[['Folder', <span className="font-mono text-xs">{p.out_dir}</span>], ['Chapters', `${p.chapters} (from ${p.chapter_source})`], ['Encoding', p.tiers && Object.entries(p.tiers).map(([k, v]) => `${v}× ${k}`).join(' · ')], ['Size', saved],
-          ['Loudness', p.loudness_before != null && p.loudness_after != null ? `${p.loudness_before.toFixed(1)} → ${p.loudness_after.toFixed(1)} LUFS` : ''], ['Notes', p.warnings?.join('; ')], ['Processed', p.finished?.slice(0, 10)]]} />
+          ['Loudness', p.loudness_before != null && p.loudness_after != null ? `${p.loudness_before.toFixed(1)} → ${p.loudness_after.toFixed(1)} LUFS` : ''], ['Peak', p.true_peak_after != null ? `${p.true_peak_after.toFixed(1)} dBTP${p.retries ? ` (gain lowered ${p.retries}×)` : ''}` : ''], ['Notes', p.warnings?.join('; ')], ['Processed', p.finished?.slice(0, 10)]]} />
       )}
     </Section>
   )

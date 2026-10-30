@@ -154,7 +154,7 @@ describe('BookPage when the audio share is down', () => {
 
 describe('BookPage final library section', () => {
   it('shows what processing produced, and a failure', async () => {
-    mock.processed = { status: 'done', out_dir: '/home/u/audiobooks/A/Dune', chapters: 12, chapter_source: 'Audible chapter list', tiers: { V5: 11, V4: 1 }, in_bytes: 400_000_000, out_bytes: 190_000_000, loudness_before: -22.1, loudness_after: -18.0, warnings: ['peaks limit the boost'], finished: '2026-10-30T12:00:00+00:00' }
+    mock.processed = { status: 'done', out_dir: '/home/u/audiobooks/A/Dune', chapters: 12, chapter_source: 'Audible chapter list', tiers: { V5: 11, V4: 1 }, in_bytes: 400_000_000, out_bytes: 190_000_000, loudness_before: -22.1, loudness_after: -18.0, true_peak_after: -1.7, retries: 1, warnings: ['peaks limit the boost'], finished: '2026-10-30T12:00:00+00:00' }
     const { unmount } = setup(<BookPage id={1} />)
     expect(await screen.findByText('Final library')).toBeInTheDocument()
     expect(screen.getByText('/home/u/audiobooks/A/Dune')).toBeInTheDocument()
@@ -162,6 +162,7 @@ describe('BookPage final library section', () => {
     expect(screen.getByText('11× V5 · 1× V4')).toBeInTheDocument()
     expect(screen.getByText('381 MB → 181 MB (48%)')).toBeInTheDocument()
     expect(screen.getByText('-22.1 → -18.0 LUFS')).toBeInTheDocument()
+    expect(screen.getByText('-1.7 dBTP (gain lowered 1×)')).toBeInTheDocument()
     unmount()
     mock.processed = { status: 'failed', error: 'ffmpeg failed on chapter 3' }
     setup(<BookPage id={1} />)
