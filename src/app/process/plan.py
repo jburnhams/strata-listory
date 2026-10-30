@@ -145,8 +145,9 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None) -> dict:
             sp = probe.spectrum([sg for a, b in sample_ranges(c['start'], c['end']) for sg in segments(tl, a, b)]); t = pick_tier(sp['hf_db'], sp['pause_frac']); c.update(mode='encode', tier=t, kbps=TIERS[t]['kbps'], hf_db=sp['hf_db'], pause_frac=sp['pause_frac'])
     g = gain_for(m['I'], m['TP'], any(c['mode'] == 'copy' for c in chapters))
     if g['warn']: warnings.append(g['warn'])
-    if g['db'] - g['apply_db'] > GAIN_STEP: warnings.append(f"peaks limit the boost to {g['apply_db']:+.1f} dB of the {g['db']:+.1f} dB wanted")
+    remaining = round(g['db'] - g['apply_db'], 2)
+    if abs(remaining) >= 0.4: warnings.append(f"peaks limit the change to {g['apply_db']:+.1f} dB of the {g['db']:+.1f} dB wanted; a ReplayGain tag carries the other {remaining:+.1f} dB")
     in_bytes = sum(os.path.getsize(f['path']) for f in files); est = sum(c['duration'] * c['kbps'] * 1000 / 8 for c in chapters)
     return dict(book_id=book['id'], title=book['title'], author=book.get('author', ''), out_dir=out_dir_for(book, final_dir), chapter_source=source, downmix=downmix, duration=round(sum(f['duration'] for f in files), 1),
-                loudness=dict(I=m['I'], TP=m['TP'], LRA=m['LRA'], target=TARGET_LUFS, gain_db=g['db'], apply_db=g['apply_db'], gain_steps=g['steps']), chapters=chapters, warnings=warnings,
+                loudness=dict(I=m['I'], TP=m['TP'], LRA=m['LRA'], target=TARGET_LUFS, gain_db=g['db'], apply_db=g['apply_db'], gain_steps=g['steps'], remaining_db=remaining if abs(remaining) >= 0.4 else 0.0), chapters=chapters, warnings=warnings,
                 in_bytes=in_bytes, est_bytes=int(est), in_files=len(files), channels=max(f['channels'] for f in files))

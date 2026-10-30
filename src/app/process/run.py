@@ -22,6 +22,8 @@ def _cover_small(src: str | None, tmp: str) -> str | None:
 def tags(book: dict, plan: dict, ch: dict, n: int) -> list[str]:
     md = dict(title=ch['title'], album=book['title'], artist=book.get('author') or '', album_artist=book.get('author') or '', composer=book.get('narrator') or '', track=f'{n}/{len(plan["chapters"])}', genre='Audiobook')
     if book.get('series'): md['grouping'] = book['series'] + (f" #{book['series_position']:g}" if book.get('series_position') is not None else '')
+    rem = plan['loudness'].get('remaining_db') or 0.0
+    if rem: md['replaygain_album_gain'] = f'{rem:+.2f} dB'; md['replaygain_album_peak'] = f"{10 ** ((plan['loudness']['TP'] + plan['loudness']['apply_db']) / 20):.6f}"      # ReplayGain 2 uses -18 LUFS as its reference, our target: players that honour the tag make up what lossless gain could not
     out = []
     for k, v in md.items():
         if v: out += ['-metadata', f'{k}={v}']

@@ -159,6 +159,7 @@ def test_small_mono_mp3s_are_cut_and_regained_without_re_encoding(tmp_path, monk
     infos = [probe.probe_file(os.path.join(out, n)) for n in names]
     assert len(names) == 3 and all(i['bit_rate'] < 70 and i['sample_rate'] == 44100 for i in infos)          # still the 64 kbps frames
     assert res['loudness_after'] > res['loudness_before'] + 1 and abs(sum(i['duration'] for i in infos) - p['duration']) < 1
+    assert 'replaygain_album_gain' in infos[0]['tags'] or p['loudness']['remaining_db'] == 0.0
     assert res['out_bytes'] <= res['in_bytes'] * 1.05                                         # nothing re-encoded: about the same size
 
 
@@ -178,9 +179,11 @@ def test_verify_catches_a_length_mismatch(tmp_path):
 
 
 def test_tags_and_filter_chain():
-    plan = dict(chapters=[1, 2], channels=2, downmix='left', loudness=dict(apply_db=3.5))
+    plan = dict(chapters=[1, 2], channels=2, downmix='left', loudness=dict(apply_db=3.5, TP=-4.0, remaining_db=2.0))
     t = R.tags(dict(title='B', author='A', narrator='', series='S', series_position=2.0), plan, dict(title='Ch'), 1)
     assert ['-metadata', 'title=Ch'] == t[0:2] and 'track=1/2' in t and 'grouping=S #2' in t and not any(x.startswith('composer') for x in t)
+    assert 'replaygain_album_gain=+2.00 dB' in t and any(x.startswith('replaygain_album_peak=0.9') for x in t)                # the part of the gain that lossless/limited gain could not apply
+    assert not any('replaygain' in x for x in R.tags(dict(title='B'), dict(chapters=[1], loudness=dict(apply_db=0.0, TP=-3.0, remaining_db=0.0)), dict(title='C'), 1))
     f = R.filter_chain(plan, {}, 24000); assert f.startswith('pan=mono|c0=c0,volume=3.5dB,alimiter=') and f.endswith('aresample=24000')
     assert R.filter_chain(dict(channels=1, downmix='average', loudness=dict(apply_db=0.0)), {}, 44100).startswith('alimiter=')
 
