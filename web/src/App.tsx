@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from './api'
 import { useRoute, href } from './route'
 import LibraryPage from './components/LibraryPage'
+import BookPage from './components/BookPage'
 import SettingsPage from './components/SettingsPage'
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
         </nav>
       </header>
       {r.page === 'library' && <LibraryPage />}
+      {r.page === 'book' && <BookPage id={r.id} />}
       {r.page === 'settings' && <SettingsPage />}
     </div>
   )

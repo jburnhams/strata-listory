@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
-import { REVIEWS, STATUSES, api, type Book, type Review, type Status } from '../api'
-import { useLoad } from '../route'
+import { REVIEWS, STATUSES, api, coverUrl, type Book, type Review, type Status } from '../api'
+import { href, useLoad } from '../route'
 import { Card, Err, btn, btnQuiet, input } from './ui'
 
 export function describeCount(n: number) {
@@ -71,9 +71,10 @@ export default function LibraryPage() {
 
       <div className="space-y-2">
         {books?.map((b: Book) => (
-          <Card key={b.id} className="flex flex-wrap items-baseline gap-2">
+          <Card key={b.id} className="flex flex-wrap items-center gap-2">
+            <img src={coverUrl(b.id)} alt="" loading="lazy" className="w-10 h-10 rounded object-cover bg-stone-200 dark:bg-stone-800" onError={e => { e.currentTarget.style.visibility = 'hidden' }} />
             <div className="mr-auto">
-              <span className="font-medium">{b.title}</span>
+              <a className="font-medium hover:underline" href={href.book(b.id)}>{b.title}</a>
               <span className="text-sm text-stone-500"> {b.author || 'unknown author'}{b.series ? ` · ${b.series}${b.series_position != null ? ` #${b.series_position}` : ''}` : ''}{b.duration_seconds ? ` · ${formatDuration(b.duration_seconds)}` : ''}</span>
             </div>
             <select aria-label={`Status of ${b.title}`} className={input} value={b.status} onChange={e => act(() => api.setStatus(b.id, e.target.value as Status))}>

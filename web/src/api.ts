@@ -43,6 +43,12 @@ export const api = {
   removeBook: (id: number) => req<Book>(`/api/books/${id}`, { method: 'DELETE' }),
   confirm: (id: number) => req<Book>(`/api/books/${id}/confirm`, { method: 'POST' }),
   ignore: (id: number) => req<Book>(`/api/books/${id}/ignore`, { method: 'POST' }),
+  details: (id: number) => req<BookDetails>(`/api/books/${id}/details`),
   scan: () => req<ScanResult>('/api/scan', send('POST', {})),
   match: (limit = 25) => req<MatchResult>(`/api/match?limit=${limit}`, { method: 'POST' }),
 }
+
+export interface ProbeInfo { available: boolean; files_probed?: number; complete?: boolean; duration_seconds?: number; tags?: Record<string, string>; codec?: string; bitrate_kbps?: number | null; chapters?: number; has_cover_art?: boolean }
+export interface AudibleInfo { asin: string; title: string; subtitle: string; authors: string[]; narrators: string[]; series: { title: string; sequence: string }[]; publisher: string; release_date: string; language: string; format: string; runtime_minutes: number | null; summary: string; rating: string | null; rating_count: number | null; categories: string[]; sample_url: string; chapters: { title: string; start_sec: number; length_sec: number }[]; cover_url: string }
+export interface BookDetails { book: Book; path_exists: boolean; files: { count: number; total_bytes: number; truncated: boolean; list: { name: string; bytes: number }[] } | null; probe: ProbeInfo | null; audible: AudibleInfo | null }
+export const coverUrl = (id: number) => withBase(`/api/books/${id}/cover`)
