@@ -2,7 +2,7 @@ import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { STATUSES, type Book, type Settings } from '../../src/api'
 
-export const defaultSettings: Settings = { data_dir: '/tmp/appdata', library_dir: '' }
+export const defaultSettings: Settings = { data_dir: '/tmp/appdata', library_dir: '', backup_dir: '/tmp/appdata/backups' }
 export const initialBooks: Book[] = [
   { id: 1, title: 'Dune', author: 'Frank Herbert', narrator: '', series: 'Dune', series_position: 1, duration_seconds: 75600, path: '', status: 'unlistened', added: '2026-10-29T12:00:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null },
 ]

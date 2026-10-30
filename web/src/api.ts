@@ -1,6 +1,6 @@
 // Typed client for the FastAPI server (src/app/server/app.py). Same-origin.
 export interface Health { ok: boolean; version: string }
-export interface Settings { data_dir: string; library_dir: string }
+export interface Settings { data_dir: string; library_dir: string; backup_dir: string }
 export type Status = 'unlistened' | 'listening' | 'finished'
 export const STATUSES: Status[] = ['unlistened', 'listening', 'finished']
 export type Review = 'new' | 'suggested' | 'confirmed' | 'ignored'

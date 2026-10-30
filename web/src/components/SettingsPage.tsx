@@ -7,6 +7,7 @@ export default function SettingsPage() {
   const { data, error, reload } = useLoad(() => api.settings(), [])
   const [libraryDir, setLibraryDir] = useState('')
   const [dataDir, setDataDir] = useState('')
+  const [backupDir, setBackupDir] = useState('')
   const [saved, setSaved] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -16,6 +17,7 @@ export default function SettingsPage() {
       await api.saveSettings({
         library_dir: libraryDir.trim() || data?.library_dir,
         data_dir: dataDir.trim() || data?.data_dir,
+        backup_dir: backupDir.trim() || data?.backup_dir,
       })
       setSaved(true); reload()
     } catch (x) { setErr(String((x as Error).message || x)) }
@@ -29,6 +31,7 @@ export default function SettingsPage() {
         {data && (
           <div className="text-sm text-stone-500 mb-3 space-y-1">
             <div>Current audiobook folder: <span className="font-mono text-stone-800 dark:text-stone-200">{data.library_dir || '(not set)'}</span></div>
+            <div>Current backup folder: <span className="font-mono text-stone-800 dark:text-stone-200">{data.backup_dir}</span></div>
             <div>Current data folder: <span className="font-mono text-stone-800 dark:text-stone-200">{data.data_dir}</span></div>
           </div>
         )}
@@ -40,6 +43,10 @@ export default function SettingsPage() {
           <div className="flex flex-col gap-1">
             <label htmlFor="setting-datadir" className="text-sm">Data folder</label>
             <input id="setting-datadir" className={input} placeholder={data?.data_dir || '/path/to/data'} value={dataDir} onChange={e => setDataDir(e.target.value)} />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="setting-backupdir" className="text-sm">Backup folder</label>
+            <input id="setting-backupdir" className={input} placeholder={data?.backup_dir || '/path/to/backups'} value={backupDir} onChange={e => setBackupDir(e.target.value)} />
           </div>
           <div className="flex items-center gap-3">
             <button type="submit" className={btn}>Save settings</button>

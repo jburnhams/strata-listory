@@ -2,13 +2,14 @@
 
   data_dir   where application data files live. Default: `data/` in this repository (gitignored) until configured.
   library_dir  the folder the audiobook files live in (optional; not used yet, reserved for scanning). Default: unset.
+  backup_dir   where the catalogue database backups go (default: `backups/` inside data_dir). May be a network share (SMB): backups are built on the local disk and copied there.
 
-The environment variables APP_DATA and APP_LIBRARY override the file (handy for tests and one-off runs)."""
+The environment variables APP_DATA, APP_LIBRARY and APP_BACKUP override the file (handy for tests and one-off runs)."""
 import json, os
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_DATA_DIR = os.path.join(REPO, 'data')
-KNOWN = ('data_dir', 'library_dir')
+KNOWN = ('data_dir', 'library_dir', 'backup_dir')
 
 
 def home():
@@ -49,4 +50,10 @@ def library_dir():
     return os.path.abspath(os.path.expanduser(p)) if p else ''
 
 
-def all_settings(): return dict(data_dir=data_dir(), library_dir=library_dir())
+def backup_dir():
+    """The folder for database backups (not created here; backup.py makes it when it writes)."""
+    p = (os.environ.get('APP_BACKUP') or load().get('backup_dir') or '').strip()
+    return os.path.abspath(os.path.expanduser(p)) if p else os.path.join(data_dir(), 'backups')
+
+
+def all_settings(): return dict(data_dir=data_dir(), library_dir=library_dir(), backup_dir=backup_dir())

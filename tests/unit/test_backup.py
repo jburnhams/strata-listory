@@ -69,3 +69,14 @@ def test_restore_works_even_if_the_backup_is_old_and_would_be_pruned():
     os.replace(snap, snap2 := os.path.join(backup.folder(), 'catalogue-20200101-000000.db'))      # an old, unnamed-reason file
     backup.restore(snap2)
     assert [b['title'] for b in catalogue.list_books()] == ['Before']
+
+
+def test_backups_can_live_in_another_folder_and_are_built_locally(tmp_path, monkeypatch):
+    share = tmp_path / 'share' / 'backups'; monkeypatch.setenv('APP_BACKUP', str(share))
+    catalogue.add_book(title='Dune')
+    p = backup.backup('manual')
+    assert os.path.dirname(p) == str(share) and backup.check(p) and [b['path'] for b in backup.list_backups()] == [p]
+    assert not [n for n in os.listdir(os.path.dirname(db.path())) if n.endswith('.tmp')]       # nothing left behind next to the database
+    catalogue.add_book(title='Emma'); backup.restore(p)
+    assert [b['title'] for b in catalogue.list_books()] == ['Dune']
+    assert not os.path.exists(db.path() + '.restoring')

@@ -2,7 +2,7 @@
 
     ./app serve [--host 127.0.0.1] [--port 8360]
 
-API (JSON): GET /api/health; GET /api/settings; PUT /api/settings {data_dir?, library_dir?};
+API (JSON): GET /api/health; GET /api/settings; PUT /api/settings {data_dir?, library_dir?, backup_dir?};
 GET /api/books?q=&status=&review=&kind=; POST /api/scan {folder?}; POST /api/match?limit=; POST /api/books/{id}/confirm|ignore; POST /api/books {title, author?, narrator?, series?, series_position?, duration_seconds?, path?, status?};
 GET|PATCH|DELETE /api/books/{id}.
 The page at / serves `src/app/server/static/index.html` when built (`cd web && npm run build`), else the plain stand-in `landing.html`."""
@@ -22,6 +22,7 @@ LANDING = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'landing.html
 class SettingsIn(BaseModel):
     data_dir: str | None = None
     library_dir: str | None = None
+    backup_dir: str | None = None
 
 
 class BookIn(BaseModel):
@@ -73,9 +74,9 @@ def create_app():
 
     @app.put('/api/settings')
     def put_settings(s: SettingsIn):
-        for label, v in (('data', s.data_dir), ('library', s.library_dir)):
+        for label, v in (('data', s.data_dir), ('library', s.library_dir), ('backup', s.backup_dir)):
             if v and not os.path.isabs(os.path.expanduser(v)): raise HTTPException(400, f'the {label} folder must be an absolute path')
-        changes = {k: v for k, v in (('data_dir', s.data_dir), ('library_dir', s.library_dir)) if v is not None}
+        changes = {k: v for k, v in (('data_dir', s.data_dir), ('library_dir', s.library_dir), ('backup_dir', s.backup_dir)) if v is not None}
         if changes: settings.save({k: v or None for k, v in changes.items()})      # an empty value resets the setting
         return settings.all_settings()
 

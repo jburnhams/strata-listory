@@ -1,3 +1,4 @@
+import os
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
@@ -43,12 +44,15 @@ def test_book_lifecycle(client):
 def test_settings_roundtrip_and_server_main(client, tmp_path, monkeypatch):
     assert client.put('/api/settings', json=dict(data_dir='relative/path')).status_code == 400
     assert client.put('/api/settings', json=dict(library_dir='relative/path')).status_code == 400
+    assert client.put('/api/settings', json=dict(backup_dir='relative/path')).status_code == 400
     new_dir, lib = str(tmp_path / 'custom_data'), str(tmp_path / 'books')
     monkeypatch.delenv('APP_DATA', raising=False)
     res = client.put('/api/settings', json=dict(data_dir=new_dir, library_dir=lib)).json()
-    assert res == dict(data_dir=new_dir, library_dir=lib)
+    assert res == dict(data_dir=new_dir, library_dir=lib, backup_dir=os.path.join(new_dir, 'backups'))
     assert client.get('/api/settings').json() == res
     assert client.put('/api/settings', json=dict(library_dir='')).json()['library_dir'] == ''      # empty resets
+    elsewhere = str(tmp_path / 'share' / 'backups')
+    assert client.put('/api/settings', json=dict(backup_dir=elsewhere)).json()['backup_dir'] == elsewhere
 
     runs = []
     monkeypatch.setattr(uvicorn, 'run', lambda app, host, port, log_level: runs.append((host, port, log_level)))
