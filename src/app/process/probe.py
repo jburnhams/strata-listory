@@ -58,11 +58,12 @@ def _summary(err: str) -> str:
 def measure_book(segments: list[tuple], channels: int = 1) -> dict:
     """Loudness (integrated LUFS, true peak dBFS, loudness range) and pauses of a whole book in one decoding pass. For stereo also the loudness after a plain mono downmix, to catch channels that cancel each other."""
     with tempfile.TemporaryDirectory() as td:
-        args = input_args(segments, td)
-        r = run(FFMPEG + args + ['-af', f'ebur128=peak=true,silencedetect=noise={SILENCE_DB}dB:d=1.2', '-f', 'null', '-'])
+        args = input_args(segments, td); pk = os.path.join(td, 'peaks.txt')
+        r = run(FFMPEG + args + ['-af', f'ebur128=peak=true,silencedetect=noise={SILENCE_DB}dB:d=1.2,astats=metadata=1:reset=1:length=0.4,ametadata=print:key=lavfi.astats.Overall.Peak_level:file={pk}', '-f', 'null', '-'])
         if r.returncode: raise ToolError('loudness analysis failed: ' + r.stderr.strip()[-200:])
         out = dict(zip(('I', 'LRA', 'TP'), parse_ebur(r.stderr)))
         out['silences'] = parse_silences(r.stderr)
+        out['peak_p99'] = parse_peak_percentile(pk)
         if channels > 1:
             m = run(FFMPEG + args + ['-af', 'pan=mono|c0=0.5*c0+0.5*c1,ebur128', '-f', 'null', '-'])
             out['mono_I'] = parse_ebur(m.stderr)[0] if not m.returncode else None
@@ -72,6 +73,14 @@ def measure_book(segments: list[tuple], channels: int = 1) -> dict:
 def parse_ebur(err: str):
     s = _summary(err); g = lambda pat: (m := re.search(pat, s)) and float(m[1])
     return g(r'I:\s+(-?[\d.]+) LUFS'), g(r'LRA:\s+(-?[\d.]+) LU'), g(r'Peak:\s+(-?[\d.]+) dBFS')
+
+
+def parse_peak_percentile(path: str, q: float = 0.99) -> float | None:
+    """The q-th percentile of the peak level (dBFS) over short windows of the whole book: how high the peaks stand in all but the loudest 1%."""
+    try:
+        with open(path, encoding='utf8') as f: vals = sorted(float(x) for x in re.findall(r'Peak_level=(-?[\d.]+)', f.read()))
+    except OSError: return None
+    return vals[int(q * (len(vals) - 1))] if vals else None
 
 
 def parse_silences(err: str) -> list[tuple[float, float]]:

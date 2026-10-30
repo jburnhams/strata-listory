@@ -70,6 +70,12 @@ def test_tiers_gain_and_copy_rules():
     enc = P.decide_gain(-25.0, -3.0, False); assert enc['reencode'] is False and enc['apply_db'] == pytest.approx(min(7.0, 1.5 + P.LIMIT_DB))             # already encoding: the limiter allowance, never past it
     peaky = P.decide_gain(-30.0, 0.0, False); assert peaky['apply_db'] == pytest.approx(P.TP_LIMIT * -1 * 0 + (P.TP_LIMIT - 0.0) + P.LIMIT_DB) and peaky['apply_db'] < peaky['db']      # peaks leave little room: stays quieter
     assert P.decide_gain(-50.0, 5.0, False)['apply_db'] == 0.0
+    # with the peak measurement the limiter's work is bounded by SQUASH_DB at the 99th percentile and MAX_REDUCTION at the loudest peak
+    ceiling = P.TP_LIMIT - P.LIMITER_MARGIN
+    a = P.decide_gain(-23.4, -1.0, False, p99=-5.0); assert a['apply_db'] == pytest.approx(ceiling + P.SQUASH_DB + 5.0, abs=0.01) and a['apply_db'] < a['db']        # 4.7 of the 5.4 wanted
+    b = P.decide_gain(-23.4, -1.0, False, p99=-9.0); assert b['apply_db'] == pytest.approx(5.4, abs=0.01)                                                              # rare peaks: the whole boost is allowed
+    c = P.decide_gain(-23.4, 0.0, False, p99=-9.0); assert c['apply_db'] == pytest.approx(ceiling + P.MAX_REDUCTION - 0.0, abs=0.01)                                  # one huge peak caps it at MAX_REDUCTION
+    assert P.decide_gain(-23.4, -1.0, True, p99=-5.0)['reencode'] is True and P.decide_gain(-23.4, -1.0, True, p99=-5.0)['apply_db'] == a['apply_db']
     ok = dict(codec='mp3', channels=1, bit_rate=64.0, sample_rate=44100)
     by = {'a': ok, 'b': dict(ok), 'c': dict(ok, bit_rate=128.0), 'd': dict(ok, channels=2), 'e': dict(ok, sample_rate=22050), 'f': dict(ok, codec='aac')}
     assert P.copyable([('a', 0, None), ('b', 0, None)], by) and not any(P.copyable([('a', 0, None), (k, 0, None)], by) for k in 'cdef')
