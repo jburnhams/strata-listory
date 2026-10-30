@@ -383,6 +383,10 @@ def test_chapter_names_for_file_names(title, expect):
     assert P.chapter_name(title) == expect
 
 
+def test_chapter_names_drop_the_authors_own_name():
+    assert P.chapter_name('Sue Townsend - The Author Talks', 'Sue Townsend') == 'The Author Talks' and P.chapter_name('Sue Townsend - The Author Talks') == 'Sue Townsend - The Author Talks' and P.chapter_name('Sue Townsend', 'Sue Townsend') == 'Sue Townsend'
+
+
 def test_file_names_include_a_chapter_name_only_when_there_is_one_and_always_fit():
     assert P.file_name('001', 'Anne Boden', 'Banking on It', '') == '001 - Anne Boden - Banking on It.mp3'
     assert P.file_name('030b', 'Anne Boden', 'Banking on It', 'Find Your Niche') == '030b - Anne Boden - Banking on It - Find Your Niche.mp3'

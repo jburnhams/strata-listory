@@ -43,9 +43,10 @@ GENERIC = re.compile(r'^\s*(?:chapters?|chap\.?|ch\.?|parts?|sections?|tracks?|b
 MAX_NAME_BYTES = 200                         # file names stay well under the 255-byte limit of ext4 (some titles are very long)
 
 
-def chapter_name(title: str) -> str:
+def chapter_name(title: str, author: str = '') -> str:
     """The part of a chapter title worth putting in a file name: "Chapter 3: Find Your Niche" -> "Find Your Niche", "Introduction" stays, "Chapter 3", "Part Two", "Chapters 3-5" and "Track 7" -> "" (the number is already in the file name)."""
     t = title.strip(); prev = None
+    if author: t = re.sub(rf'^{re.escape(author)}\s*[-:\u2013]\s*', '', t, flags=re.I)       # "Sue Townsend - The Author Talks" in a book by Sue Townsend
     while t and t != prev:                                  # "Part One: Chapter 1: The Start" loses both prefixes
         prev = t; m = GENERIC.match(t)
         if m: t = t[m.end():].strip(' -:._')
@@ -255,7 +256,7 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None) -> dict:
     if m['TP'] is not None and m['TP'] >= -0.2: warnings.append(f"the source reaches full scale (true peak {m['TP']:+.1f} dBFS), so it is probably already clipped; processing keeps it from getting worse but cannot repair it")
     chapters, source = derive_chapters(files, m['silences'], (audible or {}).get('chapters'), book['title'])
     for c in chapters:
-        segs = segments(tl, c['start'], c['end']); c['segments'] = segs; c['duration'] = round(c['end'] - c['start'], 2); c['file'] = file_name(c['label'], book.get('author') or '', book['title'], chapter_name(c['base']))
+        segs = segments(tl, c['start'], c['end']); c['segments'] = segs; c['duration'] = round(c['end'] - c['start'], 2); c['file'] = file_name(c['label'], book.get('author') or '', book['title'], chapter_name(c['base'], book.get('author') or ''))
         if copyable(segs, by_path): c.update(mode='copy', tier='copy', kbps=round(max(by_path[p]['bit_rate'] for p, _, _ in segs), 1))
         else:
             sp = probe.spectrum([sg for a, b in sample_ranges(c['start'], c['end']) for sg in segments(tl, a, b)]); t = pick_tier(sp['hf_db'], sp['pause_frac']); c.update(mode='encode', tier=t, kbps=TIERS[t]['kbps'], hf_db=sp['hf_db'], pause_frac=sp['pause_frac'])
