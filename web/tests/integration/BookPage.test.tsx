@@ -26,11 +26,14 @@ describe('BookPage', () => {
   })
 
   it('shows a suggestion, a hand-entered book without files, and not-found errors', async () => {
-    mock.books[0] = { ...mock.books[0], review: 'suggested', match_score: 0.7, suggestion: { title: 'Dune Messiah', author: 'Frank Herbert', series: 'Dune Chronicles', series_position: 2, matched_by: 'title' } }
+    mock.books[0] = { ...mock.books[0], review: 'suggested', match_score: 0.7, suggestion: { title: 'Dune Messiah', author: 'Frank Herbert', narrators: ['Scott Brick'], runtime_minutes: 1260, asin: 'B0X', series: 'Dune Chronicles', series_position: 2, matched_by: 'title', sources: ['audible', 'audiobookdb'], alternatives: [{ source: 'audible', title: 'Dune', author: 'Frank Herbert', asin: 'B0Y', score: 0.7 }, { source: 'audible', title: 'Other', author: '', asin: '', score: 0.61 }] } }
     mock.books.push({ ...mock.books[0], id: 2, title: 'By hand', suggestion: null, review: 'confirmed', path: '' })
     const { unmount } = setup(<BookPage id={1} />)
-    expect(await screen.findByText('AudiobookDB suggestion')).toBeInTheDocument()
+    expect(await screen.findByText('Match suggestion')).toBeInTheDocument()
     expect(screen.getByText('70% match (check)')).toBeInTheDocument()
+    expect(screen.getByText('audible + audiobookdb')).toBeInTheDocument()
+    expect(screen.getByText('2 other candidates')).toBeInTheDocument()
+    expect(screen.getByText(/Other/, { selector: 'li' })).toHaveTextContent('unknown')
     unmount()
     setup(<BookPage id={2} />)
     expect(await screen.findByText('This book has no path (entered by hand).')).toBeInTheDocument()
@@ -73,5 +76,17 @@ describe('BookPage with sparse or partial data', () => {
     expect(screen.getByText('aac')).toBeInTheDocument()
     expect(screen.queryByText(/chapters$/)).toBeNull()
     expect(screen.queryByText('Embedded tags (first file)')).toBeNull()
+  })
+})
+
+describe('BookPage suggestion with few details', () => {
+  it('handles a suggestion without sources, narrators or runtime and a single alternative', async () => {
+    const book = { ...mock.books[0], id: 7, title: 'Bare', review: 'suggested' as const, match_score: 0.9, suggestion: { title: 'Bare Match', alternatives: [{ source: 'audiobookdb', title: 'Alt', author: 'Some One', asin: '', score: 0.65 }] } }
+    mock.books.push(book)
+    server.use(http.get('/api/books/7/details', () => HttpResponse.json({ book, path_exists: false, files: null, probe: null, audible: null })))
+    setup(<BookPage id={7} />)
+    expect(await screen.findByText('1 other candidate')).toBeInTheDocument()
+    expect(screen.getByText('90% match')).toBeInTheDocument()
+    expect(screen.queryByText('Found by')).toBeNull()
   })
 })

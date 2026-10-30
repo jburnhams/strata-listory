@@ -28,6 +28,7 @@ def one_work(files: list[str]) -> bool:
     stems = [os.path.splitext(f)[0] for f in files]
     if sum(bool(RADIO.search(x)) for x in stems) * 2 >= len(stems): return False
     if sum(bool(CHAPTERISH.match(x)) for x in stems) >= 0.7 * len(stems): return True      # 01 ..., 050, Chapter 6, Track 12
+    if len(files) >= 3 and len({re.sub(r'[\d\W_]+', '', re.sub(r'\b(chapter|chap|ch|part|track|disc|cd)\b', ' ', x.lower())) for x in stems}) <= 2: return True      # AB_022, ch0, Part06: the names differ only in numbers
     return len(os.path.commonprefix([_norm(x) for x in stems])) >= 6
 
 

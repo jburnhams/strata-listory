@@ -87,11 +87,13 @@ def test_scan_match_confirm_commands(capsys, tmp_path, monkeypatch):
     assert cli.main(['scan']) == 0 and '2 added, 0 already known' in capsys.readouterr().out
     assert cli.main(['scan']) == 0 and '0 added, 2 already known' in capsys.readouterr().out
 
+    from app.providers.base import candidate
     class Source:
-        def search(self, t): return [matcher.candidate(dict(id='1', title='Dune', people=[dict(person=dict(name='Frank Herbert'), role=dict(name='Author'))]))]
+        name = 'fake'
+        def search(self, t, a=''): return [candidate('fake', id='1', title='Dune', authors=['Frank Herbert'])]
         def by_asin(self, a): return None
-    monkeypatch.setattr(matcher, 'AudiobookDB', Source)
-    assert cli.main(['match']) == 0 and 'tried 1: 1 suggestions, 0 without a match; 0 still to try' in capsys.readouterr().out
+    monkeypatch.setattr(matcher.providers, 'enabled', lambda names=None: [Source()])
+    assert cli.main(['match']) == 0 and 'tried 1: 1 suggestions, 0 without a match; 0 still to try (providers: fake)' in capsys.readouterr().out
     assert cli.main(['list', '--review', 'suggested']) == 0 and '[suggested -> Dune / Frank Herbert, 1.00]' in capsys.readouterr().out
     assert cli.main(['list', '--kind', 'radio']) == 0 and 'Show' in capsys.readouterr().out
     assert cli.main(['confirm', '2']) == 0 and 'suggested' not in capsys.readouterr().out
@@ -101,3 +103,36 @@ def test_scan_match_confirm_commands(capsys, tmp_path, monkeypatch):
     def broken(*a, **k): raise matcher.MatchError('no AudiobookDB API key')
     monkeypatch.setattr(matcher, 'match_pending', broken)
     with pytest.raises(SystemExit, match='no AudiobookDB API key'): cli.main(['match'])
+
+
+def test_providers_and_match_test_commands(capsys, monkeypatch):
+    from app import matcher, providers
+    from app.providers.base import candidate
+    assert cli.main(['providers']) == 0
+    out = capsys.readouterr().out
+    assert 'audnexus' in out and 'audible' in out and 'audiobookdb' in out and 'selected #1' in out and 'ready' in out
+    with pytest.raises(SystemExit, match='unknown provider'): cli.main(['match', '--providers', 'nope'])
+    assert cli.main(['match-test']) == 0 and 'no scanned books to test' in capsys.readouterr().out
+    cli.main(['add', 'Hand']); capsys.readouterr()
+    class Source:
+        name = 'fake'
+        def search(self, t, a=''): return [candidate('fake', id='1', title='Dune', authors=['Frank Herbert'])]
+        def by_asin(self, a): return None
+    from app import catalogue
+    catalogue.add_scanned([dict(path='/x', title='Dune', author='Frank Herbert', narrator='', series_position=None, asin='', kind='book', file_count=1)])
+    monkeypatch.setattr(providers, 'enabled', lambda names=None: [Source()])
+    assert cli.main(['match-test', '--limit', '5', '--providers', 'fake']) == 0
+    assert '1 scanned books; nothing is recorded' in capsys.readouterr().out and catalogue.list_books()[0]['review'] in ('new', 'confirmed')
+    def broken(*a, **k): raise providers.MatchError('all providers down')
+    monkeypatch.setattr(matcher, 'evaluate', broken)
+    with pytest.raises(SystemExit, match='all providers down'): cli.main(['match-test'])
+
+
+def test_mirror_command_and_provider_limits(capsys):
+    from app import catalogue, mirror
+    assert cli.main(['providers']) == 0 and '1 request per 0.3s, cache 14 days' in capsys.readouterr().out
+    cli.main(['add', 'Dune']); capsys.readouterr()
+    catalogue.add_scanned([dict(path='/x/new one', title='New one', author='', narrator='', series_position=None, asin='', kind='book', file_count=1)])
+    assert cli.main(['mirror']) == 0 and 'wrote metadata.json for 1 of 1 books' in capsys.readouterr().out
+    assert cli.main(['mirror', '--all']) == 0 and 'for 2 of 2 books' in capsys.readouterr().out
+    assert os.path.isfile(os.path.join(mirror.root(), '_external', 'new one', 'metadata.json'))

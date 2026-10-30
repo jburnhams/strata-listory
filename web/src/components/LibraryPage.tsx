@@ -84,7 +84,7 @@ export default function LibraryPage() {
             {b.review !== 'confirmed' && (
               <div className="basis-full text-sm flex flex-wrap items-center gap-2">
                 <span className="rounded bg-stone-200 dark:bg-stone-800 px-1.5 text-xs">{b.review}</span>
-                {b.suggestion?.title && <span>Suggested: <b>{b.suggestion.title}</b> by {b.suggestion.author || 'unknown'}{b.suggestion.series ? ` (${b.suggestion.series})` : ''} <span className="text-stone-500">{matchLabel(b.match_score)}</span></span>}
+                {b.suggestion?.title && <span>Suggested: <b>{b.suggestion.title}</b> by {b.suggestion.author || 'unknown'}{b.suggestion.series ? ` (${b.suggestion.series})` : ''} <span className="text-stone-500">{matchLabel(b.match_score)}{b.suggestion.sources?.length ? ` · via ${b.suggestion.sources.join(' + ')}` : ''}</span></span>}
                 <button type="button" className={btnQuiet} onClick={() => act(() => api.confirm(b.id))}>Confirm {b.title}</button>
                 {b.review !== 'ignored' && <button type="button" className={btnQuiet} onClick={() => act(() => api.ignore(b.id))}>Ignore {b.title}</button>}
               </div>
@@ -92,7 +92,7 @@ export default function LibraryPage() {
           </Card>
         ))}
       </div>
-      <p className="mt-4 text-xs text-stone-500">Suggestions use data from <a className="underline" href="https://audiobookdb.org">audiobookdb.org</a>.</p>
+      <p className="mt-4 text-xs text-stone-500">Suggestions use data from Audible, Audnexus and <a className="underline" href="https://audiobookdb.org">audiobookdb.org</a>.</p>
     </div>
   )
 }

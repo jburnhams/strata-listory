@@ -70,28 +70,33 @@ def test_corrupt_database_gives_503(client, monkeypatch):
 
 
 def test_scan_match_confirm_endpoints(client, tmp_path, monkeypatch):
-    from app import matcher
+    from app import matcher, providers
+    from app.providers.base import candidate
     assert client.post('/api/scan', json={}).status_code == 400
     assert client.post('/api/scan', json=dict(folder=str(tmp_path / 'nope'))).status_code == 400
     lib = tmp_path / 'lib'; lib.mkdir(); (lib / 'Dune by Frank Herbert.m4b').write_text('')
-    assert client.post('/api/scan', json=dict(folder=str(lib))).json() == dict(found=1, added=1, existing=0)
+    assert client.post('/api/scan', json=dict(folder=str(lib))).json() == dict(found=1, added=1, existing=0, replaced=0)
     client.put('/api/settings', json=dict(library_dir=str(lib)))
     assert client.post('/api/scan', json={}).json()['existing'] == 1
 
     class Source:
-        def search(self, t): return [matcher.candidate(dict(id='1', title='Dune', people=[dict(person=dict(name='Frank Herbert'), role=dict(name='Author'))]))]
+        name = 'fake'
+        def search(self, t, a=''): return [candidate('fake', id='1', title='Dune', authors=['Frank Herbert'])]
         def by_asin(self, a): return None
-    monkeypatch.setattr(matcher, 'AudiobookDB', Source)
-    assert client.post('/api/match', params=dict(limit=5)).json() == dict(tried=1, suggested=1, none=0, remaining=0)
+    monkeypatch.setattr(providers, 'enabled', lambda names=None: [Source()])
+    assert client.post('/api/match', params=dict(limit=5)).json() == dict(tried=1, suggested=1, none=0, remaining=0, providers=['fake'])
     [b] = client.get('/api/books', params=dict(review='suggested', kind='book')).json()
     assert b['suggestion']['author'] == 'Frank Herbert' and b['match_score'] == 1.0
     assert client.post(f"/api/books/{b['id']}/confirm").json()['review'] == 'confirmed'
     assert client.post(f"/api/books/{b['id']}/ignore").json()['review'] == 'ignored'
     assert client.post('/api/books/99/confirm').status_code == 404
 
-    def broken(limit): raise matcher.MatchError('no AudiobookDB API key')
+    def broken(limit, plist): raise matcher.MatchError('no AudiobookDB API key')
     monkeypatch.setattr(matcher, 'match_pending', broken)
     r = client.post('/api/match'); assert r.status_code == 502 and 'API key' in r.json()['detail']
+    monkeypatch.undo()
+    assert client.post('/api/match', params=dict(providers='nope')).status_code == 400
+    assert [p['name'] for p in client.get('/api/providers').json()] == ['audnexus', 'audible', 'audiobookdb']
 
 
 def test_book_details_and_cover_endpoints(client, tmp_path, monkeypatch):

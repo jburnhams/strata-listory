@@ -66,7 +66,7 @@ export const handlers = [
   }),
   http.post('/api/match', () => {
     const b = mock.books.find(x => x.id === 10)!
-    Object.assign(b, { review: 'suggested', match_score: 0.7, suggestion: { title: 'Dune Messiah', author: 'Frank Herbert', series: 'Dune Chronicles' } })
+    Object.assign(b, { review: 'suggested', match_score: 0.7, suggestion: { title: 'Dune Messiah', author: 'Frank Herbert', series: 'Dune Chronicles', sources: ['audible', 'audiobookdb'] } })
     return HttpResponse.json({ tried: 1, suggested: 1, none: 0, remaining: 0 })
   }),
   http.post('/api/books/:id/confirm', ({ params }) => {
