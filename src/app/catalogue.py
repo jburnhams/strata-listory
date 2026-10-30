@@ -109,7 +109,7 @@ def remove_book(book_id: int) -> dict:
     c = db.connect()
     try:
         with c:
-            b = _one(c, book_id); c.execute('DELETE FROM books WHERE id=?', (book_id,)); c.execute('DELETE FROM book_extra WHERE book_id=?', (book_id,))
+            b = _one(c, book_id); c.execute('DELETE FROM books WHERE id=?', (book_id,)); c.execute('DELETE FROM book_extra WHERE book_id=?', (book_id,)); c.execute('DELETE FROM processed WHERE book_id=?', (book_id,))
         return b
     finally: c.close()
 
@@ -201,4 +201,38 @@ def rebase_paths(old: str, new: str) -> int:
 def paths_under(root: str) -> list[str]:
     root = root.rstrip(os.sep); c = db.connect()
     try: return [r['path'] for r in c.execute("SELECT path FROM books WHERE path = ? OR path LIKE ? ESCAPE '\\'", (root, root.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + os.sep + '%'))]
+    finally: c.close()
+
+
+def set_processed(book_id: int, summary: dict):
+    """Record the outcome of processing a book (summary has at least `status` and `finished`)."""
+    c = db.connect()
+    try:
+        with c:
+            _one(c, book_id)
+            c.execute('INSERT OR REPLACE INTO processed (book_id, status, finished, summary) VALUES (?, ?, ?, ?)', (book_id, summary['status'], summary['finished'], json.dumps(summary)))
+    finally: c.close()
+
+
+def get_processed(book_id: int) -> dict | None:
+    c = db.connect()
+    try:
+        r = c.execute('SELECT summary FROM processed WHERE book_id=?', (book_id,)).fetchone()
+        return json.loads(r['summary']) if r else None
+    finally: c.close()
+
+
+def pending_process(limit: int, include_unconfirmed: bool = False) -> list[dict]:
+    """Books not yet processed successfully: confirmed books of kind `book` (or every scanned book with `include_unconfirmed`) that have a path."""
+    cond = "review IN ('confirmed','new','suggested')" if include_unconfirmed else "review='confirmed'"; c = db.connect()
+    try: return [_row(r) for r in c.execute(f"SELECT {COLUMNS} FROM books b WHERE {cond} AND kind='book' AND path<>'' AND NOT EXISTS (SELECT 1 FROM processed p WHERE p.book_id=b.id AND p.status='done') ORDER BY id LIMIT ?", (limit,))]
+    finally: c.close()
+
+
+def processed_summary() -> dict:
+    c = db.connect()
+    try:
+        r = c.execute("SELECT COUNT(*) n, SUM(json_extract(summary,'$.in_bytes')) i, SUM(json_extract(summary,'$.out_bytes')) o, SUM(json_extract(summary,'$.out_seconds')) s FROM processed WHERE status='done'").fetchone()
+        f = c.execute("SELECT COUNT(*) FROM processed WHERE status<>'done'").fetchone()[0]
+        return dict(done=r['n'], failed=f, in_bytes=r['i'] or 0, out_bytes=r['o'] or 0, seconds=r['s'] or 0)
     finally: c.close()

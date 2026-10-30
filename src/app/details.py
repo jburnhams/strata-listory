@@ -13,13 +13,17 @@ PROBE_FILES = 60                 # a book with more files than this is probed on
 NONE_FOR = timedelta(days=1)     # how long "no cover found" is remembered
 
 
+def _natural(s: str):
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', s)]
+
+
 def audio_files(path: str) -> list[str]:
     """The audio files of a book (a single file, or everything under its folder), sorted, at most MAX_FILES."""
     if os.path.isfile(path): return [path]
     out = []
     for root, dirs, files in os.walk(path):
         dirs[:] = sorted(d for d in dirs if not d.startswith(('.', '@')))
-        out += [os.path.join(root, f) for f in sorted(files) if scan.is_audio(f)]
+        out += [os.path.join(root, f) for f in sorted(files, key=_natural) if scan.is_audio(f)]
         if len(out) >= MAX_FILES: break
     return out[:MAX_FILES]
 

@@ -127,7 +127,7 @@ def create_app():
         b = guard(catalogue.get_book, book_id); d = guard(details.describe, b)
         probe = d['probe'] or {}; secs = probe.get('duration_seconds') if probe.get('complete') else (d['audible'] or {}).get('runtime_minutes', 0) * 60 or None      # a full probe is exact; otherwise Audible's runtime
         if b['duration_seconds'] is None and secs: b = guard(catalogue.update_book, book_id, duration_seconds=int(secs))
-        return dict(book=b, extras=catalogue.get_extras(book_id), **d)
+        return dict(book=b, extras=catalogue.get_extras(book_id), processed=catalogue.get_processed(book_id), **d)
 
     @app.get('/api/books/{book_id}/cover')
     def book_cover(book_id: int):

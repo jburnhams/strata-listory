@@ -1,5 +1,12 @@
 # Progress log
 
+## 2026-10-30: the processor
+
+- Built `./app process` after agreeing the design with the user: mono, LAME VBR tiers by content, -18 LUFS per book, copy-as-is for mono mp3 up to 96 kbps (lossless cut and `mp3gain`), chapters from embedded/Audible/file/pause sources.
+- Timings on beelink: LAME V5 about 550x realtime per core; `ebur128` about 1000x (the `loudnorm` filter is 16x slower, so it is not used for measuring); a whole book takes 1.5 to 2 minutes. Measuring the spectrum of whole chapters was the slow part, so it samples three 90 s stretches per chapter.
+- Calibration (30 speech and 30 music-heavy excerpts): silence fraction separates them (speech median 19%, music 0%); energy above 10 kHz does not (speech median -25 dB with p90 -21, music median -23, p90 -19). First guess thresholds on the HF ratio put every speech chapter in the top tier, which is why tiers are now chosen on pauses first.
+- Bugs caught by testing on real books: a short credits track gave the merged chapter the wrong name; the spectrum pause fraction was computed against a zero duration when a segment ran to the end of its file; after encoding, true peaks overshot the limiter by about 0.8 dB, hence LIMITER_MARGIN.
+
 ## 2026-10-30: local copy of the audio share
 
 - beelink has ~850 GB free and the share is 428 GB, so `audio-sync` mirrors it to `~/audio-local` (rsync, one way, nightly) and the app is switched to that copy with `./app use-library`. First full copy ran in the background (about 30 MB/s observed at the start). The copy is excluded from restic (it can be rebuilt from the share, which has its own backup story).

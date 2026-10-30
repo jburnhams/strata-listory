@@ -7,7 +7,8 @@
 - [x] **M4 catalogue**: `catalogue.py` book model and SQLite store, `add`/`list`/`show`/`edit`/`remove` CLI, `/api/books` endpoints, web library page (add, search, status filter, remove), `library_dir` setting. Replaced the template's hello-world greeting module.
 - [x] **M5 folder scan (names only)**: `scan.py` finds books and radio under `library_dir` and parses names; `./app scan`, `/api/scan`, library page button.
 - [ ] **M5b file metadata**: read embedded tags, durations and chapters (ffprobe or mutagen) to improve titles and fill `duration_seconds`.
-- [ ] **M6 processing**: operations on the audio (merge to `.m4b`, chapter files, normalise names); decide whether to shell out to ffmpeg.
+- [x] **M6 processing**: `./app process` into a separate final library (mono mp3 chapters, per-chapter VBR tier, loudness to -18 LUFS, lossless copy of small mono mp3s); ffmpeg/LAME/mp3gain.
+- [ ] **M6b process the library**: run it over confirmed books, review the plan totals first; later: also unconfirmed books once matching has been reviewed; then switch the app's library to the final folder and drop the inbox copy.
 - [x] **M7 storage**: SQLite (`db.py`) with automatic verified backups and restore (`backup.py`).
 - [x] **M8 matching, first source**: AudiobookDB title/ASIN lookup with scored suggestions and a review UI (confirm / ignore).
 - [x] **M8b modular providers**: Audnexus, Audible catalogue search and AudiobookDB behind one interface; ordered or combined queries; `match-test` to compare.

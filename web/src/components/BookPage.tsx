@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { api, coverUrl, type AudibleInfo, type BookDetails, type Extras, type HardcoverInfo } from '../api'
+import { api, coverUrl, type AudibleInfo, type BookDetails, type Extras, type HardcoverInfo, type Processed } from '../api'
 import { href, useLoad } from '../route'
 import { Card, Crumbs, Err } from './ui'
 import { formatDuration, matchLabel } from './LibraryPage'
@@ -36,6 +36,18 @@ function AudibleSection({ a }: { a: AudibleInfo }) {
         <details className="mt-3 text-sm"><summary className="cursor-pointer">{a.chapters.length} chapters</summary>
           <ol className="mt-1 space-y-0.5">{a.chapters.map((c, i) => <li key={i} className="flex justify-between gap-2"><span>{c.title}</span><span className="text-stone-500 font-mono">{formatDuration(c.length_sec) || `${c.length_sec}s`}</span></li>)}</ol>
         </details>
+      )}
+    </Section>
+  )
+}
+
+function ProcessedSection({ p }: { p: Processed }) {
+  const saved = p.in_bytes && p.out_bytes ? `${formatBytes(p.in_bytes)} → ${formatBytes(p.out_bytes)} (${Math.round((p.out_bytes / p.in_bytes) * 100)}%)` : ''
+  return (
+    <Section title="Final library">
+      {p.status !== 'done' ? <p className="text-sm text-red-600">Processing failed: {p.error}</p> : (
+        <Rows rows={[['Folder', <span className="font-mono text-xs">{p.out_dir}</span>], ['Chapters', `${p.chapters} (from ${p.chapter_source})`], ['Encoding', p.tiers && Object.entries(p.tiers).map(([k, v]) => `${v}× ${k}`).join(' · ')], ['Size', saved],
+          ['Loudness', p.loudness_before != null && p.loudness_after != null ? `${p.loudness_before.toFixed(1)} → ${p.loudness_after.toFixed(1)} LUFS` : ''], ['Notes', p.warnings?.join('; ')], ['Processed', p.finished?.slice(0, 10)]]} />
       )}
     </Section>
   )
@@ -99,6 +111,7 @@ export function Details({ d, onExtras }: { d: BookDetails; onExtras?: (e: Extras
           ['Status', b.status], ['Review', b.review], ['Kind', b.kind], ['ASIN', b.asin], ['Path', b.path && <span className="font-mono text-xs">{b.path}</span>], ['Added', b.added]]} />
       </Section>
 
+      {d.processed && <ProcessedSection p={d.processed} />}
       {d.audible && <AudibleSection a={d.audible} />}
       {b.review === 'confirmed' && b.kind === 'book' && <Community id={b.id} extras={d.extras} onChange={e => onExtras?.(e)} />}
 

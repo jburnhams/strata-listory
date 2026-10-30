@@ -17,6 +17,7 @@ Catalogue and process my audiobook collection locally: first a catalogue of book
   - `mirror.py`: the on-disk mirror of the audio library under `<data_dir>/library/` (metadata.json and cover per book), kept current as books are confirmed and covers saved.
   - `details.py`: the book page's data: Audible metadata file, file list, ffprobe tags and durations (cached), and cover images from the book's folder, embedded art or the Audible file's cover URL (saved in the book's mirror folder).
   - `providers/`: metadata providers behind one interface (`Provider.search`, `by_asin`): Audnexus, Audible catalogue search, Hardcover, AudiobookDB; shared throttled HTTP client, retries and 7-day response cache (`base.py`).
+  - `process/`: the processor. `probe.py` (ffprobe/ffmpeg measurements), `plan.py` (chapters, copy-or-encode, tiers, one loudness gain per book), `run.py` (carries out a plan into `final_dir`, verifies, moves into place). Results are kept in the `processed` table.
   - `enrich.py`: Hardcover community data (ratings, reviews, tags) for confirmed books, stored in `book_extra` and the mirror.
   - `matcher.py`: scoring, combining the providers (ASIN first, then ordered search with early stop and merge of duplicates), suggestions with alternatives, and `evaluate` to compare providers.
   - `catalogue.py`: the audiobook catalogue: book validation and add, list/search, get, update and remove on the `books` table.

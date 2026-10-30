@@ -150,3 +150,28 @@ describe('BookPage when the audio share is down', () => {
     expect(screen.getByText('Catalogue')).toBeInTheDocument()
   })
 })
+
+
+describe('BookPage final library section', () => {
+  it('shows what processing produced, and a failure', async () => {
+    mock.processed = { status: 'done', out_dir: '/home/u/audiobooks/A/Dune', chapters: 12, chapter_source: 'Audible chapter list', tiers: { V5: 11, V4: 1 }, in_bytes: 400_000_000, out_bytes: 190_000_000, loudness_before: -22.1, loudness_after: -18.0, warnings: ['peaks limit the boost'], finished: '2026-10-30T12:00:00+00:00' }
+    const { unmount } = setup(<BookPage id={1} />)
+    expect(await screen.findByText('Final library')).toBeInTheDocument()
+    expect(screen.getByText('/home/u/audiobooks/A/Dune')).toBeInTheDocument()
+    expect(screen.getByText('12 (from Audible chapter list)')).toBeInTheDocument()
+    expect(screen.getByText('11× V5 · 1× V4')).toBeInTheDocument()
+    expect(screen.getByText('381 MB → 181 MB (48%)')).toBeInTheDocument()
+    expect(screen.getByText('-22.1 → -18.0 LUFS')).toBeInTheDocument()
+    unmount()
+    mock.processed = { status: 'failed', error: 'ffmpeg failed on chapter 3' }
+    setup(<BookPage id={1} />)
+    expect(await screen.findByText(/Processing failed: ffmpeg failed on chapter 3/)).toBeInTheDocument()
+  })
+
+  it('shows sizes in bytes, KB and GB and omits missing values', async () => {
+    mock.processed = { status: 'done', out_dir: '/x', chapters: 1, chapter_source: 'whole file', in_bytes: 5 * 1024 ** 3, out_bytes: 900 }
+    setup(<BookPage id={1} />)
+    expect(await screen.findByText('5.0 GB → 900 B (0%)')).toBeInTheDocument()
+    expect(screen.queryByText('Loudness')).toBeNull()
+  })
+})
