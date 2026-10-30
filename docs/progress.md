@@ -3,7 +3,7 @@
 ## 2026-10-30: book page and covers
 
 - Found that 118 of the `Audible/` books have a `<title> [ASIN].metadata.json` next to the audio (Audible's own product data: narrators, series, publisher, release date, runtime, ratings, categories, summary, chapters, cover URL). The book page reads it as the richest local source; no API terms involved.
-- Covers come from the user's own files (folder image, embedded art, then the cover URL in that metadata file), not from AudiobookDB (its terms exclude cover art). ffmpeg writes embedded MP3 art as PNG, so the cache accepts jpg/png/webp.
+- Covers come from the user's own files (folder image, embedded art, then the cover URL in that metadata file), then, by the user's decision, from the book's AudiobookDB match as a last resort (its terms say the API licence does not cover cover art, i.e. users must sort out rights themselves; judged fine for a private internal catalogue). ffmpeg writes embedded MP3 art as PNG, so the cache accepts jpg/png/webp.
 - Mistake worth recording: while testing the backup folder I ran `./app remove 1` on the live database, meaning to remove a test book I had just added, and deleted scanned item #1 instead (an unreviewed, unmatched loose mp3). Restored it from the backup taken just before; nothing else was affected. Use the id the add command prints.
 
 ## 2026-10-29: scanning and matching

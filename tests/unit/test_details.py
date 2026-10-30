@@ -1,6 +1,6 @@
 import json, os, shutil, subprocess
 import pytest
-from app import catalogue, details
+from app import catalogue, details, matcher, settings
 
 PNG = b'\x89PNG\r\n\x1a\n' + b'0' * 20
 JPG = b'\xff\xd8\xff\xe0' + b'0' * 20
@@ -94,3 +94,37 @@ def test_probe_and_embedded_cover_with_real_ffmpeg(tmp_path):
 def test_probe_degrades_without_ffmpeg(monkeypatch):
     monkeypatch.setattr(shutil, 'which', lambda n: None)
     assert details.probe(['x']) == dict(available=False) and details._embedded(['x']) is None
+
+
+def with_suggestion(tmp_path, name, review, score, **sug):
+    b = book(tmp_path, name)
+    catalogue.set_suggestion(b['id'], dict(id='adb1', title=name, **sug), score)
+    if review == 'confirmed': catalogue.confirm(b['id'])
+    return catalogue.get_book(b['id'])
+
+
+def test_cover_last_resort_is_the_audiobookdb_match(tmp_path, monkeypatch):
+    monkeypatch.setattr(details, '_embedded', lambda files: None); urls = []
+    monkeypatch.setattr(details, '_download', lambda u: urls.append(u) or PNG)
+    b = with_suggestion(tmp_path, 'Known', 'confirmed', 0.7, cover_url='https://cdn.example/h/large.jpg')
+    assert details.cover(b).endswith('.png') and urls == ['https://cdn.example/h/large.jpg']
+    c = with_suggestion(tmp_path, 'Likely', 'suggested', 0.9, cover_url='https://cdn.example/l/large.jpg')
+    assert details.cover(c) and urls[-1] == 'https://cdn.example/l/large.jpg'
+    d = with_suggestion(tmp_path, 'Unsure', 'suggested', 0.7, cover_url='https://cdn.example/u/large.jpg')
+    assert details.cover(d) is None and len(urls) == 2                                      # a doubtful match could be the wrong book: no cover
+
+
+def test_cover_url_is_looked_up_when_the_suggestion_has_none_and_outages_are_not_remembered(tmp_path, monkeypatch):
+    monkeypatch.setattr(details, '_embedded', lambda files: None); monkeypatch.setattr(details, '_download', lambda u: PNG)
+    looked = []
+    class Src:
+        def cover_url(self, i): looked.append(i); return 'https://cdn.example/x/large.jpg'
+    monkeypatch.setattr(matcher, 'AudiobookDB', Src)
+    assert details.cover(with_suggestion(tmp_path, 'Old', 'confirmed', 1.0)) and looked == ['adb1']
+    class Down:
+        def cover_url(self, i): raise matcher.MatchError('503')
+    monkeypatch.setattr(matcher, 'AudiobookDB', Down)
+    b = with_suggestion(tmp_path, 'Later', 'confirmed', 1.0)
+    assert details.cover(b) is None and not os.path.exists(os.path.join(settings.data_dir(), 'covers', f"{b['id']}.none"))
+    monkeypatch.setattr(matcher, 'AudiobookDB', Src)
+    assert details.cover(b)                                                                  # retried and found once the service is back

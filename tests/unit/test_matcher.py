@@ -136,3 +136,14 @@ def test_migration_from_the_first_schema_keeps_data_and_backs_up():
     b = catalogue.list_books()[0]
     assert b['title'] == 'Old' and b['review'] == 'confirmed' and b['kind'] == 'book' and b['suggestion'] is None
     assert [x['reason'] for x in backup.list_backups() if x['reason']] == ['pre-migration']
+
+
+def test_image_urls_and_cover_lookup(fake_urlopen):
+    assert matcher.image_url(dict(coverImage=dict(url='https://cdn/abc'))) == 'https://cdn/abc/large.jpg'
+    assert matcher.image_url(dict(image=dict(url='https://cdn/abc/'))) == 'https://cdn/abc/large.jpg'
+    assert matcher.image_url(dict(image='https://cdn/a.png')) == 'https://cdn/a.png'
+    assert matcher.image_url({}) == '' and matcher.image_url(dict(image=dict(url=None))) == ''
+    assert matcher.candidate(raw('Dune') | dict(image=dict(url='https://cdn/x')))['cover_url'] == 'https://cdn/x/large.jpg'
+    fake_urlopen.reply(dict(coverImage=dict(url='https://cdn/book')), http_error(404))
+    src = matcher.AudiobookDB()
+    assert src.cover_url('b1') == 'https://cdn/book/large.jpg' and src.cover_url('missing') == ''

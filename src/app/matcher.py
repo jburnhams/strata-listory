@@ -57,6 +57,13 @@ def _cached(cache_key: str, fetch):
     finally: c.close()
 
 
+def image_url(raw: dict) -> str:
+    """The cover image URL of an AudiobookDB book (its API says to append `/large.jpg` to the base URL), or ''."""
+    img = raw.get('coverImage') or raw.get('image') or {}
+    url = img.get('url') if isinstance(img, dict) else img
+    return '' if not isinstance(url, str) or not url else url if re.search(r'\.(jpe?g|png|webp)$', url) else url.rstrip('/') + '/large.jpg'
+
+
 def candidate(raw: dict) -> dict:
     """Reduce an AudiobookDB book to the fields we use."""
     authors = [p['person']['name'] for p in raw.get('people', []) if (p.get('role') or {}).get('name') == 'Author']
@@ -64,7 +71,7 @@ def candidate(raw: dict) -> dict:
     pos = None
     try: pos = float(sw['ordinal']) if sw else None
     except (TypeError, ValueError, KeyError): pass
-    return dict(source='audiobookdb', id=raw.get('id', ''), title=raw.get('title', ''), subtitle=raw.get('subtitle') or '', author=', '.join(authors), authors=authors, series=sw['title'] if sw else '', series_position=pos)
+    return dict(source='audiobookdb', id=raw.get('id', ''), title=raw.get('title', ''), subtitle=raw.get('subtitle') or '', author=', '.join(authors), authors=authors, series=sw['title'] if sw else '', series_position=pos, cover_url=image_url(raw))
 
 
 class AudiobookDB:
@@ -73,6 +80,9 @@ class AudiobookDB:
         q = title.strip()[:100]
         raw = _cached('search:' + q.lower(), lambda: _request('/search', dict(q=q, type='books'))) if len(q) >= 3 else []
         return [candidate(b) for b in raw or []]
+
+    def cover_url(self, book_id: str) -> str:
+        return image_url(_cached('book:' + book_id, lambda: _request(f'/books/{book_id}')) or {})
 
     def by_asin(self, asin: str) -> dict | None:
         raw = _cached('asin:' + asin, lambda: _request(f'/audiobooks/external/audible/{asin}'))
