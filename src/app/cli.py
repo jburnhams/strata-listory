@@ -1,7 +1,7 @@
 """Command line: `doctor` checks the environment, `add`/`list`/`show`/`edit`/`remove` manage the audiobook catalogue, `set` changes settings, `serve` starts the web server."""
 import argparse, importlib, json, os, sys
 
-from app import __version__, backup, catalogue, db, matcher, mirror, providers, scan, settings
+from app import __version__, backup, catalogue, db, enrich, matcher, mirror, providers, scan, settings
 
 CHECKS = (('fastapi', 'fastapi'), ('uvicorn', 'uvicorn'), ('pydantic', 'pydantic'))
 
@@ -106,6 +106,16 @@ def cmd_mirror(args):
     print(f'wrote metadata.json for {n} of {len(books)} books under {mirror.root()}'); return 0
 
 
+def cmd_enrich(args):
+    try:
+        if args.id is not None:
+            data = enrich.enrich_book(_run(catalogue.get_book, args.id))
+            print(f"#{args.id}: " + (f"Hardcover {data['rating'] or 0:.2f} from {data['ratings_count']} ratings, {data['reviews_count']} reviews, {len(data['reviews'])} stored" if data else 'not found on Hardcover')); return 0
+        res = enrich.enrich_pending(args.limit)
+    except matcher.MatchError as e: sys.exit(str(e))
+    print(f"tried {res['tried']}: {res['enriched']} enriched, {res['not_found']} not found on Hardcover; {res['remaining']} confirmed books still to do"); return 0
+
+
 def cmd_providers(args):
     for p in providers.status():
         print(f"  {p['name']:12} {p['label']:18} {'selected #' + str(p['order']) if p['selected'] else 'not selected':14} {'ready' if p['available'] else 'UNAVAILABLE: ' + p['reason']}  (1 request per {p['min_interval']:g}s, cache {p['cache_days']:g} days)")
@@ -157,6 +167,7 @@ def main(argv=None):
     sc = sub.add_parser('scan', help='find audiobooks in a folder (default: the library_dir setting) and add them as new, unreviewed books; never writes to the folder'); sc.add_argument('folder', nargs='?'); sc.add_argument('--dry-run', action='store_true'); sc.set_defaults(fn=cmd_scan)
     mt = sub.add_parser('match', help='look scanned books up with the metadata providers and record suggestions'); mt.add_argument('--limit', type=int, default=25); mt.add_argument('--providers', help='comma separated, in order (default: the match_providers setting)'); mt.set_defaults(fn=cmd_match)
     mr = sub.add_parser('mirror', help='rewrite metadata.json in the data mirror (<data_dir>/library) for confirmed books'); mr.add_argument('--all', action='store_true', help='every book, not only confirmed ones'); mr.set_defaults(fn=cmd_mirror)
+    en = sub.add_parser('enrich', help='fetch Hardcover ratings, reviews and other community data for confirmed books'); en.add_argument('id', nargs='?', type=int, help='one book (refetched even if recent); default: confirmed books without recent data'); en.add_argument('--limit', type=int, default=25); en.set_defaults(fn=cmd_enrich)
     sub.add_parser('providers', help='list the metadata providers and whether each can run').set_defaults(fn=cmd_providers)
     mx = sub.add_parser('match-test', help='compare the providers on a sample of scanned books without recording anything'); mx.add_argument('--limit', type=int, default=50); mx.add_argument('--stride', type=int, default=1, help='take every Nth book, to spread the sample'); mx.add_argument('--providers'); mx.set_defaults(fn=cmd_match_test)
     cf = sub.add_parser('confirm', help='accept a book, applying its suggestion if it has one'); cf.add_argument('id', type=int); cf.set_defaults(fn=cmd_confirm)

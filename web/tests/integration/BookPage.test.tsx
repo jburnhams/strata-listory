@@ -90,3 +90,51 @@ describe('BookPage suggestion with few details', () => {
     expect(screen.queryByText('Found by')).toBeNull()
   })
 })
+
+
+describe('BookPage community ratings and reviews', () => {
+  it('fetches from Hardcover, shows ratings, reviews and spoilers, and reports errors', async () => {
+    const { user } = setup(<BookPage id={1} />)
+    expect(await screen.findByText('Not fetched yet.')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Fetch from Hardcover' }))
+    expect(await screen.findByText('4.31 / 5 from 12,345 ratings')).toBeInTheDocument()
+    expect(screen.getByText('5,000 (4,000 finished)')).toBeInTheDocument()
+    expect(screen.getByText('Violence')).toBeInTheDocument()
+    expect(screen.getByText('Macmillan Audio 21 h')).toBeInTheDocument()
+    expect(screen.getByText('A desert planet saga.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'hardcover.app' })).toHaveAttribute('href', 'https://hardcover.app/books/dune')
+    await user.click(screen.getByText('3 top reviews'))
+    expect(screen.getByText('A masterpiece.')).toBeInTheDocument()
+    expect(screen.getByText(/^x+…$/)).toBeInTheDocument()                       // long reviews are cut
+    expect(screen.getByText('Contains spoilers')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Refresh from Hardcover' })).toBeInTheDocument()
+
+    server.use(http.post('/api/books/1/enrich', () => HttpResponse.json({ detail: 'Hardcover is not available' }, { status: 502 })))
+    await user.click(screen.getByRole('button', { name: 'Refresh from Hardcover' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Hardcover is not available')
+  })
+
+  it('says so when the book is not on Hardcover, and offers nothing for unconfirmed books', async () => {
+    mock.extras = { hardcover: { fetched: '2026-10-30T12:00:00+00:00', data: { not_found: true } } }
+    const { unmount } = setup(<BookPage id={1} />)
+    expect(await screen.findByText('This book was not found on Hardcover.')).toBeInTheDocument()
+    unmount()
+    mock.books[0] = { ...mock.books[0], review: 'new' }
+    setup(<BookPage id={1} />)
+    await screen.findByRole('heading', { name: 'Dune' })
+    expect(screen.queryByText('Community ratings and reviews')).toBeNull()
+  })
+})
+
+describe('BookPage with thin Hardcover data', () => {
+  it('shows only what Hardcover has', async () => {
+    mock.extras = { hardcover: { fetched: '2026-10-30T12:00:00+00:00', data: { id: '5', rating: null, reviews_count: 0, audiobook_editions: [{ asin: '', hours: null, publisher: '', released: '', format: '' }], series: [{ name: 'Saga', position: null }], reviews: [{ user: 'r', rating: 4, text: 'short', spoilers: false, likes: 0, date: '2022-02-02' }] } } }
+    const { user } = setup(<BookPage id={1} />)
+    expect(await screen.findByText('Saga')).toBeInTheDocument()
+    expect(screen.queryByText(/ratings$/)).toBeNull()
+    expect(screen.getByRole('link', { name: 'hardcover.app' })).toHaveAttribute('href', 'https://hardcover.app')
+    await user.click(screen.getByText('1 top reviews'))
+    expect(screen.getByText('r · 4★ · 2022-02-02 · 0 likes')).toBeInTheDocument()
+    mock.extras = { hardcover: { fetched: '2026-10-30T12:00:00+00:00', data: { id: '6' } } }
+  })
+})

@@ -11,6 +11,7 @@ Fast and isolated: synthetic data and fakes; no external services, no network. `
 | `settings.py` | `test_settings.py` | 100% | done | home/data_dir/library_dir defaults, overrides, save/load, corrupt JSON |
 | `catalogue.py` | `test_catalogue.py` | 93% | done | validation, defaults, ids, search/sort, corrupt database refused and restored, hypothesis title strip |
 | `details.py` | `test_details.py` | 96% | done | Audible sidecar parsing, file list, cached probe, cover order and negative cache, loose-file covers, download rules, real ffmpeg probe/embedded art (skipped without ffmpeg) |
+| `enrich.py` | `test_enrich.py` | 97% | done | Hardcover id from suggestion/ASIN/likely search, stored extras and mirror, pending and stale, removal |
 | `mirror.py` | `test_mirror.py` | 100% | done | folder layout (files, external, manual, odd names), confirmed books written and kept current, cover replacement and source, failures never break a change |
 | `scan.py` | `test_scan.py` | 97% | done | name parsing (table), one-work decisions, library shapes in a tmp tree, never writes |
 | `matcher.py` | `test_matcher.py` | 98% | done | scoring, ASIN-then-search, early stop, merge and bonus, alternatives, failures, pending/radio/tried, evaluate, confirm/ignore, rescan fragments, v1 migration |

@@ -8,7 +8,7 @@ from app.providers.base import MatchError
 
 @pytest.fixture(autouse=True)
 def fast(monkeypatch):
-    monkeypatch.setenv('APP_ADB_KEY', 'adb_test'); monkeypatch.setattr(time, 'sleep', lambda s: None)
+    monkeypatch.setenv('APP_ADB_KEY', 'adb_test'); monkeypatch.setenv('APP_HARDCOVER_KEY', 'hc_test'); monkeypatch.setattr(time, 'sleep', lambda s: None)
     for p in providers.ALL: monkeypatch.setattr(providers.get(p.name).http if hasattr(providers.get(p.name), 'http') else object(), 'min_interval', 0, raising=False)
 
 
@@ -22,7 +22,7 @@ AUDIBLE = dict(asin='B00VVVY0PI', title='Flashman at the Charge', subtitle='The 
 
 
 def test_registry_order_selection_and_status(monkeypatch, tmp_path):
-    assert providers.configured() == ['audnexus', 'audible', 'audiobookdb']
+    assert providers.configured() == ['audnexus', 'audible', 'hardcover', 'audiobookdb']
     monkeypatch.setenv('APP_PROVIDERS', 'audiobookdb, audible')
     assert [p.name for p in providers.enabled()] == ['audiobookdb', 'audible'] and providers.get('audible') is providers.get('audible')
     st = {s['name']: s for s in providers.status()}
@@ -98,7 +98,7 @@ def test_cache_expires_after_a_week(fake_urlopen):
 
 def test_each_provider_declares_its_own_rate_limit_and_cache_lifetime(fake_urlopen):
     limits = {c.name: (c.min_interval, c.cache_days) for c in providers.ALL}
-    assert limits == {'audnexus': (0.3, 14), 'audible': (0.3, 14), 'audiobookdb': (0.15, 7)}
+    assert limits == {'audnexus': (0.3, 14), 'audible': (0.3, 14), 'hardcover': (1.1, 14), 'audiobookdb': (0.15, 7)}
     assert all(c().http.min_interval == c.min_interval for c in providers.ALL)                 # the HTTP client throttles at the provider's own rate
     assert {s['name']: (s['min_interval'], s['cache_days']) for s in providers.status()} == limits
     p = audnexus.Audnexus(); p.cache_days = 0                                                      # a lifetime of zero: always refetched
@@ -113,3 +113,43 @@ def test_throttle_spaces_requests(monkeypatch, fake_urlopen):
     h = Http('T', min_interval=0.5); fake_urlopen.reply({'a': 1}, {'b': 2})
     h.request('https://x/1'); h.request('https://x/2')
     assert slept[0] == 0 and slept[1] == 0.5                                                       # the second request waits out the interval
+
+
+HC_HIT = dict(id=375699, title='Born A Crime', subtitle='Stories', author_names=['Trevor Noah'], series_names=[], featured_series={}, image=dict(url='https://assets.hardcover.app/x.jpg'), release_year=2016, rating=4.5, ratings_count=1194, genres=['Memoir', 'Humor'], pages=288, slug='born-a-crime')
+HC_DETAILS = dict(books=[dict(id=375699, title='Born A Crime', subtitle='Stories', slug='born-a-crime', description='A memoir.', pages=288, release_date='2016-11-15', rating=4.5, ratings_count=1194, reviews_count=164, users_count=2262, users_read_count=1468, lists_count=948,
+                              cached_tags={'Genre': [dict(tag='Memoir', count=5, spoiler_ratio=0), dict(tag='Biography', count=9, spoiler_ratio=0)], 'Mood': [dict(tag='funny', count=3, spoiler_ratio=0)], 'Tag': [dict(tag='Africa', count=1, spoiler_ratio=0.8)], 'Content Warning': [dict(tag='Racism', count=2, spoiler_ratio=0.9)]},
+                              book_series=[dict(position=1, series=dict(name='Noah'))])],
+                  user_books=[dict(rating=5.0, review_raw='x' * 4000, review_has_spoilers=True, likes_count=7, reviewed_at='2020-01-02T03:04:05', user=dict(username='reader'))],
+                  editions=[dict(asin='B01IW9TQPK', audio_seconds=31440, edition_format='Audible.com', release_date='2016-11-15', publisher=dict(name='Audible Studios')), dict(asin=None, audio_seconds=None, edition_format=None, release_date=None, publisher=None)])
+
+
+def test_hardcover_search_asin_cover_and_details(fake_urlopen, monkeypatch, tmp_path):
+    from app.providers import hardcover
+    p = hardcover.Hardcover()
+    fake_urlopen.reply(dict(data=dict(search=dict(results=dict(hits=[dict(document=HC_HIT)])))), dict(data=dict(editions=[dict(book=dict(id=1, title='Via ASIN', slug='s', rating=4.0, cached_contributors=[dict(author=dict(name='A B'), contribution='Author')], cached_image=dict(url='https://i/c.jpg')))])), dict(data=dict(editions=[])),
+                       dict(data=dict(books=[dict(cached_image=dict(url='https://i/cover.jpg'))])), dict(data=HC_DETAILS))
+    c = p.search('Born a Crime', 'Trevor Noah')[0]
+    assert (c['source'], c['id'], c['author'], c['rating'], c['ratings_count'], c['genres'], c['url'], c['cover_url']) == ('hardcover', '375699', 'Trevor Noah', 4.5, 1194, ['Memoir', 'Humor'], 'https://hardcover.app/books/born-a-crime', 'https://assets.hardcover.app/x.jpg')
+    call = fake_urlopen.calls[0]
+    assert call['url'] == hardcover.API and call['headers']['authorization'] == 'Bearer hc_test' and call['body']['variables'] == dict(q='Born a Crime Trevor Noah', n=8) and 'query_type: "Book"' in call['body']['query']
+    a = p.by_asin('B01IW9TQPK'); assert (a['title'], a['author'], a['cover_url']) == ('Via ASIN', 'A B', 'https://i/c.jpg') and p.by_asin('B000MISSING') is None
+    assert p.cover_url('375699') == 'https://i/cover.jpg' and p.search('x') == []
+    d = p.details('375699')
+    assert (d['rating'], d['ratings_count'], d['reviews_count'], d['readers'], d['genres'], d['moods'], d['content_warnings']) == (4.5, 1194, 164, 2262, ['Biography', 'Memoir'], ['funny'], ['Racism'])      # most-used tags first; spoiler-heavy tags hidden, except warnings
+    assert d['tags'] == [] and d['series'] == [dict(name='Noah', position=1)] and d['audiobook_editions'][0] == dict(asin='B01IW9TQPK', hours=8.7, publisher='Audible Studios', released='2016-11-15', format='Audible.com')
+    assert d['reviews'] == [dict(user='reader', rating=5.0, text='x' * 3000, spoilers=True, likes=7, date='2020-01-02')] and p.details('375699') == d             # the second call is cached
+
+
+def test_hardcover_errors_and_key(fake_urlopen, monkeypatch, tmp_path):
+    from app.providers import hardcover
+    p = hardcover.Hardcover()
+    fake_urlopen.reply(dict(errors=[dict(message='bad query')]), None, dict(data=dict(books=[])))
+    for t, msg in (('aaa', 'Hardcover: bad query'), ('bbb', 'returned nothing')):
+        with pytest.raises(MatchError, match=msg): p.search(t)
+    assert p.details('5') is None
+    assert hardcover.hit_to_candidate(dict(id=1, series_names=['S'], featured_series=dict(position=2.5), image=None))['series_position'] == 2.5
+    monkeypatch.delenv('APP_HARDCOVER_KEY'); monkeypatch.setenv('HOME', str(tmp_path)); monkeypatch.setenv('USERPROFILE', str(tmp_path))
+    assert p.unavailable() and hardcover.key() == ''
+    with pytest.raises(MatchError, match='no Hardcover API token'): p.search('Another')
+    (tmp_path / '.config' / 'strata-listory').mkdir(parents=True); (tmp_path / '.config' / 'strata-listory' / 'hardcover.key').write_text('Bearer hc_file\n')
+    assert hardcover.key() == 'hc_file' and p.unavailable() is None

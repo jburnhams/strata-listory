@@ -136,3 +136,26 @@ def test_mirror_command_and_provider_limits(capsys):
     assert cli.main(['mirror']) == 0 and 'wrote metadata.json for 1 of 1 books' in capsys.readouterr().out
     assert cli.main(['mirror', '--all']) == 0 and 'for 2 of 2 books' in capsys.readouterr().out
     assert os.path.isfile(os.path.join(mirror.root(), '_external', 'new one', 'metadata.json'))
+
+
+def test_enrich_command(capsys, monkeypatch):
+    from app import catalogue, providers
+    from app.providers.base import candidate
+    class HC:
+        name = 'hardcover'
+        def unavailable(self): return None
+        def search(self, t, a=''): return [candidate('hardcover', id='42', title='Dune', authors=['Frank Herbert'])]
+        def by_asin(self, a): return None
+        def details(self, i): return dict(source='hardcover', id=i, rating=4.25, ratings_count=10, reviews_count=2, reviews=[1, 2])
+    monkeypatch.setattr(providers, 'enabled', lambda names=None: [HC()])
+    cli.main(['add', 'Dune', '--author', 'Frank Herbert']); capsys.readouterr()
+    assert cli.main(['enrich']) == 0 and 'tried 1: 1 enriched, 0 not found on Hardcover; 0 confirmed books still to do' in capsys.readouterr().out
+    assert cli.main(['enrich', '1']) == 0 and '#1: Hardcover 4.25 from 10 ratings, 2 reviews, 2 stored' in capsys.readouterr().out
+    cli.main(['add', 'Unknown Thing']); capsys.readouterr()
+    class Empty(HC):
+        def search(self, t, a=''): return []
+    monkeypatch.setattr(providers, 'enabled', lambda names=None: [Empty()])
+    assert cli.main(['enrich', '2']) == 0 and 'not found on Hardcover' in capsys.readouterr().out
+    with pytest.raises(SystemExit, match='no such book'): cli.main(['enrich', '99'])
+    monkeypatch.setattr(providers, 'enabled', lambda names=None: [])
+    with pytest.raises(SystemExit, match='Hardcover is not available'): cli.main(['enrich', '1'])

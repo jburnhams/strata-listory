@@ -3,7 +3,7 @@
     ./app serve [--host 127.0.0.1] [--port 8360]
 
 API (JSON): GET /api/health; GET /api/settings; PUT /api/settings {data_dir?, library_dir?, backup_dir?};
-GET /api/books?q=&status=&review=&kind=; POST /api/scan {folder?}; POST /api/match?limit=&providers=; GET /api/providers; POST /api/books/{id}/confirm|ignore; POST /api/books {title, author?, narrator?, series?, series_position?, duration_seconds?, path?, status?};
+GET /api/books?q=&status=&review=&kind=; POST /api/scan {folder?}; POST /api/match?limit=&providers=; GET /api/providers; POST /api/enrich?limit=; POST /api/books/{id}/enrich (Hardcover ratings and reviews); POST /api/books/{id}/confirm|ignore; POST /api/books {title, author?, narrator?, series?, series_position?, duration_seconds?, path?, status?};
 GET|PATCH|DELETE /api/books/{id}; GET /api/books/{id}/details (files, embedded tags, Audible metadata file); GET /api/books/{id}/cover (image).
 The page at / serves `src/app/server/static/index.html` when built (`cd web && npm run build`), else the plain stand-in `landing.html`."""
 import os
@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import __version__, catalogue, db, details, matcher, providers, scan, settings
+from app import __version__, catalogue, db, details, enrich, matcher, providers, scan, settings
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 LANDING = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'landing.html')
@@ -99,6 +99,17 @@ def create_app():
         except KeyError as e: raise HTTPException(400, str(e.args[0]))
         except matcher.MatchError as e: raise HTTPException(502, str(e))
 
+    @app.post('/api/enrich')
+    def post_enrich(limit: int = 25):
+        try: return guard(enrich.enrich_pending, max(1, min(limit, 100)))
+        except matcher.MatchError as e: raise HTTPException(502, str(e))
+
+    @app.post('/api/books/{book_id}/enrich')
+    def enrich_one(book_id: int):
+        b = guard(catalogue.get_book, book_id)
+        try: return dict(found=guard(enrich.enrich_book, b) is not None, extras=catalogue.get_extras(book_id))
+        except matcher.MatchError as e: raise HTTPException(502, str(e))
+
     @app.get('/api/providers')
     def get_providers(): return providers.status()
 
@@ -113,7 +124,7 @@ def create_app():
         b = guard(catalogue.get_book, book_id); d = guard(details.describe, b)
         probe = d['probe'] or {}; secs = probe.get('duration_seconds') if probe.get('complete') else (d['audible'] or {}).get('runtime_minutes', 0) * 60 or None      # a full probe is exact; otherwise Audible's runtime
         if b['duration_seconds'] is None and secs: b = guard(catalogue.update_book, book_id, duration_seconds=int(secs))
-        return dict(book=b, **d)
+        return dict(book=b, extras=catalogue.get_extras(book_id), **d)
 
     @app.get('/api/books/{book_id}/cover')
     def book_cover(book_id: int):

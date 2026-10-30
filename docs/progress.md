@@ -1,5 +1,11 @@
 # Progress log
 
+## 2026-10-30: Hardcover
+
+- Hardcover's GraphQL API (token in `~/.config/strata-listory/hardcover.key`, not tracked) works as a search provider (4 of 4 test titles right) and gives ratings, counts, genres, moods, content warnings, tags, series, audiobook editions and public reviews. Its documentation pages returned 403 to my fetch tool, so the exact rate limit and terms were not read; the client keeps to about one request a second.
+- First live run: 11 of 12 confirmed books enriched. Hardcover has several records for some classics, so a rating can come from a small duplicate record (Adrian Mole #1: 5.0 from 2 ratings); the book page shows the counts so this is visible.
+- Bug found while testing: the backup folder pointed at the SMB share and the `server` PC was down, so opening the database failed with "Host is down". Backups now fall back to `<data_dir>/backups` when the configured folder cannot be written, and a failing automatic backup only prints a warning.
+
 ## 2026-10-30: mirror and provider covers
 
 - Covers can now come from any provider (suggestion cover, then each provider by ASIN, then AudiobookDB by id) and are saved with the book's final data in a mirror of the audio tree under `<data_dir>/library/` (the share is read-only). Covers cached earlier under `covers/` move into the mirror on first use; only the "no cover found" markers stay in `covers/`.

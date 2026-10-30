@@ -2,7 +2,7 @@
 
 A book is a dict: id, title, author, narrator, series, series_position, duration_seconds, path (where the audio lives, optional), status (one of STATUSES), added (UTC ISO time); from scanning also asin, kind (KINDS), review (REVIEWS), file_count, and while matching suggestion (see matcher.py) and match_score."""
 import json, os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app import db, mirror
 
@@ -109,7 +109,7 @@ def remove_book(book_id: int) -> dict:
     c = db.connect()
     try:
         with c:
-            b = _one(c, book_id); c.execute('DELETE FROM books WHERE id=?', (book_id,))
+            b = _one(c, book_id); c.execute('DELETE FROM books WHERE id=?', (book_id,)); c.execute('DELETE FROM book_extra WHERE book_id=?', (book_id,))
         return b
     finally: c.close()
 
@@ -162,3 +162,27 @@ def confirm(book_id: int) -> dict:
 
 def ignore(book_id: int) -> dict:
     return update_book(book_id, review='ignored')
+
+
+def set_extra(book_id: int, source: str, data: dict):
+    """Store a provider's extra data about a book (ratings, reviews and the like), replacing the previous copy."""
+    c = db.connect()
+    try:
+        with c:
+            _one(c, book_id)
+            c.execute('INSERT OR REPLACE INTO book_extra (book_id, source, fetched, data) VALUES (?, ?, ?, ?)', (book_id, source, datetime.now(timezone.utc).isoformat(), json.dumps(data)))
+    finally: c.close()
+
+
+def get_extras(book_id: int) -> dict:
+    """{source: {fetched, data}} for a book."""
+    c = db.connect()
+    try: return {r['source']: dict(fetched=r['fetched'], data=json.loads(r['data'])) for r in c.execute('SELECT source, fetched, data FROM book_extra WHERE book_id=?', (book_id,))}
+    finally: c.close()
+
+
+def pending_extra(source: str, days: float, limit: int) -> list[dict]:
+    """Confirmed books with no `source` extra data, or data older than `days`."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(); c = db.connect()
+    try: return [_row(r) for r in c.execute(f"SELECT {COLUMNS} FROM books b WHERE review='confirmed' AND kind='book' AND NOT EXISTS (SELECT 1 FROM book_extra e WHERE e.book_id=b.id AND e.source=? AND e.fetched>?) ORDER BY id LIMIT ?", (source, cutoff, limit))]
+    finally: c.close()

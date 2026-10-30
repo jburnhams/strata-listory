@@ -1,6 +1,6 @@
 """The data mirror: for every book we keep what we know about it on disk, in a folder tree that mirrors the audio library, under `<data_dir>/library/`. The audio share is read-only, so this is where the catalogue's own files live:
 
-    <data_dir>/library/<path of the book relative to library_dir>/metadata.json   the final catalogue record, the Audible metadata summary and the match that produced it
+    <data_dir>/library/<path of the book relative to library_dir>/metadata.json   the final catalogue record, the Audible metadata summary, community data such as ratings and reviews, and the match that produced it
     <data_dir>/library/<path of the book relative to library_dir>/cover.jpg|png   the cover image and where it came from (metadata.json: cover_source)
 
 A book that is a single file gets a folder named after the file without its extension. A book outside the library folder goes under `_external/`, one entered by hand under `_manual/<id>-<title>/`. Writes are atomic and failures never break a catalogue change; the database remains the source of truth and `./app mirror` rewrites everything from it."""
@@ -68,14 +68,14 @@ def save_cover(book: dict, data: bytes, ext: str, source: str) -> str:
 
 def write(book: dict, cover_source: str | None = None) -> str | None:
     """Write `metadata.json` for a book; returns its path, or None when the data folder cannot be written."""
-    from app import details                      # late import: details needs the mirror too
+    from app import catalogue, details           # late imports: both need the mirror too
     try:
         d = dir_for(book); old = read_meta(book)
         side = details.sidecar(book['path']) if book.get('path') and os.path.exists(book['path']) else None
         sug = book.get('suggestion') or {}
         rec = {k: v for k, v in book.items() if k not in ('suggestion', 'match_score')}
         meta = dict(book=rec, match=dict(suggestion=sug, score=book.get('match_score')) if sug else None, audible_file=details.audible_summary(side) if side else None,
-                    cover=os.path.basename(cover_file(book) or '') or None, cover_source=cover_source or old.get('cover_source'), written=datetime.now(timezone.utc).isoformat())
+                    extras=catalogue.get_extras(book['id']) or None, cover=os.path.basename(cover_file(book) or '') or None, cover_source=cover_source or old.get('cover_source'), written=datetime.now(timezone.utc).isoformat())
         p = os.path.join(d, 'metadata.json'); _atomic(p, json.dumps(meta, indent=1, ensure_ascii=False).encode('utf8')); return p
     except OSError: return None
 

@@ -12,3 +12,4 @@
 - [x] **M8 matching, first source**: AudiobookDB title/ASIN lookup with scored suggestions and a review UI (confirm / ignore).
 - [x] **M8b modular providers**: Audnexus, Audible catalogue search and AudiobookDB behind one interface; ordered or combined queries; `match-test` to compare.
 - [ ] **M8c improve the hit rate**: sample on 2026-10-30 gave ~37% good / ~55% any with all three providers; the rest are mostly names the scanner could not clean (chapter files, radio-like folders). Next: better title cleaning and author detection, tag-based titles, Open Library for non-Audible titles.
+- [x] **M9 community data**: Hardcover as a provider and as the source of ratings, review counts, genres/moods/warnings and top reviews for confirmed books (`enrich.py`, book page, mirror).

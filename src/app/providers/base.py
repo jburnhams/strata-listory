@@ -1,6 +1,6 @@
 """What every metadata provider shares: the candidate shape, a polite HTTP client (throttle, retries, 429 handling), and the response cache.
 
-A *candidate* is a dict: source (provider name), id, asin, title, subtitle, author, authors, narrators, series, series_position, runtime_minutes, cover_url, language, release_date. Providers fill what they know and leave the rest empty."""
+A *candidate* is a dict: source (provider name), id, asin, title, subtitle, author, authors, narrators, series, series_position, runtime_minutes, cover_url, language, release_date. Providers fill what they know and leave the rest empty (rating, ratings_count, genres, pages and url only come from community sites)."""
 import json, time, urllib.error, urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -14,7 +14,7 @@ class MatchError(RuntimeError):
 
 
 def candidate(source: str, **f) -> dict:
-    out = dict(source=source, id='', asin='', title='', subtitle='', author='', authors=[], narrators=[], series='', series_position=None, runtime_minutes=None, cover_url='', language='', release_date='')
+    out = dict(source=source, id='', asin='', title='', subtitle='', author='', authors=[], narrators=[], series='', series_position=None, runtime_minutes=None, cover_url='', language='', release_date='', rating=None, ratings_count=None, genres=[], pages=None, url='')
     out.update({k: v for k, v in f.items() if k in out})
     out['author'] = out['author'] or ', '.join(out['authors'])
     return out

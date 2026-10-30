@@ -8,8 +8,9 @@ from app.providers.audible import AudibleSearch
 from app.providers.audiobookdb import AudiobookDB
 from app.providers.audnexus import Audnexus
 from app.providers.base import MatchError, Provider
+from app.providers.hardcover import Hardcover
 
-ALL = (Audnexus, AudibleSearch, AudiobookDB)
+ALL = (Audnexus, AudibleSearch, Hardcover, AudiobookDB)
 _instances: dict = {}
 
 

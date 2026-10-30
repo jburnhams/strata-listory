@@ -7,14 +7,22 @@ export const initialBooks: Book[] = [
   { id: 1, title: 'Dune', author: 'Frank Herbert', narrator: '', series: 'Dune', series_position: 1, duration_seconds: 75600, path: '', status: 'unlistened', added: '2026-10-29T12:00:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null },
 ]
 
-export const mock = {
+export const hardcover = {
+  id: '375699', url: 'https://hardcover.app/books/dune', description: 'A desert planet saga.', pages: 612, rating: 4.31, ratings_count: 12345, reviews_count: 99, readers: 5000, finished: 4000,
+  genres: ['Science Fiction'], moods: ['adventurous'], tags: ['classic'], content_warnings: ['Violence'], series: [{ name: 'Dune Chronicles', position: 1 }], audiobook_editions: [{ asin: 'B0A', hours: 21, publisher: 'Macmillan Audio', released: '2007-01-01', format: 'Audible' }],
+  reviews: [{ user: 'reader1', rating: 5, text: 'A masterpiece.', spoilers: false, likes: 12, date: '2020-01-02' }, { user: 'reader2', rating: 3, text: 'x'.repeat(800), spoilers: false, likes: 3, date: '' }, { user: 'reader3', rating: null, text: 'The twist is big.', spoilers: true, likes: 1, date: '2021-05-06' }],
+}
+
+export const mock: { settings: Settings; books: Book[]; extras: Record<string, { fetched: string; data: object }> } = {
   settings: { ...defaultSettings },
   books: [...initialBooks],
+  extras: {},
 }
 
 export const resetMock = () => {
   mock.settings = { ...defaultSettings }
   mock.books = [...initialBooks]
+  mock.extras = {}
 }
 
 // Every endpoint the app calls has a handler here; one without a handler fails the test (setup.ts: onUnhandledFrame 'error').
@@ -50,14 +58,20 @@ export const handlers = [
     const book = mock.books.find(x => x.id === Number(params.id))
     if (!book) return HttpResponse.json({ detail: 'no such book' }, { status: 404 })
     if (book.id === 1) return HttpResponse.json({
-      book, path_exists: true,
+      book, extras: mock.extras, path_exists: true,
       files: { count: 2, total_bytes: 5_000_000, truncated: false, list: [{ name: '01.mp3', bytes: 2_000_000 }, { name: '02.mp3', bytes: 3_000_000 }] },
       probe: { available: true, files_probed: 2, complete: true, duration_seconds: 3700, tags: { album: 'Dune', artist: 'Frank Herbert' }, codec: 'mp3', bitrate_kbps: 64, chapters: 0, has_cover_art: true },
       audible: { asin: 'B000TEST01', title: 'Dune', subtitle: 'Book One', authors: ['Frank Herbert'], narrators: ['Scott Brick'], series: [{ title: 'Dune Chronicles', sequence: '1' }], publisher: 'Macmillan', release_date: '2007-01-01', language: 'english', format: 'unabridged',
         runtime_minutes: 1260, summary: 'A desert planet.', rating: '4.6', rating_count: 12000, categories: ['Science Fiction'], sample_url: '', chapters: [{ title: 'Chapter 1', start_sec: 0, length_sec: 600 }], cover_url: '' },
     })
-    return HttpResponse.json({ book, path_exists: false, files: null, probe: null, audible: null })
+    return HttpResponse.json({ book, extras: {}, path_exists: false, files: null, probe: null, audible: null })
   }),
+  http.post('/api/books/:id/enrich', ({ params }) => {
+    if (!mock.books.find(x => x.id === Number(params.id))) return HttpResponse.json({ detail: 'no such book' }, { status: 404 })
+    mock.extras = { hardcover: { fetched: '2026-10-30T12:00:00+00:00', data: hardcover } }
+    return HttpResponse.json({ found: true, extras: mock.extras })
+  }),
+  http.post('/api/enrich', () => HttpResponse.json({ tried: 1, enriched: 1, not_found: 0, remaining: 0 })),
   http.post('/api/scan', () => {
     mock.books = [...mock.books,
       { ...initialBooks[0], id: 10, title: 'dune messiah', author: '', review: 'new', file_count: 12 },

@@ -96,7 +96,7 @@ def test_scan_match_confirm_endpoints(client, tmp_path, monkeypatch):
     r = client.post('/api/match'); assert r.status_code == 502 and 'API key' in r.json()['detail']
     monkeypatch.undo()
     assert client.post('/api/match', params=dict(providers='nope')).status_code == 400
-    assert [p['name'] for p in client.get('/api/providers').json()] == ['audnexus', 'audible', 'audiobookdb']
+    assert [p['name'] for p in client.get('/api/providers').json()] == ['audnexus', 'audible', 'hardcover', 'audiobookdb']
 
 
 def test_book_details_and_cover_endpoints(client, tmp_path, monkeypatch):
@@ -116,3 +116,25 @@ def test_book_details_and_cover_endpoints(client, tmp_path, monkeypatch):
     b2 = client.post('/api/books', json=dict(title='Book2', path=str(d2))).json()
     assert client.get(f"/api/books/{b2['id']}/details").json()['book']['duration_seconds'] == 120               # no usable probe: Audible's runtime
     assert client.get('/api/books/999/details').status_code == 404 and client.get('/api/books/999/cover').status_code == 404
+
+
+def test_enrich_endpoints_and_extras_in_details(client, monkeypatch):
+    from app import providers
+    from app.providers.base import candidate
+    class HC:
+        name = 'hardcover'
+        def unavailable(self): return None
+        def search(self, t, a=''): return [candidate('hardcover', id='42', title='Dune', authors=['Frank Herbert'])]
+        def by_asin(self, a): return None
+        def details(self, i): return dict(source='hardcover', id=i, rating=4.0, ratings_count=3, reviews_count=1, reviews=[])
+    monkeypatch.setattr(providers, 'enabled', lambda names=None: [HC()])
+    b = client.post('/api/books', json=dict(title='Dune', author='Frank Herbert')).json()
+    assert client.get(f"/api/books/{b['id']}/details").json()['extras'] == {}
+    r = client.post(f"/api/books/{b['id']}/enrich").json()
+    assert r['found'] is True and r['extras']['hardcover']['data']['rating'] == 4.0
+    assert client.get(f"/api/books/{b['id']}/details").json()['extras']['hardcover']['data']['id'] == '42'
+    assert client.post('/api/books/99/enrich').status_code == 404
+    other = client.post('/api/books', json=dict(title='Other')).json()
+    assert client.post('/api/enrich', params=dict(limit=5)).json() == dict(tried=1, enriched=0, not_found=1, remaining=0)      # 'Other' is not on Hardcover
+    monkeypatch.setattr(providers, 'enabled', lambda names=None: [])
+    assert client.post(f"/api/books/{other['id']}/enrich").status_code == 502
