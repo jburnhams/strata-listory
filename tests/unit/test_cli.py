@@ -126,3 +126,13 @@ def test_providers_and_match_test_commands(capsys, monkeypatch):
     def broken(*a, **k): raise providers.MatchError('all providers down')
     monkeypatch.setattr(matcher, 'evaluate', broken)
     with pytest.raises(SystemExit, match='all providers down'): cli.main(['match-test'])
+
+
+def test_mirror_command_and_provider_limits(capsys):
+    from app import catalogue, mirror
+    assert cli.main(['providers']) == 0 and '1 request per 0.3s, cache 14 days' in capsys.readouterr().out
+    cli.main(['add', 'Dune']); capsys.readouterr()
+    catalogue.add_scanned([dict(path='/x/new one', title='New one', author='', narrator='', series_position=None, asin='', kind='book', file_count=1)])
+    assert cli.main(['mirror']) == 0 and 'wrote metadata.json for 1 of 1 books' in capsys.readouterr().out
+    assert cli.main(['mirror', '--all']) == 0 and 'for 2 of 2 books' in capsys.readouterr().out
+    assert os.path.isfile(os.path.join(mirror.root(), '_external', 'new one', 'metadata.json'))

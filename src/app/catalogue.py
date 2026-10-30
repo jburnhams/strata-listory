@@ -4,7 +4,7 @@ A book is a dict: id, title, author, narrator, series, series_position, duration
 import json, os
 from datetime import datetime, timezone
 
-from app import db
+from app import db, mirror
 
 STATUSES = ('unlistened', 'listening', 'finished')
 KINDS = ('book', 'radio')                                   # radio: broadcast episodes and the like that scanning found next to the books
@@ -59,6 +59,12 @@ def _one(c, book_id):
     return _row(r)
 
 
+def _mirrored(book: dict) -> dict:
+    """Keep the on-disk mirror (mirror.py) current for books that are part of the catalogue proper (not just scanned); never fails the change."""
+    if book['review'] == 'confirmed': mirror.write(book)
+    return book
+
+
 def list_books(query: str = '', status: str | None = None, review: str | None = None, kind: str | None = None) -> list[dict]:
     """Books sorted by author, series (in order) and title; `query` matches title, author, narrator or series (case-insensitive substring), `status` filters on one status."""
     q = (query or '').strip().lower(); where, args = [], []
@@ -83,7 +89,7 @@ def add_book(**fields) -> dict:
         with c:
             cur = c.execute('INSERT INTO books (title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count) VALUES (:title, :author, :narrator, :series, :series_position, :duration_seconds, :path, :status, :added, :asin, :kind, :review, :file_count)',
                             dict(rec, added=datetime.now(timezone.utc).isoformat()))
-        return _one(c, cur.lastrowid)
+        return _mirrored(_one(c, cur.lastrowid))
     finally: c.close()
 
 
@@ -94,7 +100,7 @@ def update_book(book_id: int, **fields) -> dict:
         with c:
             _one(c, book_id)
             if changes: c.execute(f"UPDATE books SET {', '.join(f'{k}=:{k}' for k in changes)} WHERE id=:id", dict(changes, id=book_id))
-        return _one(c, book_id)
+        return _mirrored(_one(c, book_id))
     finally: c.close()
 
 

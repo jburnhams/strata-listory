@@ -1,10 +1,10 @@
 """Everything we can learn about one book from its own files, for the book page: the Audible `*.metadata.json` file that sits next to purchased books, the audio files and their embedded tags (ffprobe), and a cover image. All read-only on the library; covers are cached under `<data_dir>/covers/`.
 
-Cover order: an image file in the book's folder (cover/folder/front, then any picture; for a single loose file only a picture with the same name), then art embedded in the audio (ffmpeg), then the cover URL named in the book's own Audible metadata file, and last the cover of the book's provider match (confirmed, or a likely match). The last two are downloaded once. AudiobookDB's terms do not license its images, so these are kept only in this private catalogue."""
+Cover order: an image file in the book's folder (cover/folder/front, then any picture; for a single loose file only a picture with the same name), then art embedded in the audio (ffmpeg), then the cover URL named in the book's own Audible metadata file, and last the covers offered by the metadata providers for the book's match (confirmed, or a likely match): the match's own cover, then each provider by ASIN. The cover is saved once in the book's mirror folder (mirror.py) with its source noted; AudiobookDB's terms do not license its images, so they are kept only in this private catalogue."""
 import glob, html, json, os, re, shutil, subprocess, time, urllib.request
 from datetime import datetime, timedelta, timezone
 
-from app import db, providers, scan, settings
+from app import db, mirror, providers, scan, settings
 
 IMAGES = ('.jpg', '.jpeg', '.png', '.webp')
 COVER_NAMES = ('cover', 'folder', 'front', 'albumart', 'albumartsmall', 'artwork')
@@ -125,31 +125,50 @@ def _download(url: str) -> bytes | None:
     except (OSError, ValueError): return None
 
 
+def _provider_cover(book: dict) -> tuple[bytes, str] | None:
+    """A cover from the providers for a book's match: the suggestion's own cover URL, then each enabled provider by ASIN, then AudiobookDB by its id. Raises MatchError only when nothing was found and a provider was unreachable (so it is retried later)."""
+    sug = book.get('suggestion') or {}
+    if not (sug.get('id') and (book.get('review') == 'confirmed' or (book.get('match_score') or 0) >= 0.85)): return None
+    tried = [(sug.get('source') or '?', sug.get('cover_url') or '')]; failure = None
+    asin = sug.get('asin') or book.get('asin') or ''
+    for p in providers.enabled():
+        try:
+            if p.name == sug.get('source') and not tried[0][1] and sug.get('id'): tried.append((p.name, p.cover_url(sug['id'])))
+            if asin and (c := p.by_asin(asin)): tried.append((p.name, c['cover_url']))
+        except providers.MatchError as e: failure = e
+    for source, url in tried:
+        if url and (data := _download(url)): return data, source
+    if failure: raise failure
+    return None
+
+
 def cover(book: dict) -> str | None:
-    """Path of a cached cover image for the book (found or built on first request), or None when there is none."""
-    folder = os.path.join(settings.data_dir(), 'covers'); os.makedirs(folder, exist_ok=True)
+    """Path of the book's cover image (found or built on first request and saved in its mirror folder), or None when there is none."""
+    if (p := mirror.cover_file(book)): return p
+    old = os.path.join(settings.data_dir(), 'covers'); os.makedirs(old, exist_ok=True)       # before the mirror, covers lived here; they are moved in on first use
     for e in IMAGES:
-        if os.path.isfile(p := os.path.join(folder, f"{book['id']}{e}")): return p
-    none = os.path.join(folder, f"{book['id']}.none")
+        if os.path.isfile(prev := os.path.join(old, f"{book['id']}{e}")):
+            with open(prev, 'rb') as f: data = f.read()
+            os.remove(prev); return mirror.save_cover(book, data, _image_kind(data) or e, 'cache')
+    none = os.path.join(old, f"{book['id']}.none")
     if os.path.isfile(none) and datetime.now(timezone.utc) - datetime.fromtimestamp(os.path.getmtime(none), timezone.utc) < NONE_FOR: return None
-    path = book.get('path') or ''; data = None
+    path = book.get('path') or ''; data = None; source = ''
     if path and os.path.exists(path):
         if (img := _folder_image(path)):
             try:
                 with open(img, 'rb') as f: data = f.read(6_000_000)
             except OSError: data = None
-        data = data if data and _image_kind(data) else None
-        data = data or _embedded(audio_files(path))
-        if not data and (side := sidecar(path)): data = _download(audible_summary(side)['cover_url'])
-    sug = book.get('suggestion') or {}
-    if not data and sug.get('id') and (book.get('review') == 'confirmed' or (book.get('match_score') or 0) >= 0.85):
-        try: data = _download(sug.get('cover_url') or providers.get(sug.get('source') or 'audiobookdb').cover_url(sug['id']))
-        except (providers.MatchError, KeyError): return None                  # the service is down or has no key: try again next time rather than remembering "no cover"
+            data = data if data and _image_kind(data) else None; source = 'folder' if data else ''
+        if not data and (data := _embedded(audio_files(path))): source = 'embedded'
+        if not data and (side := sidecar(path)) and (data := _download(audible_summary(side)['cover_url'])): source = 'audible-file'
+    if not data:
+        try: found = _provider_cover(book)
+        except providers.MatchError: return None               # a service is down or has no key: try again next time rather than remembering "no cover"
+        data, source = found if found else (None, '')
+        source = f'provider:{source}' if data else ''
     if not data:
         open(none, 'w').close(); os.utime(none, (time.time(), time.time())); return None
-    p = os.path.join(folder, f"{book['id']}{_image_kind(data)}")
-    with open(p, 'wb') as f: f.write(data)
-    return p
+    return mirror.save_cover(book, data, _image_kind(data), source)
 
 
 def describe(book: dict) -> dict:

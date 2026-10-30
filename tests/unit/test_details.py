@@ -1,6 +1,6 @@
 import json, os, shutil, subprocess
 import pytest
-from app import catalogue, details, providers, settings
+from app import catalogue, details, mirror, providers, settings
 
 PNG = b'\x89PNG\r\n\x1a\n' + b'0' * 20
 JPG = b'\xff\xd8\xff\xe0' + b'0' * 20
@@ -48,13 +48,14 @@ def test_describe_lists_files_and_handles_a_missing_path(tmp_path, monkeypatch):
 def test_cover_prefers_folder_images_and_remembers_the_result(tmp_path):
     b = book(tmp_path, extra=[('other.jpg', JPG), ('cover.png', PNG), ('Icon.ico', b'ico')])
     p = details.cover(b)
-    assert p.endswith(f"{b['id']}.png") and open(p, 'rb').read() == PNG and details.cover(b) == p
+    assert p == os.path.join(mirror.dir_for(b), 'cover.png') and open(p, 'rb').read() == PNG and details.cover(b) == p
+    assert mirror.read_meta(b)['cover_source'] == 'folder' and mirror.read_meta(b)['cover'] == 'cover.png'
     b2 = book(tmp_path, 'Other', extra=[('z.jpg', JPG), ('Icon.jpg', PNG)])
     assert details.cover(b2).endswith('.jpg')                                                                 # any picture, but not Icon
     b3 = book(tmp_path, 'Text', extra=[('cover.jpg', b'not an image')])
     assert details.cover(b3) is None                                                                          # looks like a picture by name only
     b4 = catalogue.add_book(title='Nowhere', path=str(tmp_path / 'missing'))
-    assert details.cover(b4) is None and details.cover(b4) is None and os.path.exists(os.path.join(os.path.dirname(p), f"{b4['id']}.none"))
+    assert details.cover(b4) is None and details.cover(b4) is None and os.path.exists(os.path.join(settings.data_dir(), 'covers', f"{b4['id']}.none"))
 
 
 def test_cover_for_a_loose_file_needs_a_picture_of_the_same_name(tmp_path):
@@ -114,21 +115,51 @@ def test_cover_last_resort_is_the_audiobookdb_match(tmp_path, monkeypatch):
     assert details.cover(d) is None and len(urls) == 2                                      # a doubtful match could be the wrong book: no cover
 
 
+class FakeProvider:
+    def __init__(self, name, by_asin=None, cover=None, fail=False): self.name, self.asins, self.cover, self.fail, self.calls = name, by_asin or {}, cover, fail, []
+    def unavailable(self): return None
+    def by_asin(self, asin):
+        self.calls.append(asin)
+        if self.fail: raise providers.MatchError('503')
+        return self.asins.get(asin)
+    def cover_url(self, i): self.calls.append(i); return self.cover or ''
+
+
+def test_covers_come_from_each_provider_in_turn_and_the_source_is_recorded(tmp_path, monkeypatch):
+    monkeypatch.setattr(details, '_embedded', lambda files: None)
+    got = {}
+    monkeypatch.setattr(details, '_download', lambda u: got.setdefault(u, PNG if u.endswith('good.jpg') else None))
+    a = FakeProvider('audnexus', {'B0AAAAAAA1': candidate_with('https://x/missing.png')}); b = FakeProvider('audible', {'B0AAAAAAA1': candidate_with('https://x/good.jpg')}); c = FakeProvider('audiobookdb', cover='https://x/other.jpg')
+    monkeypatch.setattr(providers, 'enabled', lambda names=None: [a, b, c])
+    bk = with_suggestion(tmp_path, 'Multi', 'confirmed', 1.0, source='audiobookdb', asin='B0AAAAAAA1')
+    p = details.cover(bk)
+    assert p == os.path.join(mirror.dir_for(bk), 'cover.png') and mirror.read_meta(bk)['cover_source'] == 'provider:audible'      # the first provider whose image downloads
+    assert list(got) == ['https://x/missing.png', 'https://x/good.jpg'] and c.calls == ['adb1', 'B0AAAAAAA1']                                       # audiobookdb looked up by id; its url tried after, but the earlier one worked
+
+
+def candidate_with(url):
+    from app.providers.base import candidate
+    return candidate('x', cover_url=url)
+
+
 def test_cover_url_is_looked_up_when_the_suggestion_has_none_and_outages_are_not_remembered(tmp_path, monkeypatch):
     monkeypatch.setattr(details, '_embedded', lambda files: None); monkeypatch.setattr(details, '_download', lambda u: PNG)
-    looked = []
-    class Src:
-        def cover_url(self, i): looked.append(i); return 'https://cdn.example/x/large.jpg'
-    monkeypatch.setattr(providers, 'get', lambda name: Src())
-    assert details.cover(with_suggestion(tmp_path, 'Old', 'confirmed', 1.0)) and looked == ['adb1']
-    class Down:
-        def cover_url(self, i): raise providers.MatchError('503')
-    monkeypatch.setattr(providers, 'get', lambda name: Down())
-    b = with_suggestion(tmp_path, 'Later', 'confirmed', 1.0)
+    src = FakeProvider('audiobookdb', cover='https://cdn.example/x/large.jpg')
+    monkeypatch.setattr(providers, 'enabled', lambda names=None: [src])
+    assert details.cover(with_suggestion(tmp_path, 'Old', 'confirmed', 1.0, source='audiobookdb')) and src.calls == ['adb1']
+    down = FakeProvider('audiobookdb', fail=True)
+    monkeypatch.setattr(providers, 'enabled', lambda names=None: [down])
+    b = with_suggestion(tmp_path, 'Later', 'confirmed', 1.0, asin='B0AAAAAAA2', source='audiobookdb')
     assert details.cover(b) is None and not os.path.exists(os.path.join(settings.data_dir(), 'covers', f"{b['id']}.none"))
-    monkeypatch.setattr(providers, 'get', lambda name: Src())
+    monkeypatch.setattr(providers, 'enabled', lambda names=None: [src])
     assert details.cover(b)                                                                  # retried and found once the service is back
-    def unknown(name): raise KeyError(name)
-    monkeypatch.setattr(providers, 'get', unknown)
-    c = with_suggestion(tmp_path, 'Odd', 'confirmed', 1.0, source='gone')
-    assert details.cover(c) is None
+    c = with_suggestion(tmp_path, 'Doubtful', 'suggested', 0.5, cover_url='https://x/y.jpg')
+    assert details.cover(c) is None                                                          # only confirmed or likely matches may bring a cover
+
+
+def test_covers_cached_before_the_mirror_are_moved_into_it(tmp_path):
+    b = book(tmp_path, 'Old cache')
+    old = os.path.join(settings.data_dir(), 'covers'); os.makedirs(old, exist_ok=True)
+    with open(os.path.join(old, f"{b['id']}.jpg"), 'wb') as f: f.write(JPG)
+    p = details.cover(b)
+    assert p == os.path.join(mirror.dir_for(b), 'cover.jpg') and not os.path.exists(os.path.join(old, f"{b['id']}.jpg")) and mirror.read_meta(b)['cover_source'] == 'cache'

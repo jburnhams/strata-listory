@@ -7,7 +7,6 @@ from datetime import datetime, timedelta, timezone
 from app import db
 
 USER_AGENT = 'strata-listory/0.1 (personal audiobook catalogue)'
-CACHE_DAYS = 7           # providers' terms ask for cached data to be kept only as long as needed and refreshed
 
 
 class MatchError(RuntimeError):
@@ -40,12 +39,12 @@ class Http:
             except (urllib.error.URLError, OSError, ValueError) as e: raise MatchError(f'{self.label} unreachable: {e}')
 
 
-def cached(key: str, fetch):
-    """`fetch()` once per CACHE_DAYS for this key (None results are cached too: a book that is not there stays not there for a week)."""
+def cached(key: str, fetch, days: float = 7):
+    """`fetch()` once per `days` for this key (None results are cached too: a book that is not there stays not there for that long)."""
     c = db.connect()
     try:
         r = c.execute('SELECT fetched, body FROM match_cache WHERE key=?', (key,)).fetchone()
-        if r and datetime.now(timezone.utc) - datetime.fromisoformat(r['fetched']) < timedelta(days=CACHE_DAYS): return json.loads(r['body'])
+        if r and datetime.now(timezone.utc) - datetime.fromisoformat(r['fetched']) < timedelta(days=days): return json.loads(r['body'])
         body = fetch()
         with c: c.execute('INSERT OR REPLACE INTO match_cache (key, fetched, body) VALUES (?, ?, ?)', (key, datetime.now(timezone.utc).isoformat(), json.dumps(body)))
         return body
@@ -55,8 +54,11 @@ def cached(key: str, fetch):
 class Provider:
     """A source of book metadata. Override `search` and/or `by_asin`; `unavailable` explains why it cannot run (for example no API key)."""
     name = ''; label = ''; site = ''
+    min_interval = 0.2       # seconds between requests to this service (its rate limit, with margin)
+    cache_days = 7           # how long its responses are reused; terms ask for cached data to be kept only as long as needed and refreshed
 
     def unavailable(self) -> str | None: return None
     def by_asin(self, asin: str) -> dict | None: return None
     def search(self, title: str, author: str = '') -> list[dict]: return []
     def cover_url(self, book_id: str) -> str: return ''
+    def cache(self, key: str, fetch): return cached(f'{self.name}:{key}', fetch, self.cache_days)

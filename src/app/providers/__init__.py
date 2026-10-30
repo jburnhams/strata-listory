@@ -36,7 +36,7 @@ def enabled(names: list[str] | None = None) -> list[Provider]:
 
 def status() -> list[dict]:
     on = configured()
-    return [dict(name=c.name, label=c.label, site=c.site, selected=c.name in on, available=(why := get(c.name).unavailable()) is None, reason=why or '', order=on.index(c.name) + 1 if c.name in on else None) for c in ALL]
+    return [dict(min_interval=c.min_interval, cache_days=c.cache_days, name=c.name, label=c.label, site=c.site, selected=c.name in on, available=(why := get(c.name).unavailable()) is None, reason=why or '', order=on.index(c.name) + 1 if c.name in on else None) for c in ALL]
 
 
 __all__ = ['ALL', 'MatchError', 'Provider', 'configured', 'enabled', 'get', 'status']

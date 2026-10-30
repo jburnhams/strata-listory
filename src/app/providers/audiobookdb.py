@@ -1,7 +1,7 @@
 """AudiobookDB (https://audiobookdb.org): a community audiobook catalogue (beta). Title search and ASIN lookup. Terms (https://audiobookdb.org/terms): personal, non-commercial use; cached data kept only as long as needed; attribution wherever its data is shown. The API key is read from APP_ADB_KEY or `~/.config/strata-listory/audiobookdb.key`."""
 import os, re
 
-from app.providers.base import Http, MatchError, Provider, cached, candidate
+from app.providers.base import Http, MatchError, Provider, candidate
 
 API = 'https://audiobookdb.org/api'
 
@@ -33,8 +33,9 @@ def to_candidate(raw: dict) -> dict:
 
 class AudiobookDB(Provider):
     name = 'audiobookdb'; label = 'AudiobookDB'; site = 'https://audiobookdb.org'
+    min_interval = 0.15; cache_days = 7          # registered tier: 10 requests a second and a daily budget; its terms want cached data refreshed
 
-    def __init__(self): self.http = Http('AudiobookDB')
+    def __init__(self): self.http = Http('AudiobookDB', self.min_interval)
 
     def unavailable(self):
         return None if key() else 'no API key: put it in ~/.config/strata-listory/audiobookdb.key (free account at audiobookdb.org, Settings -> API key)'
@@ -45,12 +46,12 @@ class AudiobookDB(Provider):
 
     def search(self, title: str, author: str = '') -> list[dict]:
         q = title.strip()[:100]
-        raw = cached('search:' + q.lower(), lambda: self._call('/search', dict(q=q, type='books'))) if len(q) >= 3 else []      # the service needs three characters
+        raw = self.cache('search:' + q.lower(), lambda: self._call('/search', dict(q=q, type='books'))) if len(q) >= 3 else []      # the service needs three characters
         return [to_candidate(b) for b in raw or []]
 
     def by_asin(self, asin: str) -> dict | None:
-        raw = cached('asin:' + asin, lambda: self._call(f'/audiobooks/external/audible/{asin}'))
+        raw = self.cache('asin:' + asin, lambda: self._call(f'/audiobooks/external/audible/{asin}'))
         return to_candidate(raw) if raw else None
 
     def cover_url(self, book_id: str) -> str:
-        return image_url(cached('book:' + book_id, lambda: self._call(f'/books/{book_id}')) or {})
+        return image_url(self.cache('book:' + book_id, lambda: self._call(f'/books/{book_id}')) or {})

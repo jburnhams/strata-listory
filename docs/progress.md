@@ -1,5 +1,10 @@
 # Progress log
 
+## 2026-10-30: mirror and provider covers
+
+- Covers can now come from any provider (suggestion cover, then each provider by ASIN, then AudiobookDB by id) and are saved with the book's final data in a mirror of the audio tree under `<data_dir>/library/` (the share is read-only). Covers cached earlier under `covers/` move into the mirror on first use; only the "no cover found" markers stay in `covers/`.
+- Rate limit and cache lifetime are properties of each provider class, not global constants.
+
 ## 2026-10-30: modular providers
 
 - Audnexus (the project AudiobookDB succeeds) found 53 of 53 real ASINs from the `Audible/` folders (47 uk, 6 only in the us catalogue); AudiobookDB found 1 of 12. Only ~150 catalogue items (117 books) have an ASIN in the name, so title search matters more: Audible's own catalogue search returned the right book in the top 2 for 8 of 10 titles.

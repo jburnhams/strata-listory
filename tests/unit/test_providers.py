@@ -94,3 +94,22 @@ def test_cache_expires_after_a_week(fake_urlopen):
     with c: c.execute("UPDATE match_cache SET fetched='2000-01-01T00:00:00+00:00'")
     c.close()
     assert p.search('Flashman')[0]['title'] == 'Newer'
+
+
+def test_each_provider_declares_its_own_rate_limit_and_cache_lifetime(fake_urlopen):
+    limits = {c.name: (c.min_interval, c.cache_days) for c in providers.ALL}
+    assert limits == {'audnexus': (0.3, 14), 'audible': (0.3, 14), 'audiobookdb': (0.15, 7)}
+    assert all(c().http.min_interval == c.min_interval for c in providers.ALL)                 # the HTTP client throttles at the provider's own rate
+    assert {s['name']: (s['min_interval'], s['cache_days']) for s in providers.status()} == limits
+    p = audnexus.Audnexus(); p.cache_days = 0                                                      # a lifetime of zero: always refetched
+    fake_urlopen.reply(dict(asin='B0X', title='One'), dict(asin='B0X', title='Two'))
+    assert p.by_asin('B0X')['title'] == 'One' and p.by_asin('B0X')['title'] == 'Two'
+
+
+def test_throttle_spaces_requests(monkeypatch, fake_urlopen):
+    from app.providers.base import Http
+    now = [100.0]; slept = []
+    monkeypatch.setattr(time, 'monotonic', lambda: now[0]); monkeypatch.setattr(time, 'sleep', lambda s: (slept.append(round(s, 3)), now.__setitem__(0, now[0] + s)))
+    h = Http('T', min_interval=0.5); fake_urlopen.reply({'a': 1}, {'b': 2})
+    h.request('https://x/1'); h.request('https://x/2')
+    assert slept[0] == 0 and slept[1] == 0.5                                                       # the second request waits out the interval
