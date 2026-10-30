@@ -212,17 +212,17 @@ def test_catalogue_processed_records():
 def test_process_command_plan_run_status_and_failures(tmp_path, capsys, monkeypatch):
     from app import cli, settings
     final = tmp_path / 'final'
-    assert cli.main(['process']) == 0 and 'nothing to process' in capsys.readouterr().out
+    assert cli.main(['process']) == 0 and 'nothing named' in capsys.readouterr().out
     b = make_book(tmp_path, 'Cli', 1, seconds=40)
-    assert cli.main(['process', '--plan', '--out', str(final)]) == 0
+    assert cli.main(['process', '--plan', str(b['id']), '--out', str(final)]) == 0
     out = capsys.readouterr().out
     assert f"#{b['id']}" in out and 'Cli' in out and '-> ' in out and 'LUFS' in out and '1 books,' in out and not final.exists()           # a plan changes nothing
-    assert cli.main(['process', '--json', '--out', str(final)]) == 0 and json.loads(capsys.readouterr().out)[str(b['id'])]['title'] == 'Cli'
+    assert cli.main(['process', '--json', str(b['id']), '--out', str(final)]) == 0 and json.loads(capsys.readouterr().out)[str(b['id'])]['title'] == 'Cli'
     assert cli.main(['process-status']) == 0 and '0 books processed' in capsys.readouterr().out
-    assert cli.main(['process', '--jobs', '1', '--out', str(final)]) == 0
+    assert cli.main(['process', str(b['id']), '--jobs', '1', '--out', str(final)]) == 0
     out = capsys.readouterr().out; assert 'done in' in out and 'LUFS' in out and (final / 'An Author' / 'Cli').is_dir()
     assert catalogue.get_processed(b['id'])['status'] == 'done'
-    assert cli.main(['process', '--out', str(final)]) == 0 and 'nothing to process' in capsys.readouterr().out                    # done books are skipped
+    assert cli.main(['process']) == 0 and 'nothing named' in capsys.readouterr().out                                                  # nothing is processed unless named or approved
     assert cli.main(['process-status']) == 0 and '1 books processed' in capsys.readouterr().out
     assert cli.main(['process', str(b['id']), '--out', str(final)]) == 1 and 'already exists' in capsys.readouterr().out         # explicit id, output exists: reported, exit 1
     assert catalogue.get_processed(b['id'])['status'] == 'failed'

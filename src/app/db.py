@@ -19,6 +19,7 @@ SCHEMA = (
        CREATE TABLE match_cache (key TEXT PRIMARY KEY, fetched TEXT NOT NULL, body TEXT NOT NULL)''',
     '''CREATE TABLE book_extra (book_id INTEGER NOT NULL, source TEXT NOT NULL, fetched TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (book_id, source))''',
     '''CREATE TABLE processed (book_id INTEGER PRIMARY KEY, status TEXT NOT NULL, finished TEXT NOT NULL, summary TEXT NOT NULL)''',
+    '''CREATE TABLE process_plan (book_id INTEGER PRIMARY KEY, state TEXT NOT NULL, plan TEXT, error TEXT NOT NULL DEFAULT '', created TEXT NOT NULL, updated TEXT NOT NULL)''',
 )       # schema version n is SCHEMA[n-1]; append new migrations, never edit old ones (PRAGMA user_version tracks the applied count)
 
 

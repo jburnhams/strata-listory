@@ -13,11 +13,18 @@ export const hardcover = {
   reviews: [{ user: 'reader1', rating: 5, text: 'A masterpiece.', spoilers: false, likes: 12, date: '2020-01-02' }, { user: 'reader2', rating: 3, text: 'x'.repeat(800), spoilers: false, likes: 3, date: '' }, { user: 'reader3', rating: null, text: 'The twist is big.', spoilers: true, likes: 1, date: '2021-05-06' }],
 }
 
-export const mock: { settings: Settings; books: Book[]; extras: Record<string, { fetched: string; data: object }>; processed: object | null } = {
+const planSummary = (over: object = {}) => ({ hours: 8.2, files: 18, chapters: 18, chapter_source: 'Audible chapter list', tiers: { V5: 17, V3: 1 }, in_bytes: 382_000_000, est_bytes: 177_000_000, out_dir: '/home/u/audiobooks/A/Dune', loudness_before: -23.4, loudness_after_est: -20.9, decision: 'too quiet: lifted with a limiter', reencoded: false, warnings: ['ends 2.9 dB below the target because its peaks leave no more room'], downmix: 'average',
+  chapter_list: [{ file: '01 - One.mp3', title: 'One', minutes: 29.4, mode: 'encode', tier: 'V5' }, { file: '02 - Two.mp3', title: 'Two', minutes: 21.4, mode: 'copy', tier: 'copy' }], ...over })
+
+export const mock: { settings: Settings; books: Book[]; extras: Record<string, { fetched: string; data: object }>; processed: object | null; queue: { book_id: number; title: string; author: string; state: string; error: string; updated: string; summary: object | null }[] } = {
   settings: { ...defaultSettings },
   books: [...initialBooks],
   extras: {},
   processed: null,
+  queue: [
+    { book_id: 1, title: 'Dune', author: 'Frank Herbert', state: 'proposed', error: '', updated: '2026-10-30T12:00:00+00:00', summary: planSummary() },
+    { book_id: 2, title: 'Emma', author: 'Jane Austen', state: 'proposed', error: '', updated: '2026-10-30T12:01:00+00:00', summary: planSummary({ warnings: [] }) },
+  ],
 }
 
 export const resetMock = () => {
@@ -25,6 +32,10 @@ export const resetMock = () => {
   mock.books = [...initialBooks]
   mock.extras = {}
   mock.processed = null
+  mock.queue = [
+    { book_id: 1, title: 'Dune', author: 'Frank Herbert', state: 'proposed', error: '', updated: '2026-10-30T12:00:00+00:00', summary: planSummary() },
+    { book_id: 2, title: 'Emma', author: 'Jane Austen', state: 'proposed', error: '', updated: '2026-10-30T12:01:00+00:00', summary: planSummary({ warnings: [] }) },
+  ]
 }
 
 // Every endpoint the app calls has a handler here; one without a handler fails the test (setup.ts: onUnhandledFrame 'error').
@@ -74,6 +85,31 @@ export const handlers = [
     return HttpResponse.json({ found: true, extras: mock.extras })
   }),
   http.post('/api/enrich', () => HttpResponse.json({ tried: 1, enriched: 1, not_found: 0, remaining: 0 })),
+  http.get('/api/process', () => HttpResponse.json({ rows: mock.queue, worker: { busy: mock.queue.some(r => r.state === 'running') ? 'run' : null, queued: 0, last: {}, counts: {} }, result: { 3: { in_bytes: 300_000_000, out_bytes: 140_000_000, loudness_after: -18.1, true_peak_after: -1.6 } } })),
+  http.post('/api/process/propose', () => {
+    mock.queue = [...mock.queue, { book_id: 3, title: 'Persuasion', author: 'Jane Austen', state: 'proposed', error: '', updated: '2026-10-30T12:05:00+00:00', summary: planSummary({ hours: 1.5, tiers: { copy: 3 } }) }]
+    return HttpResponse.json({ rows: mock.queue, worker: { busy: null, queued: 0, last: {}, counts: {} }, result: {} })
+  }),
+  http.post('/api/process/approve', async ({ request }) => {
+    const { ids } = (await request.json()) as { ids: number[] }
+    mock.queue = mock.queue.map(r => (ids.includes(r.book_id) && ['proposed', 'rejected'].includes(r.state) ? { ...r, state: 'approved' } : r))
+    return HttpResponse.json({ changed: ids })
+  }),
+  http.post('/api/process/reject', async ({ request }) => {
+    const { ids } = (await request.json()) as { ids: number[] }
+    mock.queue = mock.queue.map(r => (ids.includes(r.book_id) ? { ...r, state: 'rejected' } : r))
+    return HttpResponse.json({ changed: ids })
+  }),
+  http.post('/api/process/repropose', async ({ request }) => {
+    const { ids } = (await request.json()) as { ids: number[] }
+    mock.queue = mock.queue.filter(r => !ids.includes(r.book_id))
+    return HttpResponse.json({ changed: ids })
+  }),
+  http.post('/api/process/run', () => {
+    if (!mock.queue.some(r => r.state === 'approved')) return HttpResponse.json({ detail: 'nothing is approved yet' }, { status: 400 })
+    mock.queue = mock.queue.map(r => (r.state === 'approved' ? { ...r, state: 'done' } : r))
+    return HttpResponse.json({ rows: mock.queue, worker: { busy: null, queued: 0, last: {}, counts: {} }, result: {} })
+  }),
   http.post('/api/scan', () => {
     mock.books = [...mock.books,
       { ...initialBooks[0], id: 10, title: 'dune messiah', author: '', review: 'new', file_count: 12 },

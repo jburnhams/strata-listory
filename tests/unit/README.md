@@ -12,6 +12,7 @@ Fast and isolated: synthetic data and fakes; no external services, no network. `
 | `catalogue.py` | `test_catalogue.py` | 93% | done | validation, defaults, ids, search/sort, corrupt database refused and restored, hypothesis title strip |
 | `details.py` | `test_details.py` | 96% | done | Audible sidecar parsing, file list, cached probe, cover order and negative cache, loose-file covers, download rules, real ffmpeg probe/embedded art (skipped without ffmpeg) |
 | `process/` | `test_process.py` | 96% | done | parsers, chapter sources and cut points, tiers, gain rules, copy rules, real-audio planning and execution (encode, music tiers, lossless copy with mp3gain, stereo cancellation, failure cleanup, verify), CLI plan/run/status; ffmpeg tests skip when ffmpeg is missing |
+| `process/queue.py` | `test_queue.py` | 93% | done | summary, propose once, failed plans, decision rules, only approved plans run, changed inbox refused, worker | 
 | `fs.py` | `test_fs.py` | 95% | done | local paths never probed, remembered answers, timeout and no pile-up, mountinfo parsing, and the degraded behaviour of book page, covers, mirror, scan and backups with a down share |
 | `enrich.py` | `test_enrich.py` | 97% | done | Hardcover id from suggestion/ASIN/likely search, stored extras and mirror, pending and stale, removal |
 | `mirror.py` | `test_mirror.py` | 100% | done | folder layout (files, external, manual, odd names), confirmed books written and kept current, cover replacement and source, failures never break a change |

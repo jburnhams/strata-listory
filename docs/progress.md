@@ -2,6 +2,9 @@
 
 ## 2026-10-30: the processor
 
+- Added the manual approval queue (`process/queue.py`, Processing page, `process_plan` table): proposals carry the exact plan, a person approves or rejects, only approved plans run; a plan is refused if the inbox files changed since it was proposed. The server runs proposals and approved plans on one background worker thread.
+- The first full copy to `~/audio-local` finished (428 GB, 29,086 files). rsync exit 23 came from two files whose names exceed ext4's 255 bytes (curly quotes in long titles); `audio-sync` now lists such files and still fails on any other error. The app's library was switched to the copy with `use-library` (5,128 paths moved, DB backed up first).
+
 - Decided with the user (later the same day): process only confirmed books with a title and author; loudness has a tolerance band (3 dB quiet / 2 dB loud around -18 LUFS) outside which a book is normalised even if it would otherwise be copied; quieter is better than clipping or compensating, so the earlier idea of ReplayGain tags for what gain could not do was dropped, and the limiter allowance was cut from 6 dB to 3 dB.
 
 - Built `./app process` after agreeing the design with the user: mono, LAME VBR tiers by content, -18 LUFS per book, copy-as-is for mono mp3 up to 96 kbps (lossless cut and `mp3gain`), chapters from embedded/Audible/file/pause sources.

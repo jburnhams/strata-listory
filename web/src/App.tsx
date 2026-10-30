@@ -3,6 +3,7 @@ import { api } from './api'
 import { useRoute, href } from './route'
 import LibraryPage from './components/LibraryPage'
 import BookPage from './components/BookPage'
+import ProcessPage from './components/ProcessPage'
 import SettingsPage from './components/SettingsPage'
 
 export default function App() {
@@ -16,11 +17,13 @@ export default function App() {
         {version && <span className="text-xs text-stone-500 font-mono">v{version}</span>}
         <nav className="ml-auto flex gap-4 text-sm">
           <a href={href.library()} className="text-blue-600 dark:text-blue-400 hover:underline">Library</a>
+          <a href={href.process()} className="text-blue-600 dark:text-blue-400 hover:underline">Processing</a>
           <a href={href.settings()} className="text-blue-600 dark:text-blue-400 hover:underline">Settings</a>
         </nav>
       </header>
       {r.page === 'library' && <LibraryPage />}
       {r.page === 'book' && <BookPage id={r.id} />}
+      {r.page === 'process' && <ProcessPage />}
       {r.page === 'settings' && <SettingsPage />}
     </div>
   )

@@ -47,6 +47,12 @@ export const api = {
   details: (id: number) => req<BookDetails>(`/api/books/${id}/details`),
   enrichBook: (id: number) => req<{ found: boolean; extras: Extras }>(`/api/books/${id}/enrich`, { method: 'POST' }),
   enrich: (limit = 25) => req<{ tried: number; enriched: number; not_found: number; remaining: number }>(`/api/enrich?limit=${limit}`, { method: 'POST' }),
+  queue: () => req<QueueView>('/api/process'),
+  propose: (limit = 5) => req<QueueView>(`/api/process/propose?limit=${limit}`, { method: 'POST' }),
+  approve: (ids: number[]) => req<{ changed: number[] }>('/api/process/approve', send('POST', { ids })),
+  reject: (ids: number[]) => req<{ changed: number[] }>('/api/process/reject', send('POST', { ids })),
+  repropose: (ids: number[]) => req<{ changed: number[] }>('/api/process/repropose', send('POST', { ids })),
+  runApproved: () => req<QueueView>('/api/process/run', { method: 'POST' }),
   scan: () => req<ScanResult>('/api/scan', send('POST', {})),
   match: (limit = 25) => req<MatchResult>(`/api/match?limit=${limit}`, { method: 'POST' }),
 }
@@ -59,3 +65,8 @@ export type Extras = Record<string, { fetched: string; data: HardcoverInfo }>
 export interface Processed { status: string; error?: string; out_dir?: string; chapters?: number; chapter_source?: string; tiers?: Record<string, number>; in_bytes?: number; out_bytes?: number; loudness_before?: number; loudness_after?: number; true_peak_after?: number; retries?: number; warnings?: string[]; finished?: string }
 export interface BookDetails { processed: Processed | null; extras: Extras; book: Book; path_exists: boolean; share_down?: boolean; files: { count: number; total_bytes: number; truncated: boolean; list: { name: string; bytes: number }[] } | null; probe: ProbeInfo | null; audible: AudibleInfo | null }
 export const coverUrl = (id: number) => withBase(`/api/books/${id}/cover`)
+
+export type PlanState = 'planning' | 'proposed' | 'approved' | 'rejected' | 'running' | 'done' | 'failed'
+export interface PlanSummary { hours: number; files: number; chapters: number; chapter_source: string; tiers: Record<string, number>; in_bytes: number; est_bytes: number; out_dir: string; loudness_before: number; loudness_after_est: number; decision: string; reencoded: boolean; warnings: string[]; downmix: string; chapter_list: { file: string; title: string; minutes: number; mode: string; tier: string }[] }
+export interface QueueRow { book_id: number; title: string; author: string; state: PlanState; error: string; updated: string; summary: PlanSummary | null }
+export interface QueueView { rows: QueueRow[]; worker: { busy: string | null; queued: number; last: Record<string, object>; counts: Record<string, number> }; result: Record<string, { out_bytes?: number; in_bytes?: number; loudness_after?: number; true_peak_after?: number; seconds?: number } | null> }

@@ -149,3 +149,23 @@ def test_scan_reports_a_down_share_with_503(client, tmp_path, monkeypatch):
     monkeypatch.setattr(fs, 'reachable', lambda p: True)
     monkeypatch.setattr(scan, 'scan', lambda root: (_ for _ in ()).throw(OSError(errno.EHOSTDOWN, 'Host is down')))
     r = client.post('/api/scan', json=dict(folder=str(lib))); assert r.status_code == 503 and 'interrupted' in r.json()['detail']
+
+
+def test_processing_queue_endpoints(client, monkeypatch, tmp_path):
+    from app.process import queue as pq, run as R
+    monkeypatch.setattr(pq.Worker, 'inline', True)                                      # run tasks on the spot instead of in a thread
+    d = tmp_path / 'Book'; d.mkdir(); (d / '01.mp3').write_bytes(b'x' * 100)
+    b = client.post('/api/books', json=dict(title='Book', author='Au', path=str(d))).json()
+    plan = dict(book_id=b['id'], title='Book', author='Au', out_dir=str(tmp_path / 'final' / 'Book'), chapter_source='x', downmix='average', duration=60.0, channels=1, in_files=1, in_bytes=100, est_bytes=50, warnings=[],
+                loudness=dict(I=-20.0, TP=-3.0, LRA=4.0, target=-18.0, gain_db=2.0, apply_db=1.5, gain_steps=1, decision='x', reencoded=False), chapters=[dict(title='C', file='01 - C.mp3', start=0, end=60, duration=60.0, mode='copy', tier='copy', kbps=64, segments=[(str(d / '01.mp3'), 0, None)])])
+    monkeypatch.setattr(pq, '_plan_one', lambda book, final: plan)
+    monkeypatch.setattr(R, 'execute', lambda book, p, force=False: dict(status='done', out_dir=p['out_dir'], finished='2026-10-30T00:00:00+00:00', in_bytes=100, out_bytes=50, loudness_after=-18.2))
+    assert client.get('/api/process').json()['rows'] == [] and client.post('/api/process/run').status_code == 400                    # nothing approved yet
+    v = client.post('/api/process/propose', params=dict(limit=3)).json()
+    assert [r['state'] for r in v['rows']] == ['proposed'] and v['rows'][0]['summary']['chapters'] == 1 and v['worker']['last']['propose']['planned'] == 1
+    assert client.post('/api/process/reject', json=dict(ids=[b['id']])).json() == dict(changed=[b['id']])
+    assert client.post('/api/process/approve', json=dict(ids=[b['id']])).json() == dict(changed=[b['id']]) and client.post('/api/process/approve', json=dict(ids=[999])).json() == dict(changed=[])
+    v = client.post('/api/process/run').json()
+    assert v['rows'][0]['state'] == 'done' and v['result'][str(b['id'])]['out_bytes'] == 50 and v['worker']['counts'] == {'done': 1}
+    assert client.get(f"/api/books/{b['id']}/details").json()['processed']['status'] == 'done'
+    assert client.post('/api/process/repropose', json=dict(ids=[b['id']])).json() == dict(changed=[]) and client.post('/api/process/propose').json()['rows'][0]['state'] == 'done'      # done work is kept and not proposed again

@@ -3,7 +3,7 @@
     ./app serve [--host 127.0.0.1] [--port 8360]
 
 API (JSON): GET /api/health; GET /api/settings; PUT /api/settings {data_dir?, library_dir?, backup_dir?};
-GET /api/books?q=&status=&review=&kind=; POST /api/scan {folder?}; POST /api/match?limit=&providers=; GET /api/providers; POST /api/enrich?limit=; POST /api/books/{id}/enrich (Hardcover ratings and reviews); POST /api/books/{id}/confirm|ignore; POST /api/books {title, author?, narrator?, series?, series_position?, duration_seconds?, path?, status?};
+GET /api/books?q=&status=&review=&kind=; POST /api/scan {folder?}; POST /api/match?limit=&providers=; GET /api/providers; GET /api/process (the approval queue); POST /api/process/propose?limit=, /approve, /reject, /repropose {ids}, /run; POST /api/enrich?limit=; POST /api/books/{id}/enrich (Hardcover ratings and reviews); POST /api/books/{id}/confirm|ignore; POST /api/books {title, author?, narrator?, series?, series_position?, duration_seconds?, path?, status?};
 GET|PATCH|DELETE /api/books/{id}; GET /api/books/{id}/details (files, embedded tags, Audible metadata file); GET /api/books/{id}/cover (image).
 The page at / serves `src/app/server/static/index.html` when built (`cd web && npm run build`), else the plain stand-in `landing.html`."""
 import os
@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app import __version__, catalogue, db, details, enrich, fs, matcher, providers, scan, settings
+from app.process import queue as pq
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 LANDING = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'landing.html')
@@ -35,6 +36,10 @@ class BookIn(BaseModel):
     path: str = ''
     asin: str = ''
     status: str = 'unlistened'
+
+
+class IdsIn(BaseModel):
+    ids: list[int]
 
 
 class ScanIn(BaseModel):
@@ -112,6 +117,33 @@ def create_app():
         b = guard(catalogue.get_book, book_id)
         try: return dict(found=guard(enrich.enrich_book, b) is not None, extras=catalogue.get_extras(book_id))
         except matcher.MatchError as e: raise HTTPException(502, str(e))
+
+    worker = pq.Worker()
+
+    def queue_view():
+        rows = [dict(book_id=r['book_id'], title=r['title'], author=r['author'], state=r['state'], error=r['error'], updated=r['updated'], summary=pq.summary(r['plan']) if r['plan'] else None) for r in catalogue.list_plans()]
+        return dict(rows=rows, worker=worker.status(), result={k: catalogue.get_processed(r['book_id']) for k, r in ((str(r['book_id']), r) for r in rows) if r['state'] in ('done', 'failed')})
+
+    @app.get('/api/process')
+    def get_process(): return queue_view()
+
+    @app.post('/api/process/propose')
+    def post_propose(limit: int = 5):
+        worker.submit('propose', limit=max(1, min(limit, 50))); return queue_view()
+
+    @app.post('/api/process/approve')
+    def post_approve(b: IdsIn): return dict(changed=pq.decide(b.ids, True))
+
+    @app.post('/api/process/reject')
+    def post_reject(b: IdsIn): return dict(changed=pq.decide(b.ids, False))
+
+    @app.post('/api/process/repropose')
+    def post_repropose(b: IdsIn): return dict(changed=pq.repropose(b.ids))
+
+    @app.post('/api/process/run')
+    def post_run():
+        if not catalogue.list_plans(('approved',)): raise HTTPException(400, 'nothing is approved yet')
+        worker.submit('run'); return queue_view()
 
     @app.get('/api/providers')
     def get_providers(): return providers.status()

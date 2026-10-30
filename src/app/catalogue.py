@@ -109,7 +109,7 @@ def remove_book(book_id: int) -> dict:
     c = db.connect()
     try:
         with c:
-            b = _one(c, book_id); c.execute('DELETE FROM books WHERE id=?', (book_id,)); c.execute('DELETE FROM book_extra WHERE book_id=?', (book_id,)); c.execute('DELETE FROM processed WHERE book_id=?', (book_id,))
+            b = _one(c, book_id); c.execute('DELETE FROM books WHERE id=?', (book_id,)); c.execute('DELETE FROM book_extra WHERE book_id=?', (book_id,)); c.execute('DELETE FROM processed WHERE book_id=?', (book_id,)); c.execute('DELETE FROM process_plan WHERE book_id=?', (book_id,))
         return b
     finally: c.close()
 
@@ -235,4 +235,64 @@ def processed_summary() -> dict:
         r = c.execute("SELECT COUNT(*) n, SUM(json_extract(summary,'$.in_bytes')) i, SUM(json_extract(summary,'$.out_bytes')) o, SUM(json_extract(summary,'$.out_seconds')) s FROM processed WHERE status='done'").fetchone()
         f = c.execute("SELECT COUNT(*) FROM processed WHERE status<>'done'").fetchone()[0]
         return dict(done=r['n'], failed=f, in_bytes=r['i'] or 0, out_bytes=r['o'] or 0, seconds=r['s'] or 0)
+    finally: c.close()
+
+
+PLAN_STATES = ('planning', 'proposed', 'approved', 'rejected', 'running', 'done', 'failed')       # the processing queue: a plan is proposed, a person approves or rejects it, only approved plans run
+
+
+def set_plan(book_id: int, state: str, plan: dict | None = None, error: str = '', keep_plan: bool = False):
+    """Create or update a book's processing proposal. `keep_plan` changes only the state (and error)."""
+    if state not in PLAN_STATES: raise CatalogueError(f'state must be one of {", ".join(PLAN_STATES)}')
+    now = datetime.now(timezone.utc).isoformat(); c = db.connect()
+    try:
+        with c:
+            _one(c, book_id)
+            if keep_plan and c.execute('SELECT 1 FROM process_plan WHERE book_id=?', (book_id,)).fetchone():
+                c.execute('UPDATE process_plan SET state=?, error=?, updated=? WHERE book_id=?', (state, error, now, book_id))
+            else:
+                c.execute('INSERT OR REPLACE INTO process_plan (book_id, state, plan, error, created, updated) VALUES (?, ?, ?, ?, COALESCE((SELECT created FROM process_plan WHERE book_id=?), ?), ?)', (book_id, state, json.dumps(plan) if plan is not None else None, error, book_id, now, now))
+    finally: c.close()
+
+
+def _plan_row(r) -> dict:
+    return dict(book_id=r['book_id'], state=r['state'], plan=json.loads(r['plan']) if r['plan'] else None, error=r['error'], created=r['created'], updated=r['updated'])
+
+
+def get_plan(book_id: int) -> dict | None:
+    c = db.connect()
+    try:
+        r = c.execute('SELECT * FROM process_plan WHERE book_id=?', (book_id,)).fetchone()
+        return _plan_row(r) if r else None
+    finally: c.close()
+
+
+def list_plans(states: tuple | list | None = None) -> list[dict]:
+    """Processing proposals, newest update first, each with the book's current title and author."""
+    c = db.connect()
+    try:
+        q = 'SELECT p.*, b.title AS book_title, b.author AS book_author FROM process_plan p JOIN books b ON b.id=p.book_id'
+        args: list = []
+        if states: q += f" WHERE p.state IN ({','.join('?' * len(states))})"; args = list(states)
+        return [dict(_plan_row(r), title=r['book_title'], author=r['book_author']) for r in c.execute(q + ' ORDER BY p.updated DESC, p.book_id', args)]
+    finally: c.close()
+
+
+def delete_plan(book_id: int):
+    c = db.connect()
+    try:
+        with c: c.execute('DELETE FROM process_plan WHERE book_id=?', (book_id,))
+    finally: c.close()
+
+
+def pending_propose(limit: int) -> list[dict]:
+    """Eligible books (see pending_process) that have no proposal yet, so none is proposed twice and rejected ones are not nagged about."""
+    c = db.connect()
+    try: return [_row(r) for r in c.execute(f"SELECT {COLUMNS} FROM books b WHERE review='confirmed' AND kind='book' AND path<>'' AND title<>'' AND author<>'' AND NOT EXISTS (SELECT 1 FROM process_plan q WHERE q.book_id=b.id) AND NOT EXISTS (SELECT 1 FROM processed p WHERE p.book_id=b.id AND p.status='done') ORDER BY id LIMIT ?", (limit,))]
+    finally: c.close()
+
+
+def plan_counts() -> dict:
+    c = db.connect()
+    try: return {r['state']: r['n'] for r in c.execute('SELECT state, COUNT(*) n FROM process_plan GROUP BY state')}
     finally: c.close()

@@ -190,3 +190,29 @@ def test_use_library_checks_the_copy_then_moves_paths_and_setting(capsys, tmp_pa
     with pytest.raises(SystemExit, match='no current audiobook folder'): cli.main(['use-library', str(new)])
     (new / 'C.m4b').write_bytes(b'x'); catalogue.add_book(title='C', path=str(old / 'C.m4b'))
     assert cli.main(['use-library', str(new), '--from', str(old), '--force']) == 0 and '1 book paths moved' in capsys.readouterr().out
+
+
+def test_process_approval_commands(capsys, monkeypatch, tmp_path):
+    from app import catalogue
+    from app.process import queue as pq, run as R
+    d = tmp_path / 'Book'; d.mkdir(); (d / '01.mp3').write_bytes(b'x' * 100)
+    cli.main(['add', 'Book', '--author', 'Au', '--path', str(d)]); capsys.readouterr()
+    plan = dict(book_id=1, title='Book', author='Au', out_dir=str(tmp_path / 'f' / 'Book'), chapter_source='file boundaries', downmix='average', duration=3600.0, channels=1, in_files=1, in_bytes=100, est_bytes=50, warnings=['careful'],
+                loudness=dict(I=-23.0, TP=-3.0, LRA=4.0, target=-18.0, gain_db=5.0, apply_db=3.0, gain_steps=2, decision='x', reencoded=False), chapters=[dict(title='C', file='01 - C.mp3', start=0, end=3600, duration=3600.0, mode='encode', tier='V5', kbps=49, segments=[(str(d / '01.mp3'), 0, None)])])
+    monkeypatch.setattr(pq, '_plan_one', lambda b, f: plan)
+    monkeypatch.setattr(R, 'execute', lambda b, p, force=False: dict(status='done', out_dir=p['out_dir'], finished='2026-10-30T00:00:00+00:00', in_bytes=100, out_bytes=50))
+    assert cli.main(['process-queue']) == 0 and 'the queue is empty' in capsys.readouterr().out
+    assert cli.main(['process-run']) == 0 and 'nothing is approved yet' in capsys.readouterr().out
+    assert cli.main(['process-propose', '--limit', '2']) == 0 and 'proposed 1 plans, 0 could not be planned' in capsys.readouterr().out
+    assert cli.main(['process-queue']) == 0
+    out = capsys.readouterr().out; assert '#1' in out and 'proposed' in out and '1.0 h' in out and '-23.0 ->  -20.0 LUFS' in out and 'careful' in out
+    assert cli.main(['process-queue', '--state', 'approved']) == 0 and 'queue is empty' in capsys.readouterr().out
+    assert cli.main(['process-approve', '1', '7']) == 0 and 'approved: #1 (not changed: #7' in capsys.readouterr().out
+    assert cli.main(['process-reject', '1']) == 0 and 'rejected: #1' in capsys.readouterr().out
+    cli.main(['process-approve', '1']); capsys.readouterr()
+    assert cli.main(['process-run']) == 0 and 'processed 1, failed 0' in capsys.readouterr().out
+    assert catalogue.get_plan(1)['state'] == 'done'
+    cli.main(['add', 'Odd', '--author', 'X', '--path', str(tmp_path / 'gone')]); catalogue.set_plan(2, 'failed', error='x'); cli.main(['process-queue']); assert 'failed' in capsys.readouterr().out
+    catalogue.set_plan(2, 'approved', plan, keep_plan=False)
+    monkeypatch.setattr(R, 'execute', lambda *a, **k: (_ for _ in ()).throw(pq.probe.ToolError('boom')))
+    assert cli.main(['process-run']) == 1 and 'failed 1' in capsys.readouterr().out
