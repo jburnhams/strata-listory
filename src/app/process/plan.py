@@ -38,6 +38,34 @@ def file_title(info: dict, book_title: str, n: int) -> str:
     return t or f'Chapter {n}'
 
 
+WORDS = 'one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty first second third fourth fifth sixth seventh eighth ninth tenth'.split()
+GENERIC = re.compile(r'^\s*(?:chapters?|chap\.?|ch\.?|parts?|sections?|tracks?|books?|discs?|disks?|cd|episodes?|ep\.?|volumes?|vol\.?)\s*(?:\d+(?:\s*[-\u2013]\s*\d+)?|[ivxlcdm]+|' + '|'.join(WORDS) + r')?\s*(?:[:.\-\u2013\u2014_]+\s*|$)', re.I)
+MAX_NAME_BYTES = 200                         # file names stay well under the 255-byte limit of ext4 (some titles are very long)
+
+
+def chapter_name(title: str) -> str:
+    """The part of a chapter title worth putting in a file name: "Chapter 3: Find Your Niche" -> "Find Your Niche", "Introduction" stays, "Chapter 3", "Part Two", "Chapters 3-5" and "Track 7" -> "" (the number is already in the file name)."""
+    t = title.strip(); prev = None
+    while t and t != prev:                                  # "Part One: Chapter 1: The Start" loses both prefixes
+        prev = t; m = GENERIC.match(t)
+        if m: t = t[m.end():].strip(' -:._')
+    return t if re.search(r'[^\W\d_]', t) else ''
+
+
+def file_name(label: str, author: str, title: str, chapter: str) -> str:
+    """`001 - Author - Title - Chapter name.mp3`, the last part only when there is a chapter name; shortened (chapter name first, then title) to fit MAX_NAME_BYTES."""
+    def cut(x: str, n: int) -> str:
+        b = x.encode('utf8')[:max(n, 0)]; return b.decode('utf8', 'ignore').rstrip(' -:._')
+    a, t, c = clean_name(author or 'Unknown author'), clean_name(title), clean_name(chapter) if chapter else ''
+    fixed = len(f'{label} - {a} - ') + len('.mp3')
+    room = MAX_NAME_BYTES - fixed
+    tb, cb = len(t.encode('utf8')), len(c.encode('utf8')) + 3 if c else 0
+    if tb + cb > room:
+        if c: c = cut(c, room - tb - 3) if room - tb - 3 >= 12 else ''; cb = len(c.encode('utf8')) + 3 if c else 0
+        if tb + cb > room: t = cut(t, room - cb)
+    return f'{label} - {a} - {t}' + (f' - {c}' if c else '') + '.mp3'
+
+
 def timeline(files: list[dict]) -> list[tuple[float, float, dict]]:
     out, t = [], 0.0
     for f in files: out.append((t, t + f['duration'], f)); t += f['duration']
@@ -227,7 +255,7 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None) -> dict:
     if m['TP'] is not None and m['TP'] >= -0.2: warnings.append(f"the source reaches full scale (true peak {m['TP']:+.1f} dBFS), so it is probably already clipped; processing keeps it from getting worse but cannot repair it")
     chapters, source = derive_chapters(files, m['silences'], (audible or {}).get('chapters'), book['title'])
     for c in chapters:
-        segs = segments(tl, c['start'], c['end']); c['segments'] = segs; c['duration'] = round(c['end'] - c['start'], 2); c['file'] = f"{c['label']} - {clean_name(book.get('author') or 'Unknown author')} - {clean_name(book['title'])}.mp3"
+        segs = segments(tl, c['start'], c['end']); c['segments'] = segs; c['duration'] = round(c['end'] - c['start'], 2); c['file'] = file_name(c['label'], book.get('author') or '', book['title'], chapter_name(c['base']))
         if copyable(segs, by_path): c.update(mode='copy', tier='copy', kbps=round(max(by_path[p]['bit_rate'] for p, _, _ in segs), 1))
         else:
             sp = probe.spectrum([sg for a, b in sample_ranges(c['start'], c['end']) for sg in segments(tl, a, b)]); t = pick_tier(sp['hf_db'], sp['pause_frac']); c.update(mode='encode', tier=t, kbps=TIERS[t]['kbps'], hf_db=sp['hf_db'], pause_frac=sp['pause_frac'])

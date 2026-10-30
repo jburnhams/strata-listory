@@ -374,3 +374,22 @@ def test_a_long_file_is_split_into_lettered_parts_at_pauses(tmp_path):
     b = catalogue.add_book(title='Long', author='A', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
     assert [c['label'] for c in p['chapters']] == ['001a', '001b'] and [c['file'] for c in p['chapters']] == ['001a - A - Long.mp3', '001b - A - Long.mp3'] and [c['title'] for c in p['chapters']] == ['Chapter 1 (a)', 'Chapter 1 (b)']
     cut = p['chapters'][0]['end']; assert abs(cut - 1950) < 360 and any(s <= cut <= e + 5 for s, e in probe.measure_book([(str(d / 'Long book.mp3'), 0.0, None)])['silences'])        # near the middle, inside a pause
+
+
+@pytest.mark.parametrize('title, expect', [('Chapter 3', ''), ('Chapter 3: Find Your Niche', 'Find Your Niche'), ('Chapter 12. The End', 'The End'), ('Part Two: The Nature of the Crisis', 'The Nature of the Crisis'),
+                                           ('Part One_ Chapter 1_ The Start', 'The Start'), ('Introduction', 'Introduction'), ('Epilogue', 'Epilogue'), ('Chapters 3-5', ''), ('Track 07', ''), ('Chapter Fourteen', ''), ('Section 2 - Methods', 'Methods'),
+                                           ('12', ''), ('Book Two: Heaven', 'Heaven'), ('Chapterhouse', 'Chapterhouse'), ('The Part That Matters', 'The Part That Matters'), ('Disc 3', ''), ('Ep. 5: V', 'V'), ('', ''), ('  ', ''), ('Chapter XIV', ''), ('Part 2 of 4 - 25032009', 'Part 2 of 4 - 25032009')])
+def test_chapter_names_for_file_names(title, expect):
+    assert P.chapter_name(title) == expect
+
+
+def test_file_names_include_a_chapter_name_only_when_there_is_one_and_always_fit():
+    assert P.file_name('001', 'Anne Boden', 'Banking on It', '') == '001 - Anne Boden - Banking on It.mp3'
+    assert P.file_name('030b', 'Anne Boden', 'Banking on It', 'Find Your Niche') == '030b - Anne Boden - Banking on It - Find Your Niche.mp3'
+    assert P.file_name('002', '', 'A/B', 'Why?') == '002 - Unknown author - A_B - Why_.mp3'
+    long_title, long_chapter = 'T' * 120, 'C' * 150
+    n = P.file_name('001', 'Author', long_title, long_chapter); assert len(n.encode('utf8')) <= P.MAX_NAME_BYTES and n.endswith('.mp3') and long_title in n          # the chapter name is shortened first
+    assert ' - ' + 'C' * 5 in n
+    n = P.file_name('001', 'Author', 'T' * 300, 'Short'); assert len(n.encode('utf8')) <= P.MAX_NAME_BYTES and 'Short' not in n          # no room for a chapter name at all: dropped, the title is cut
+    n = P.file_name('001', 'Author', '‘' * 100, '’' * 100); assert len(n.encode('utf8')) <= P.MAX_NAME_BYTES                         # curly quotes are 3 bytes each: bytes, not characters, are counted
+    assert n.encode('utf8').decode('utf8')                                                                                                       # and a cut never splits a character
