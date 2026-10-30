@@ -136,7 +136,7 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None) -> dict:
     downmix = 'average'
     if m.get('mono_I') is not None and m['mono_I'] < m['I'] - 3:
         downmix = 'left'; warnings.append(f"stereo channels partly cancel in a mono mix ({m['mono_I']:.1f} vs {m['I']:.1f} LUFS): using the left channel only")
-    if m['TP'] is not None and m['TP'] > 0.0: warnings.append(f"the source already clips (true peak {m['TP']:+.1f} dBFS); processing keeps it from getting worse but cannot repair it")
+    if m['TP'] is not None and m['TP'] >= -0.2: warnings.append(f"the source reaches full scale (true peak {m['TP']:+.1f} dBFS), so it is probably already clipped; processing keeps it from getting worse but cannot repair it")
     chapters, source = derive_chapters(files, m['silences'], (audible or {}).get('chapters'), book['title'])
     n = len(chapters); width = max(2, len(str(n)))
     for i, c in enumerate(chapters):

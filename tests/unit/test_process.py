@@ -290,4 +290,4 @@ def test_plan_warns_when_the_source_already_clips(tmp_path):
     d = tmp_path / 'Hot'; d.mkdir()
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=f=220:d=30', '-af', 'volume=24,aeval=clip(val(0)\\,-1\\,1)', '-c:a', 'libmp3lame', '-b:a', '128k', str(d / '01.mp3')], check=True)       # pushed past full scale
     b = catalogue.add_book(title='Hot', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
-    assert p['loudness']['TP'] > 0 and any('already clips' in w for w in p['warnings'])
+    assert p['loudness']['TP'] >= -0.2 and any('full scale' in w for w in p['warnings'])
