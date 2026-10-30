@@ -88,28 +88,56 @@ def test_segments_and_sample_ranges():
     r = P.sample_ranges(0, 1200); assert len(r) == 3 and all(b - a == 90 for a, b in r) and r[0][0] < r[1][0] < r[2][0]
 
 
+def chs(*mins, titles=None):
+    out, pos = [], 0.0
+    for k, m in enumerate(mins):
+        out.append(dict(title=(titles[k] if titles else f'Chapter {k + 1}'), start=pos, end=pos + m * 60)); pos += m * 60
+    return out
+
+
+def shape(cs): return [(c['title'], round((c['end'] - c['start']) / 60, 1)) for c in cs]
+
+
+def test_combine_only_short_chapters_and_only_up_to_thirty_minutes():
+    assert shape(P.combine(chs(25, 20, 40, 28))) == [('Chapter 1', 25.0), ('Chapter 2', 20.0), ('Chapter 3', 40.0), ('Chapter 4', 28.0)]            # nothing is short: untouched
+    assert shape(P.combine(chs(8, 8, 8, 8, 8, 8))) == [('Chapters 1-3', 24.0), ('Chapters 4-6', 24.0)]                                          # a run of short ones: up to 30 minutes
+    assert shape(P.combine(chs(8, 25))) == [('Chapter 1', 8.0), ('Chapter 2', 25.0)]                                                            # 33 minutes would be over 30
+    assert shape(P.combine(chs(28, 5, 5))) == [('Chapter 1', 28.0), ('Chapters 2-3', 10.0)]                                                     # the second joins the third, not the full first
+    assert shape(P.combine(chs(9, 20))) == [('Chapters 1-2', 29.0)] and shape(P.combine(chs(10, 10))) == [('Chapter 1', 10.0), ('Chapter 2', 10.0)]         # "under 10" means under: two 10s stay apart
+    assert shape(P.combine(chs(0.2, 40))) == [('Chapter 2', 40.2)]                                                                                # credits-length pieces join a neighbour even beyond 30 minutes and never name it
+    assert shape(P.combine(chs(0.2, 59.9))) == [('Chapter 1', 0.2), ('Chapter 2', 59.9)]                                                          # ... unless the result would pass an hour
+    named = P.combine(chs(6, 7, titles=['The Start', 'The Middle'])); assert shape(named) == [('The Start + The Middle', 13.0)]
+    many = P.combine(chs(5, 5, 5, titles=['One', 'Two', 'Three'])); assert shape(many) == [('One ... Three', 15.0)]
+
+
+def test_split_only_above_an_hour_into_equal_parts_at_pauses():
+    assert P.split_points(0, 3600, []) == [] and P.split_points(0, 59 * 60, []) == []                                                          # exactly an hour is left alone
+    assert P.split_points(0, 61 * 60, []) == [1830.0]                                                                                           # 61 minutes: two parts, cut in the middle when there is no pause
+    assert P.split_points(0, 100 * 60, []) == [2000.0, 4000.0]                                                                                  # 100 minutes: three parts of 33
+    sil = [(1700.0, 1702.0), (1850.0, 1851.0), (1000.0, 1010.0)]
+    assert P.split_points(0, 61 * 60, sil) == [1701.0]                                                                                          # the nearest long pause wins over a distant longer one
+    assert P.split_points(0, 61 * 60, [(1830.0, 1830.5)]) == [1830.0]                                                                           # a blip shorter than 1.2 s is not a pause
+    assert P.split_points(0, 61 * 60, [(120.0, 125.0)]) == [1830.0]                                                                             # a pause far from the ideal point is ignored
+
+
 def test_chapter_sources(monkeypatch):
     f = lambda name, d, ch=(), title='': dict(path=name, duration=d, chapters=list(ch), tags={'title': title} if title else {})
-    emb = [dict(start=0, end=600, title='One'), dict(start=600, end=1500, title=''), dict(start=1500, end=1560, title='Credits')]
-    chs, src = P.derive_chapters([f('a.m4b', 1560, emb)], [], None, 'B')
-    assert src == 'embedded chapters' and [(c['title'], c['start'], c['end']) for c in chs] == [('One', 0, 600), ('Chapter 2', 600, 1560)]       # a short credits chapter joins the one before; empty titles are numbered
+    emb = [dict(start=0, end=2400, title='One'), dict(start=2400, end=4200, title=''), dict(start=4200, end=4260, title='Credits')]
+    cs, src = P.derive_chapters([f('a.m4b', 4260, emb)], [], None, 'B')
+    assert src == 'embedded chapters (short ones combined)' and shape(cs) == [('One', 40.0), ('Chapter 2', 31.0)]                                  # the 1-minute credits join the chapter before; the empty title is numbered
     aud = [dict(title='Opening Credits', length_sec=11), dict(title='Chapter 1', length_sec=1754), dict(title='Chapter 2', length_sec=1285)]
-    chs, src = P.derive_chapters([f('x.mp3', 3050)], [], aud, 'B')
-    assert src == 'Audible chapter list' and [c['title'] for c in chs] == ['Chapter 1', 'Chapter 2'] and chs[0]['start'] == 0 and chs[-1]['end'] == 3050     # the credits track joins the chapter after it and the longer part names it
-    chs, src = P.derive_chapters([f('x.mp3', 3050)], [], [dict(title='a', length_sec=100), dict(title='b', length_sec=100)], 'B')
-    assert src == 'whole file'                                                                  # a chapter list that does not fit the audio is not trusted
+    cs, src = P.derive_chapters([f('x.mp3', 3050)], [], aud, 'B')
+    assert src == 'Audible chapter list (short ones combined)' and [c['title'] for c in cs] == ['Chapter 1', 'Chapter 2'] and cs[0]['start'] == 0 and cs[-1]['end'] == 3050     # 11 s credits join the chapter after and do not name it
+    cs, src = P.derive_chapters([f('x.mp3', 3050)], [], [dict(title='a', length_sec=100), dict(title='b', length_sec=100)], 'B')
+    assert src == 'whole file' and len(cs) == 1                                                                                                  # a chapter list that does not fit the audio is not trusted
     files = [f('01.mp3', 30, title='B - Credits'), f('02.mp3', 600, title='B - The Start'), f('03.mp3', 800, title='B - The End')]
-    chs, src = P.derive_chapters(files, [], None, 'B')
-    assert src == 'file boundaries' and [c['title'] for c in chs] == ['The Start', 'The End'] and chs[0]['start'] == 0 and chs[0]['end'] == 630
-    monkeypatch.setattr(P, 'MAX_CHAPTER', 100.0); monkeypatch.setattr(P, 'WINDOW', (30.0, 70.0)); monkeypatch.setattr(P, 'MIN_CHAPTER', 20.0)
-    sil = [(40.0, 42.0), (60.0, 61.0), (120.0, 123.0)]
-    assert P.cut_points(0, 200, sil) == [41.0, 121.5]                                           # the longest pause in each window
-    assert P.cut_points(0, 200, []) == [70.0, 140.0]                                            # no pauses: hard cuts at the window end
-    assert P.cut_points(0, 90, sil) == []
-    chs, src = P.derive_chapters([f('long.mp3', 200)], sil, None, 'B')
-    assert src == 'whole file + pauses' and [(c['title'], c['start'], c['end']) for c in chs] == [('Part 1', 0, 41.0), ('Part 2', 41.0, 121.5), ('Part 3', 121.5, 200)]
-    chs, _ = P.derive_chapters([f('01.mp3', 150, title='B - Big'), f('02.mp3', 30, title='B - Small')], sil, None, 'B')
-    assert [c['title'] for c in chs][:2] == ['Big (part 1)', 'Big (part 2)']                      # a long chapter with a title is split into numbered parts of it
+    cs, src = P.derive_chapters(files, [], None, 'B')
+    assert src == 'file boundaries (short ones combined)' and [c['title'] for c in cs] == ['The Start', 'The End'] and cs[0]['start'] == 0 and cs[0]['end'] == 630       # the 30 s track joins the next; 10 + 13 minutes are not both under 10, so they stay apart
+    sil = [(2700.0, 2703.0), (5400.0, 5402.0)]
+    cs, src = P.derive_chapters([f('long.mp3', 8100)], sil, None, 'B')
+    assert src == 'whole file (long ones split)' and [(c['title'], c['start'], c['end']) for c in cs] == [('Chapter 1 (part 1)', 0, 2701.5), ('Chapter 1 (part 2)', 2701.5, 5401.0), ('Chapter 1 (part 3)', 5401.0, 8100)]
+    cs, _ = P.derive_chapters([f('01.mp3', 7200, title='B - Big'), f('02.mp3', 1200, title='B - Small')], [], None, 'B')
+    assert [c['title'] for c in cs] == ['Big (part 1)', 'Big (part 2)', 'Big (part 3)', 'Small'] and cs[0]['end'] == 2400.0 and cs[2]['end'] == 7200.0              # two hours: three parts of 40 minutes
 
 
 # ---- with real audio ----------------------------------------------------------------------------------------------------------
@@ -140,7 +168,7 @@ def test_stereo_with_cancelling_channels_uses_one_channel(tmp_path):
 def test_plan_and_execute_an_encoded_book(tmp_path):
     b = make_book(tmp_path, 'Encoded', 3, seconds=40, kbps=128)
     p = P.make_plan(b, str(tmp_path / 'final'))
-    assert p['chapter_source'] == 'file boundaries' and len(p['chapters']) == 1 or len(p['chapters']) == 3               # 40 s chapters are under MIN_CHAPTER: merged; either way the plan is valid
+    assert p['chapter_source'] == 'file boundaries (short ones combined)' and len(p['chapters']) == 1                   # three 40 s files are far under 10 minutes and together under 30: one chapter
     res = R.execute(b, p)
     out = p['out_dir']; names = sorted(n for n in os.listdir(out) if n.endswith('.mp3'))
     assert res['status'] == 'done' and names and os.path.exists(os.path.join(out, 'metadata.json')) and os.path.exists(os.path.join(out, 'playlist.m3u8')) and not os.path.exists(out + '.partial')
@@ -164,7 +192,7 @@ def test_music_like_chapters_get_the_higher_tiers(tmp_path):
 
 @needs_gain
 def test_small_mono_mp3s_are_cut_and_regained_without_re_encoding(tmp_path, monkeypatch):
-    monkeypatch.setattr(P, 'MIN_CHAPTER', 20.0)
+    monkeypatch.setattr(P, 'SHORT', 10.0); monkeypatch.setattr(P, 'TINY', 5.0)                                           # keep the three 40 s files as three chapters
     b = make_book(tmp_path, 'Copied', 3, seconds=40, kbps=64, amp=0.05)                      # quiet: needs a boost
     p = P.make_plan(b, str(tmp_path / 'final'))
     assert [c['mode'] for c in p['chapters']] == ['copy'] * 3 and p['loudness']['gain_steps'] > 0

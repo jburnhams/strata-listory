@@ -156,7 +156,7 @@ def cmd_process(args):
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
         for bid, p in ex.map(plan_one, books):
             if isinstance(p, str): failed += 1; print(f'#{bid}: cannot plan: {p}')
-            else: plans[bid] = p; print(_plan_line(p)) if args.plan or not args.json else None
+            else: plans[bid] = p; print(_plan_line(p)) if not args.json else None
     if args.json: print(json.dumps(plans, indent=1)); return 1 if failed else 0
     tot_i = sum(p['in_bytes'] for p in plans.values()); tot_o = sum(p['est_bytes'] for p in plans.values())
     print(f"{len(plans)} books, {_mb(tot_i)} -> about {_mb(tot_o)} ({tot_o / tot_i:.0%})" if tot_i else 'nothing planned')

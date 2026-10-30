@@ -2,6 +2,8 @@
 
 ## 2026-10-30: the processor
 
+- Chapter sizes set by the user: split only above 60 minutes (parts of about 45), combine only when one is under 10 minutes and the pair stays within 30. Added one exception, flagged to the user: credits-length pieces (under 2 minutes) join a neighbour up to an hour. Real books: a 150-file title went to 26 chapters (12 to 51 minutes), the others stayed at 16 to 30.
+
 - Limiter budget measured from the book's peaks instead of a fixed 3 dB: peak levels per short window are collected in the same pass as loudness; the lift is allowed until the 99th-percentile peak would lose more than 2 dB (loudest peak: 7 dB). On three real books this moved the end level from -20.9/-21.1/-20.6 to -18.7/-18.2/-18.0 LUFS; the one book re-encoded as a test kept its loudness range (6.6 to 6.1 LU) and came out at -1.2 dBTP.
 
 - Added the manual approval queue (`process/queue.py`, Processing page, `process_plan` table): proposals carry the exact plan, a person approves or rejects, only approved plans run; a plan is refused if the inbox files changed since it was proposed. The server runs proposals and approved plans on one background worker thread.

@@ -1,6 +1,6 @@
 """Decide what to do with one book, without changing anything: its chapters, how each is produced and the loudness gain for the whole book.
 
-Chapters, first source that exists wins: chapters embedded in a single file; the chapter list of the Audible metadata file (when it matches the audio length); the files themselves (tiny ones merged into a neighbour); pauses in a single long file. Chapters longer than MAX_CHAPTER are split again at pauses.
+Chapters, first source that exists wins: chapters embedded in a single file; the chapter list of the Audible metadata file (when it matches the audio length); the files themselves; or, for one long file without chapters, equal-ish parts cut at pauses. Then the size rules: a chapter under 10 minutes is combined with a neighbour if the two stay within 30 minutes (credits-length pieces always join one, up to an hour); a chapter over 60 minutes is split into parts of about 45 minutes at the nearest pause. Nothing else is split or combined.
 Each chapter is then `copy` (mono mp3 source at or below COPY_MAX_KBPS: cut on frame boundaries and re-gained losslessly, never re-encoded) or `encode` (LAME VBR, mono, with a tier chosen from how much high-frequency content the chapter really has).
 Loudness is one gain per book towards TARGET_LUFS (so chapters keep their level relative to each other), only when the book is outside a tolerance band, and never at the price of clipping: a book may stay slightly quiet."""
 import math, os, re
@@ -10,9 +10,10 @@ from app.process import probe
 
 TARGET_LUFS, TP_LIMIT = -18.0, -1.5
 COPY_MAX_KBPS = 96
-MIN_CHAPTER, MAX_CHAPTER = 90.0, 75 * 60.0
-SPLIT_SILENCE = 1.5                         # seconds of quiet that may end a chapter
-WINDOW = (12 * 60.0, 40 * 60.0)             # where to look for a cut when splitting a long stretch
+SHORT, COMBINE_MAX = 10 * 60.0, 30 * 60.0   # a chapter under SHORT minutes may be combined with its neighbour, but only if the two together are at most COMBINE_MAX
+SPLIT_ABOVE, SPLIT_TARGET = 60 * 60.0, 45 * 60.0   # a chapter is split only above SPLIT_ABOVE, into equal-ish parts of about SPLIT_TARGET
+TINY = 2 * 60.0                             # credits and jingles: joined to a neighbour even beyond COMBINE_MAX (up to SPLIT_ABOVE), because a file of seconds is no use as a chapter
+PAUSE_MIN, CUT_WINDOW = 1.2, 6 * 60.0       # a cut goes at a pause of at least this many seconds within this many seconds of the ideal point
 LIMITER_MARGIN = 0.8                        # dB below TP_LIMIT for the limiter, because the mp3 encoder overshoots a little (measured: -0.7 dBFS true peak after encoding with a -1.5 limiter)
 GAIN_STEP = 1.5                             # dB: the resolution of lossless mp3 gain
 TIERS = {'V5': dict(q=5, rate=24000, kbps=49), 'V4': dict(q=4, rate=32000, kbps=70), 'V3': dict(q=3, rate=44100, kbps=100)}
@@ -53,16 +54,41 @@ def segments(tl, start: float, end: float) -> list[tuple]:
     return out
 
 
-def cut_points(start: float, end: float, silences: list[tuple[float, float]]) -> list[float]:
-    """Where to cut [start, end] into chapters no longer than MAX_CHAPTER: at the longest pause 12 to 40 minutes on, else at the first pause after that (up to MAX_CHAPTER on), else hard at 40 minutes."""
-    cuts, pos = [], start
-    while end - pos > MAX_CHAPTER:
-        lo, hi = pos + WINDOW[0], min(pos + WINDOW[1], end - MIN_CHAPTER)
-        if lo >= hi: break
-        pauses = [(e - s, (s + e) / 2) for s, e in silences if e - s >= SPLIT_SILENCE]
-        inside = [p for p in pauses if lo <= p[1] <= hi]; later = [p for p in pauses if hi < p[1] <= pos + MAX_CHAPTER and p[1] <= end - MIN_CHAPTER]
-        pos = max(inside)[1] if inside else min(later, key=lambda p: p[1])[1] if later else hi
-        cuts.append(round(pos, 2))
+def _num(title: str):
+    m = re.fullmatch(r'(?:Chapter|Part|Track|Ch\.?)\s*(\d+)', title.strip(), re.I)
+    return int(m[1]) if m else None
+
+
+def _merge(parts: list[dict]) -> dict:
+    """One chapter from consecutive ones. Credits-length pieces do not name it; chapters numbered in a row become "Chapters 3-5"; otherwise the first and last names are joined."""
+    named = [p for p in parts if p['end'] - p['start'] >= TINY] or parts
+    titles = [p['title'] for p in named]; nums = [_num(t) for t in titles]
+    if len(titles) == 1: title = titles[0]
+    elif all(n is not None for n in nums): title = f'Chapters {nums[0]}-{nums[-1]}'
+    else: title = ' + '.join(titles) if len(titles) == 2 else f'{titles[0]} ... {titles[-1]}'
+    return dict(title=title, start=parts[0]['start'], end=parts[-1]['end'])
+
+
+def combine(chs: list[dict]) -> list[dict]:
+    """Join a chapter shorter than SHORT to its neighbour when the two together stay within COMBINE_MAX (reading left to right, so a run of short ones makes chapters of up to 30 minutes). Credits-length pieces (under TINY) join a neighbour whenever the result stays within SPLIT_ABOVE."""
+    out: list[list[dict]] = []
+    for c in chs:
+        if out:
+            run = out[-1]; a = run[-1]['end'] - run[0]['start']; b = c['end'] - c['start']; small = min(a, b)
+            if (small < SHORT and a + b <= COMBINE_MAX) or (small < TINY and a + b <= SPLIT_ABOVE): run.append(c); continue
+        out.append([c])
+    return [_merge(r) if len(r) > 1 else dict(r[0]) for r in out]
+
+
+def split_points(start: float, end: float, silences: list[tuple[float, float]]) -> list[float]:
+    """Where to cut a chapter longer than SPLIT_ABOVE into equal-ish parts of about SPLIT_TARGET: each cut at the longest pause near its ideal position, or exactly there when there is none. Shorter chapters are not cut."""
+    length = end - start
+    if length <= SPLIT_ABOVE: return []
+    n = math.ceil(length / SPLIT_TARGET); each = length / n; cuts: list[float] = []
+    for k in range(1, n):
+        ideal = start + k * each; floor = (cuts[-1] if cuts else start) + 300
+        cands = [(e - s, (s + e) / 2) for s, e in silences if e - s >= PAUSE_MIN and abs((s + e) / 2 - ideal) <= min(CUT_WINDOW, each * 0.25) and floor < (s + e) / 2 < end - 300]
+        cuts.append(round(max(cands)[1] if cands else ideal, 2))
     return cuts
 
 
@@ -78,20 +104,15 @@ def derive_chapters(files: list[dict], silences, audible_chapters: list[dict] | 
         chs = [dict(title=file_title(f, book_title, i + 1), start=a, end=b) for i, (a, b, f) in enumerate(timeline(files))]; source = 'file boundaries'
     else:
         chs = [dict(title='', start=0.0, end=total)]; source = 'whole file'
-    merged: list[dict] = []
-    for c in chs:                                           # tiny chapters (credits, jingles) join their neighbour
-        if merged and (c['end'] - c['start'] < MIN_CHAPTER or merged[-1]['end'] - merged[-1]['start'] < MIN_CHAPTER) and merged[-1]['end'] - merged[-1]['start'] + c['end'] - c['start'] < MAX_CHAPTER:
-            if (c['end'] - c['start']) > (merged[-1]['end'] - merged[-1]['start']): merged[-1]['title'] = c['title'] or merged[-1]['title']      # the merged chapter is named after its longer part (a short credits track joins the chapter after it)
-            merged[-1]['end'] = c['end']
-        else: merged.append(dict(c))
-    out = []
-    for c in merged:
-        cuts = cut_points(c['start'], c['end'], silences) if c['end'] - c['start'] > MAX_CHAPTER else []
-        edges = [c['start'], *cuts, c['end']]; split = len(cuts) > 0
-        for k, (a, b) in enumerate(zip(edges, edges[1:])): out.append(dict(title=(f"{c['title'] or 'Part'} (part {k + 1})" if split and c['title'] else '' if not split else f'Part {k + 1}') or c['title'], start=round(a, 2), end=round(b, 2)))
-        if split and not source.endswith('+ pauses'): source += ' + pauses'
-    for i, c in enumerate(out):
+    for i, c in enumerate(chs):
         if not c['title']: c['title'] = f'Chapter {i + 1}'
+    n_before = len(chs); chs = combine(chs)
+    if len(chs) < n_before: source += ' (short ones combined)'
+    out = []
+    for c in chs:
+        cuts = split_points(c['start'], c['end'], silences); edges = [c['start'], *cuts, c['end']]
+        for k, (a, b) in enumerate(zip(edges, edges[1:])): out.append(dict(title=f"{c['title']} (part {k + 1})" if cuts else c['title'], start=round(a, 2), end=round(b, 2)))
+        if cuts and 'split' not in source: source += ' (long ones split)'
     return out, source
 
 
