@@ -3,13 +3,15 @@
   data_dir   where application data files live. Default: `data/` in this repository (gitignored) until configured.
   library_dir  the folder the audiobook files live in (optional; not used yet, reserved for scanning). Default: unset.
   backup_dir   where the catalogue database backups go (default: `backups/` inside data_dir). May be a network share (SMB): backups are built on the local disk and copied there.
+  match_providers  comma separated metadata providers in the order to try them (default: audnexus,audible,audiobookdb).
+  audible_region   which Audible store to search: uk (default), us, de, fr, ca or au.
 
-The environment variables APP_DATA, APP_LIBRARY and APP_BACKUP override the file (handy for tests and one-off runs)."""
+The environment variables APP_DATA, APP_LIBRARY, APP_BACKUP, APP_PROVIDERS and APP_AUDIBLE_REGION override the file (handy for tests and one-off runs)."""
 import json, os
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_DATA_DIR = os.path.join(REPO, 'data')
-KNOWN = ('data_dir', 'library_dir', 'backup_dir')
+KNOWN = ('data_dir', 'library_dir', 'backup_dir', 'match_providers', 'audible_region')
 
 
 def home():
@@ -54,6 +56,11 @@ def backup_dir():
     """The folder for database backups (not created here; backup.py makes it when it writes)."""
     p = (os.environ.get('APP_BACKUP') or load().get('backup_dir') or '').strip()
     return os.path.abspath(os.path.expanduser(p)) if p else os.path.join(data_dir(), 'backups')
+
+
+def audible_region():
+    r = (os.environ.get('APP_AUDIBLE_REGION') or load().get('audible_region') or 'uk').strip().lower()
+    return r or 'uk'
 
 
 def all_settings(): return dict(data_dir=data_dir(), library_dir=library_dir(), backup_dir=backup_dir())

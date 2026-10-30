@@ -109,17 +109,19 @@ def remove_book(book_id: int) -> dict:
 
 
 def add_scanned(candidates) -> dict:
-    """Store scan candidates (scan.scan) as `new` books, skipping paths already in the catalogue; returns {added, existing}. A rescan refreshes the file count of known paths and nothing else."""
-    added = existing = 0; c = db.connect()
+    """Store scan candidates (scan.scan) as `new` books, skipping paths already in the catalogue; returns {added, existing, replaced}. A rescan refreshes the file count of known paths and nothing else, except that untouched `new` entries for single files now inside a larger candidate (the scanner has learned that they are chapters of one book) are removed."""
+    added = existing = replaced = 0; c = db.connect()
     try:
         with c:
             for k in candidates:
+                if os.path.isdir(k['path']):
+                    replaced += c.execute("DELETE FROM books WHERE review='new' AND (suggestion IS NULL OR suggestion='{}') AND path LIKE ? ESCAPE '\\'", (k['path'].replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + os.sep + '%',)).rowcount
                 if c.execute('SELECT 1 FROM books WHERE path=?', (k['path'],)).fetchone():
                     c.execute('UPDATE books SET file_count=? WHERE path=?', (k['file_count'], k['path'])); existing += 1; continue
                 rec = clean(dict(title=k['title'] or os.path.basename(k['path']), author=k['author'], narrator=k['narrator'], series_position=k['series_position'], path=k['path'], asin=k['asin'], kind=k['kind'], review='new', file_count=k['file_count']))
                 c.execute('INSERT INTO books (title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count) VALUES (:title, :author, :narrator, :series, :series_position, :duration_seconds, :path, :status, :added, :asin, :kind, :review, :file_count)', dict(rec, added=datetime.now(timezone.utc).isoformat()))
                 added += 1
-        return dict(added=added, existing=existing)
+        return dict(added=added, existing=existing, replaced=replaced)
     finally: c.close()
 
 
@@ -142,11 +144,13 @@ def pending_match(limit: int) -> list[dict]:
 
 
 def confirm(book_id: int) -> dict:
-    """Accept a book: apply its suggestion's title, author and series (when there is one), and mark it confirmed."""
+    """Accept a book: apply its suggestion's title, author, narrators, series and ASIN (and the runtime when the duration is unknown), and mark it confirmed."""
     b = get_book(book_id); sug = b['suggestion'] or {}
     changes = dict(review='confirmed')
-    for k in ('title', 'author', 'series', 'series_position'):
+    for k in ('title', 'author', 'series', 'series_position', 'asin'):
         if sug.get(k) not in (None, ''): changes[k] = sug[k]
+    if sug.get('narrators'): changes['narrator'] = ', '.join(sug['narrators'])
+    if sug.get('runtime_minutes') and not b['duration_seconds']: changes['duration_seconds'] = int(sug['runtime_minutes']) * 60
     return update_book(book_id, **changes)
 
 

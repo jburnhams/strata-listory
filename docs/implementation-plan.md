@@ -10,4 +10,5 @@
 - [ ] **M6 processing**: operations on the audio (merge to `.m4b`, chapter files, normalise names); decide whether to shell out to ffmpeg.
 - [x] **M7 storage**: SQLite (`db.py`) with automatic verified backups and restore (`backup.py`).
 - [x] **M8 matching, first source**: AudiobookDB title/ASIN lookup with scored suggestions and a review UI (confirm / ignore).
-- [ ] **M8b more sources**: measure the hit rate on the whole library; add Open Library (local dump) or another source for misses; narrator and runtime via AudiobookDB releases.
+- [x] **M8b modular providers**: Audnexus, Audible catalogue search and AudiobookDB behind one interface; ordered or combined queries; `match-test` to compare.
+- [ ] **M8c improve the hit rate**: sample on 2026-10-30 gave ~37% good / ~55% any with all three providers; the rest are mostly names the scanner could not clean (chapter files, radio-like folders). Next: better title cleaning and author detection, tag-based titles, Open Library for non-Audible titles.

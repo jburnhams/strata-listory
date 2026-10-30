@@ -1,5 +1,11 @@
 # Progress log
 
+## 2026-10-30: modular providers
+
+- Audnexus (the project AudiobookDB succeeds) found 53 of 53 real ASINs from the `Audible/` folders (47 uk, 6 only in the us catalogue); AudiobookDB found 1 of 12. Only ~150 catalogue items (117 books) have an ASIN in the name, so title search matters more: Audible's own catalogue search returned the right book in the top 2 for 8 of 10 titles.
+- Matching is now provider based (`providers/`). Sample of 60 scanned books (`match-test`, 2026-10-30, after the scanner fix below): Audnexus 5% (it is ASIN only), Audible 30% good / 33% any, AudiobookDB 30% / 50%, all three 37% / 55%. Misses are mostly unclean titles, not provider gaps.
+- Scanner fix found through that test: chapter files whose names differ only in numbers (`AB_022`, `ch0`, `Part06`) were each becoming a "book". They now fold into one book, and a rescan removes untouched `new` fragments (1,104 on the live library; books 2,280 -> 1,681).
+
 ## 2026-10-30: book page and covers
 
 - Found that 118 of the `Audible/` books have a `<title> [ASIN].metadata.json` next to the audio (Audible's own product data: narrators, series, publisher, release date, runtime, ratings, categories, summary, chapters, cover URL). The book page reads it as the richest local source; no API terms involved.

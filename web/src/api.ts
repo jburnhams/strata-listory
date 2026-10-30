@@ -6,12 +6,13 @@ export const STATUSES: Status[] = ['unlistened', 'listening', 'finished']
 export type Review = 'new' | 'suggested' | 'confirmed' | 'ignored'
 export const REVIEWS: Review[] = ['new', 'suggested', 'confirmed', 'ignored']
 export type Kind = 'book' | 'radio'
-export interface Suggestion { id?: string; title?: string; author?: string; series?: string; series_position?: number | null; matched_by?: string }
+export interface Alternative { source: string; title: string; author: string; asin: string; score: number }
+export interface Suggestion { id?: string; source?: string; title?: string; author?: string; narrators?: string[]; series?: string; series_position?: number | null; runtime_minutes?: number | null; asin?: string; matched_by?: string; sources?: string[]; alternatives?: Alternative[] }
 export interface Book { id: number; title: string; author: string; narrator: string; series: string; series_position: number | null; duration_seconds: number | null; path: string; status: Status; added: string; asin: string; kind: Kind; review: Review; file_count: number | null; suggestion: Suggestion | null; match_score: number | null }
 export type NewBook = { title: string; author?: string }
 export interface Filters { q?: string; status?: Status; review?: Review; kind?: Kind }
 export interface ScanResult { found: number; added: number; existing: number }
-export interface MatchResult { tried: number; suggested: number; none: number; remaining: number }
+export interface MatchResult { tried: number; suggested: number; none: number; remaining: number; providers?: string[] }
 
 // Where the app is served from: '' at the server's own root, '/subpath' behind a reverse proxy at that path. Taken from the page's own URL (index.html has relative asset paths: vite.config.ts base './'), so one build works in both places.
 export const BASE = typeof document === 'undefined' ? '' : new URL('.', document.baseURI).pathname.replace(/\/$/, '')      // no page (the unit tests run in node): the root

@@ -1,10 +1,10 @@
 """Everything we can learn about one book from its own files, for the book page: the Audible `*.metadata.json` file that sits next to purchased books, the audio files and their embedded tags (ffprobe), and a cover image. All read-only on the library; covers are cached under `<data_dir>/covers/`.
 
-Cover order: an image file in the book's folder (cover/folder/front, then any picture; for a single loose file only a picture with the same name), then art embedded in the audio (ffmpeg), then the cover URL named in the book's own Audible metadata file, and last the cover of the book's AudiobookDB match (confirmed, or a likely match). The last two are downloaded once. AudiobookDB's terms do not license its images, so these are kept only in this private catalogue."""
+Cover order: an image file in the book's folder (cover/folder/front, then any picture; for a single loose file only a picture with the same name), then art embedded in the audio (ffmpeg), then the cover URL named in the book's own Audible metadata file, and last the cover of the book's provider match (confirmed, or a likely match). The last two are downloaded once. AudiobookDB's terms do not license its images, so these are kept only in this private catalogue."""
 import glob, html, json, os, re, shutil, subprocess, time, urllib.request
 from datetime import datetime, timedelta, timezone
 
-from app import db, matcher, scan, settings
+from app import db, providers, scan, settings
 
 IMAGES = ('.jpg', '.jpeg', '.png', '.webp')
 COVER_NAMES = ('cover', 'folder', 'front', 'albumart', 'albumartsmall', 'artwork')
@@ -142,9 +142,9 @@ def cover(book: dict) -> str | None:
         data = data or _embedded(audio_files(path))
         if not data and (side := sidecar(path)): data = _download(audible_summary(side)['cover_url'])
     sug = book.get('suggestion') or {}
-    if not data and sug.get('id') and (book.get('review') == 'confirmed' or (book.get('match_score') or 0) >= matcher.GOOD_SCORE):
-        try: data = _download(sug.get('cover_url') or matcher.AudiobookDB().cover_url(sug['id']))
-        except matcher.MatchError: return None                  # the service is down or has no key: try again next time rather than remembering "no cover"
+    if not data and sug.get('id') and (book.get('review') == 'confirmed' or (book.get('match_score') or 0) >= 0.85):
+        try: data = _download(sug.get('cover_url') or providers.get(sug.get('source') or 'audiobookdb').cover_url(sug['id']))
+        except (providers.MatchError, KeyError): return None                  # the service is down or has no key: try again next time rather than remembering "no cover"
     if not data:
         open(none, 'w').close(); os.utime(none, (time.time(), time.time())); return None
     p = os.path.join(folder, f"{book['id']}{_image_kind(data)}")

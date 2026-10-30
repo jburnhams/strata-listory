@@ -61,9 +61,15 @@ export function Details({ d }: { d: BookDetails }) {
       {d.audible && <AudibleSection a={d.audible} />}
 
       {sug?.title && (
-        <Section title="AudiobookDB suggestion">
-          <Rows rows={[['Title', sug.title], ['Author', sug.author], ['Series', sug.series ? `${sug.series}${sug.series_position != null ? ` #${sug.series_position}` : ''}` : ''], ['Matched by', sug.matched_by], ['Score', matchLabel(b.match_score)]]} />
-          <p className="text-xs text-stone-500 mt-2">Data from <a className="underline" href="https://audiobookdb.org">audiobookdb.org</a>.</p>
+        <Section title="Match suggestion">
+          <Rows rows={[['Title', sug.title], ['Author', sug.author], ['Narrators', sug.narrators?.join(', ')], ['Series', sug.series ? `${sug.series}${sug.series_position != null ? ` #${sug.series_position}` : ''}` : ''], ['Runtime', sug.runtime_minutes ? formatDuration(sug.runtime_minutes * 60) : ''], ['ASIN', sug.asin],
+            ['Matched by', sug.matched_by], ['Found by', sug.sources?.join(' + ')], ['Score', matchLabel(b.match_score)]]} />
+          {sug.alternatives && sug.alternatives.length > 0 && (
+            <details className="mt-2 text-sm"><summary className="cursor-pointer">{sug.alternatives.length} other candidate{sug.alternatives.length === 1 ? '' : 's'}</summary>
+              <ul className="mt-1 space-y-0.5">{sug.alternatives.map((a, i) => <li key={i}>{a.title} <span className="text-stone-500">by {a.author || 'unknown'} · {a.source} · {Math.round(a.score * 100)}%</span></li>)}</ul>
+            </details>
+          )}
+          <p className="text-xs text-stone-500 mt-2">Data from Audible, Audnexus and <a className="underline" href="https://audiobookdb.org">audiobookdb.org</a>.</p>
         </Section>
       )}
 

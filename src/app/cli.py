@@ -1,7 +1,7 @@
 """Command line: `doctor` checks the environment, `add`/`list`/`show`/`edit`/`remove` manage the audiobook catalogue, `set` changes settings, `serve` starts the web server."""
 import argparse, importlib, json, os, sys
 
-from app import __version__, backup, catalogue, db, matcher, scan, settings
+from app import __version__, backup, catalogue, db, matcher, providers, scan, settings
 
 CHECKS = (('fastapi', 'fastapi'), ('uvicorn', 'uvicorn'), ('pydantic', 'pydantic'))
 
@@ -86,13 +86,35 @@ def cmd_scan(args):
     kinds = {k: sum(f['kind'] == k for f in found) for k in catalogue.KINDS}
     if args.dry_run: print(f"{len(found)} candidates ({kinds['book']} books, {kinds['radio']} radio); nothing stored (dry run)"); return 0
     res = catalogue.add_scanned(found)
-    print(f"{len(found)} candidates ({kinds['book']} books, {kinds['radio']} radio): {res['added']} added, {res['existing']} already known"); return 0
+    print(f"{len(found)} candidates ({kinds['book']} books, {kinds['radio']} radio): {res['added']} added, {res['existing']} already known" + (f", {res['replaced']} fragments replaced" if res['replaced'] else '')); return 0
+
+
+def _chosen(args):
+    try: return providers.enabled([n.strip() for n in args.providers.split(',')] if args.providers else None)
+    except KeyError as e: sys.exit(str(e.args[0]))
 
 
 def cmd_match(args):
-    try: res = matcher.match_pending(args.limit)
+    try: res = matcher.match_pending(args.limit, _chosen(args))
     except matcher.MatchError as e: sys.exit(str(e))
-    print(f"tried {res['tried']}: {res['suggested']} suggestions, {res['none']} without a match; {res['remaining']} still to try (matches by audiobookdb.org)"); return 0
+    print(f"tried {res['tried']}: {res['suggested']} suggestions, {res['none']} without a match; {res['remaining']} still to try (providers: {', '.join(res['providers'])})"); return 0
+
+
+def cmd_providers(args):
+    for p in providers.status():
+        print(f"  {p['name']:12} {p['label']:18} {'selected #' + str(p['order']) if p['selected'] else 'not selected':14} {'ready' if p['available'] else 'UNAVAILABLE: ' + p['reason']}")
+    return 0
+
+
+def cmd_match_test(args):
+    plist = _chosen(args)
+    books = [b for b in catalogue.list_books(kind='book') if b['review'] == 'new'][::max(1, args.stride)][:args.limit]
+    if not books: print('no scanned books to test: ./app scan first'); return 0
+    try: rows = matcher.evaluate(books, plist)
+    except matcher.MatchError as e: sys.exit(str(e))
+    print(f'{len(books)} scanned books; nothing is recorded')
+    for name, r in rows.items(): print(f"  {name:12} good (>= {matcher.GOOD_SCORE:.2f}) {r['good']:>4} ({r['good'] / len(books):4.0%})   any (>= {matcher.MIN_SCORE:.2f}) {r['some']:>4} ({r['some'] / len(books):4.0%})   errors {r['errors']}")
+    return 0
 
 
 def cmd_confirm(args):
@@ -127,13 +149,15 @@ def main(argv=None):
     ed = sub.add_parser('edit', help='change fields of a book'); ed.add_argument('id', type=int); book_fields(ed, edit=True); ed.set_defaults(fn=cmd_edit)
     rm = sub.add_parser('remove', help='remove a book from the catalogue (audio files are never touched)'); rm.add_argument('id', type=int); rm.set_defaults(fn=cmd_remove)
     sc = sub.add_parser('scan', help='find audiobooks in a folder (default: the library_dir setting) and add them as new, unreviewed books; never writes to the folder'); sc.add_argument('folder', nargs='?'); sc.add_argument('--dry-run', action='store_true'); sc.set_defaults(fn=cmd_scan)
-    mt = sub.add_parser('match', help='look scanned books up on audiobookdb.org and record suggestions'); mt.add_argument('--limit', type=int, default=25); mt.set_defaults(fn=cmd_match)
+    mt = sub.add_parser('match', help='look scanned books up with the metadata providers and record suggestions'); mt.add_argument('--limit', type=int, default=25); mt.add_argument('--providers', help='comma separated, in order (default: the match_providers setting)'); mt.set_defaults(fn=cmd_match)
+    sub.add_parser('providers', help='list the metadata providers and whether each can run').set_defaults(fn=cmd_providers)
+    mx = sub.add_parser('match-test', help='compare the providers on a sample of scanned books without recording anything'); mx.add_argument('--limit', type=int, default=50); mx.add_argument('--stride', type=int, default=1, help='take every Nth book, to spread the sample'); mx.add_argument('--providers'); mx.set_defaults(fn=cmd_match_test)
     cf = sub.add_parser('confirm', help='accept a book, applying its suggestion if it has one'); cf.add_argument('id', type=int); cf.set_defaults(fn=cmd_confirm)
     ig = sub.add_parser('ignore', help='mark a scanned item as not wanted'); ig.add_argument('id', type=int); ig.set_defaults(fn=cmd_ignore)
     sub.add_parser('backup', help='back up the catalogue database now').set_defaults(fn=cmd_backup)
     sub.add_parser('backups', help='list the automatic backups').set_defaults(fn=cmd_backups)
     rs = sub.add_parser('restore', help='replace the catalogue with a backup (default: the newest); the current one is kept'); rs.add_argument('backup', nargs='?', help='path from `backups`'); rs.set_defaults(fn=cmd_restore)
-    s = sub.add_parser('set', help='show or change a setting (data_dir, library_dir); value "default" resets it'); s.add_argument('key'); s.add_argument('value', nargs='?'); s.set_defaults(fn=cmd_set)
+    s = sub.add_parser('set', help='show or change a setting (data_dir, library_dir, backup_dir, match_providers, audible_region); value "default" resets it'); s.add_argument('key'); s.add_argument('value', nargs='?'); s.set_defaults(fn=cmd_set)
     v = sub.add_parser('serve', help='start the web server'); v.add_argument('--host', default='127.0.0.1'); v.add_argument('--port', type=int, default=8360); v.set_defaults(fn=cmd_serve)
     a = p.parse_args(argv)
     try: return a.fn(a)

@@ -1,92 +1,21 @@
-"""Match scanned books against AudiobookDB (https://audiobookdb.org, a community audiobook catalogue) and record the best candidate as a *suggestion* for review. A suggestion never changes a book until it is confirmed (`catalogue.confirm`).
+"""Match scanned books against the metadata providers (see providers/) and record the best candidate as a *suggestion* for review. A suggestion never changes a book until it is confirmed (`catalogue.confirm`).
 
-Terms of use (https://audiobookdb.org/terms): personal, non-commercial use; cached data must be kept only as long as needed and refreshed (responses are cached here for CACHE_DAYS); attribution to audiobookdb.org is shown wherever suggestions are; cover art and descriptions are not used. The API key is read from APP_ADB_KEY or `~/.config/strata-listory/audiobookdb.key`."""
-import difflib, json, os, re, time, urllib.error, urllib.request
-from datetime import datetime, timedelta, timezone
+How a book is matched (`match_book`):
+1. An ASIN in the folder name: each provider is asked for it in order; the first hit wins (score 1.0, matched_by 'asin').
+2. Otherwise every provider is searched by title and author, in order. Each candidate is scored on title and author similarity; the same book found by several providers is merged (fields filled in from each, and a small bonus for agreement). The search stops early when a provider already gives a near-certain answer.
+The suggestion keeps the providers that agreed (`sources`) and the next best alternatives for review."""
+import difflib, re
 
-from app import catalogue, db
+from app import catalogue, providers
+from app.providers.base import MatchError
 
-API = 'https://audiobookdb.org/api'
-USER_AGENT = 'strata-listory/0.1 (personal audiobook catalogue)'
-CACHE_DAYS = 7
 MIN_SCORE = 0.6          # below this a candidate is not worth showing
 GOOD_SCORE = 0.85        # the UI marks suggestions at or above this as likely right
-MIN_INTERVAL = 0.1       # seconds between requests (the registered tier allows 10 a second)
+EARLY_STOP = 0.95        # a candidate this good ends the search: asking more providers would not change the answer
+AGREE_BONUS = 0.05       # per additional provider that found the same book
+ALTERNATIVES = 3
 
-
-class MatchError(RuntimeError):
-    """Raised when the lookup service cannot be used (no key, rate limited, unreachable)."""
-
-
-def key() -> str:
-    k = os.environ.get('APP_ADB_KEY') or ''
-    if not k:
-        try:
-            with open(os.path.join(os.path.expanduser('~'), '.config', 'strata-listory', 'audiobookdb.key'), encoding='utf8') as f: k = f.read()
-        except OSError: pass
-    if not k.strip(): raise MatchError('no AudiobookDB API key: put it in ~/.config/strata-listory/audiobookdb.key (free account at audiobookdb.org, Settings -> API key)')
-    return k.strip()
-
-
-_last = [0.0]
-
-
-def _request(path: str, body: dict | None = None):
-    """One throttled API call; honours Retry-After once on a 429 and retries a 502/503/504 twice (the service is a beta and goes down now and then)."""
-    for attempt in (1, 2, 3):
-        time.sleep(max(0, _last[0] + MIN_INTERVAL - time.monotonic())); _last[0] = time.monotonic()
-        req = urllib.request.Request(API + path, json.dumps(body).encode() if body is not None else None, {'X-API-Key': key(), 'User-Agent': USER_AGENT, 'Content-Type': 'application/json'})
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r: return json.load(r)
-        except urllib.error.HTTPError as e:
-            if e.code == 404: return None
-            if e.code == 429 and attempt == 1: time.sleep(min(30, int(e.headers.get('Retry-After') or 5))); continue
-            if e.code in (502, 503, 504) and attempt < 3: time.sleep(3 * attempt); continue
-            raise MatchError(f'AudiobookDB answered {e.code} for {path}')
-        except (urllib.error.URLError, OSError) as e: raise MatchError(f'AudiobookDB unreachable: {e}')
-
-
-def _cached(cache_key: str, fetch):
-    c = db.connect()
-    try:
-        r = c.execute('SELECT fetched, body FROM match_cache WHERE key=?', (cache_key,)).fetchone()
-        if r and datetime.now(timezone.utc) - datetime.fromisoformat(r['fetched']) < timedelta(days=CACHE_DAYS): return json.loads(r['body'])
-        body = fetch()
-        with c: c.execute('INSERT OR REPLACE INTO match_cache (key, fetched, body) VALUES (?, ?, ?)', (cache_key, datetime.now(timezone.utc).isoformat(), json.dumps(body)))
-        return body
-    finally: c.close()
-
-
-def image_url(raw: dict) -> str:
-    """The cover image URL of an AudiobookDB book (its API says to append `/large.jpg` to the base URL), or ''."""
-    img = raw.get('coverImage') or raw.get('image') or {}
-    url = img.get('url') if isinstance(img, dict) else img
-    return '' if not isinstance(url, str) or not url else url if re.search(r'\.(jpe?g|png|webp)$', url) else url.rstrip('/') + '/large.jpg'
-
-
-def candidate(raw: dict) -> dict:
-    """Reduce an AudiobookDB book to the fields we use."""
-    authors = [p['person']['name'] for p in raw.get('people', []) if (p.get('role') or {}).get('name') == 'Author']
-    sw = (raw.get('seriesWithId') or [None])[0]
-    pos = None
-    try: pos = float(sw['ordinal']) if sw else None
-    except (TypeError, ValueError, KeyError): pass
-    return dict(source='audiobookdb', id=raw.get('id', ''), title=raw.get('title', ''), subtitle=raw.get('subtitle') or '', author=', '.join(authors), authors=authors, series=sw['title'] if sw else '', series_position=pos, cover_url=image_url(raw))
-
-
-class AudiobookDB:
-    """The lookup source: `search(title)` and `by_asin(asin)` return candidates (see `candidate`)."""
-    def search(self, title: str) -> list[dict]:
-        q = title.strip()[:100]
-        raw = _cached('search:' + q.lower(), lambda: _request('/search', dict(q=q, type='books'))) if len(q) >= 3 else []
-        return [candidate(b) for b in raw or []]
-
-    def cover_url(self, book_id: str) -> str:
-        return image_url(_cached('book:' + book_id, lambda: _request(f'/books/{book_id}')) or {})
-
-    def by_asin(self, asin: str) -> dict | None:
-        raw = _cached('asin:' + asin, lambda: _request(f'/audiobooks/external/audible/{asin}'))
-        return candidate(raw) if raw else None
+__all__ = ['MatchError', 'MIN_SCORE', 'GOOD_SCORE', 'norm', 'title_score', 'author_score', 'score', 'match_book', 'match_pending', 'evaluate']
 
 
 def norm(s: str) -> str:
@@ -106,7 +35,7 @@ def title_score(wanted: str, cand: dict) -> float:
 
 
 def author_score(wanted: str, cand: dict) -> float:
-    """1 when the surname of every wanted author part appears among the candidate's authors, 0.5 when we do not know the author, else 0."""
+    """1 when the surname of every wanted author part appears among the candidate's authors, 0.5 when we do not know the author, else 0.3 for a similar name and 0."""
     w = norm(wanted)
     if not w: return 0.5
     have = ' '.join(norm(a) for a in cand['authors'])
@@ -119,17 +48,63 @@ def score(book: dict, cand: dict) -> float:
     return round(0.7 * title_score(book['title'], cand) + 0.3 * author_score(book['author'], cand), 3)
 
 
-def match_book(book: dict, source) -> tuple[dict, float | None]:
-    """The best suggestion for a scanned book: (suggestion, score), or ({}, None) when nothing reaches MIN_SCORE. An ASIN in the folder name is tried first and wins when found."""
-    if book.get('asin') and (c := source.by_asin(book['asin'])): return dict(c, matched_by='asin'), 1.0
-    scored = sorted(((score(book, c), c) for c in source.search(book['title'])), key=lambda x: -x[0])
-    if not scored or scored[0][0] < MIN_SCORE: return {}, None
-    return dict(scored[0][1], matched_by='title'), scored[0][0]
+def _key(c: dict) -> str:
+    return c['asin'] or norm(c['title']) + '|' + (norm(c['authors'][0]).split() or [''])[-1] if c['authors'] else c['asin'] or norm(c['title'])
 
 
-def match_pending(limit: int = 25, source=None) -> dict:
-    """Try to match up to `limit` scanned books; returns {tried, suggested, none, remaining}."""
-    source = source or AudiobookDB(); tried = suggested = 0
+def _merge(group: list[tuple[float, dict]]) -> tuple[float, dict]:
+    """One book found by one or more providers: take the best-scored record, fill its empty fields from the others, and reward agreement."""
+    group = sorted(group, key=lambda x: -x[0]); best = dict(group[0][1])
+    for _, other in group[1:]:
+        for k, v in other.items():
+            if v in ('', None, []) or best.get(k) not in ('', None, []): continue
+            best[k] = v
+    sources = list(dict.fromkeys(c['source'] for _, c in group))
+    return min(1.0, round(group[0][0] + AGREE_BONUS * (len(sources) - 1), 3)), dict(best, sources=sources)
+
+
+def match_book(book: dict, plist: list | None = None) -> tuple[dict, float | None]:
+    """The best suggestion for a scanned book: (suggestion, score), or ({}, None) when nothing reaches MIN_SCORE. Raises MatchError when every provider failed."""
+    plist = providers.enabled() if plist is None else plist
+    if not plist: raise MatchError('no metadata provider is available: see `./app providers`')
+    errors = []
+    if book.get('asin'):
+        for p in plist:
+            try: c = p.by_asin(book['asin'])
+            except MatchError as e: errors.append(str(e)); continue
+            if c: return dict(c, matched_by='asin', sources=[p.name]), 1.0
+    scored = []; asked = 0
+    for p in plist:
+        try: cands = p.search(book['title'], book['author'])
+        except MatchError as e: errors.append(str(e)); continue
+        asked += 1; scored += [(score(book, c), c) for c in cands]
+        if scored and max(s for s, _ in scored) >= EARLY_STOP: break
+    if not asked and errors: raise MatchError('; '.join(dict.fromkeys(errors)))
+    groups: dict[str, list] = {}
+    for s, c in scored: groups.setdefault(_key(c), []).append((s, c))
+    merged = sorted((_merge(g) for g in groups.values()), key=lambda x: -x[0])
+    if not merged or merged[0][0] < MIN_SCORE: return {}, None
+    best_score, best = merged[0]
+    alts = [dict(source=c['source'], title=c['title'], author=c['author'], asin=c['asin'], score=s) for s, c in merged[1:1 + ALTERNATIVES] if s >= MIN_SCORE]
+    return dict(best, matched_by='asin' if book.get('asin') and best['asin'] == book['asin'] else 'title', alternatives=alts), best_score
+
+
+def match_pending(limit: int = 25, plist: list | None = None) -> dict:
+    """Try to match up to `limit` scanned books; returns {tried, suggested, none, remaining, providers}."""
+    plist = providers.enabled() if plist is None else plist; tried = suggested = 0
     for b in catalogue.pending_match(limit):
-        sug, sc = match_book(b, source); catalogue.set_suggestion(b['id'], sug, sc); tried += 1; suggested += bool(sug)
-    return dict(tried=tried, suggested=suggested, none=tried - suggested, remaining=len(catalogue.pending_match(100000)))
+        sug, sc = match_book(b, plist); catalogue.set_suggestion(b['id'], sug, sc); tried += 1; suggested += bool(sug)
+    return dict(tried=tried, suggested=suggested, none=tried - suggested, remaining=len(catalogue.pending_match(100000)), providers=[p.name for p in plist])
+
+
+def evaluate(books: list[dict], plist: list | None = None) -> dict:
+    """Compare the providers on the same books without recording anything: for each provider alone and for all together, how many books got a candidate scoring at least GOOD_SCORE (and at least MIN_SCORE). A rough hit rate, since there is no ground truth."""
+    plist = providers.enabled() if plist is None else plist; rows = {}
+    for label, group in [(p.name, [p]) for p in plist] + ([('combined', plist)] if len(plist) > 1 else []):
+        good = some = errors = 0
+        for b in books:
+            try: sug, sc = match_book(b, group)
+            except MatchError: errors += 1; continue
+            some += bool(sug); good += bool(sug) and sc >= GOOD_SCORE
+        rows[label] = dict(books=len(books), good=good, some=some, errors=errors)
+    return rows

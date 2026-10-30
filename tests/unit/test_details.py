@@ -1,6 +1,6 @@
 import json, os, shutil, subprocess
 import pytest
-from app import catalogue, details, matcher, settings
+from app import catalogue, details, providers, settings
 
 PNG = b'\x89PNG\r\n\x1a\n' + b'0' * 20
 JPG = b'\xff\xd8\xff\xe0' + b'0' * 20
@@ -119,12 +119,16 @@ def test_cover_url_is_looked_up_when_the_suggestion_has_none_and_outages_are_not
     looked = []
     class Src:
         def cover_url(self, i): looked.append(i); return 'https://cdn.example/x/large.jpg'
-    monkeypatch.setattr(matcher, 'AudiobookDB', Src)
+    monkeypatch.setattr(providers, 'get', lambda name: Src())
     assert details.cover(with_suggestion(tmp_path, 'Old', 'confirmed', 1.0)) and looked == ['adb1']
     class Down:
-        def cover_url(self, i): raise matcher.MatchError('503')
-    monkeypatch.setattr(matcher, 'AudiobookDB', Down)
+        def cover_url(self, i): raise providers.MatchError('503')
+    monkeypatch.setattr(providers, 'get', lambda name: Down())
     b = with_suggestion(tmp_path, 'Later', 'confirmed', 1.0)
     assert details.cover(b) is None and not os.path.exists(os.path.join(settings.data_dir(), 'covers', f"{b['id']}.none"))
-    monkeypatch.setattr(matcher, 'AudiobookDB', Src)
+    monkeypatch.setattr(providers, 'get', lambda name: Src())
     assert details.cover(b)                                                                  # retried and found once the service is back
+    def unknown(name): raise KeyError(name)
+    monkeypatch.setattr(providers, 'get', unknown)
+    c = with_suggestion(tmp_path, 'Odd', 'confirmed', 1.0, source='gone')
+    assert details.cover(c) is None
