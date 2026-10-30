@@ -5,7 +5,7 @@ Each chapter is then `copy` (mono mp3 source at or below COPY_MAX_KBPS: cut on f
 Loudness is one gain per book towards TARGET_LUFS (so chapters keep their level relative to each other), only when the book is outside a tolerance band, and never at the price of clipping: a book may stay slightly quiet."""
 import math, os, re
 
-from app import details
+from app import details, sources
 from app.process import probe
 
 TARGET_LUFS, TP_LIMIT = -18.0, -1.5
@@ -198,63 +198,16 @@ def decide_gain(i: float, tp: float, any_copy: bool, p99: float | None = None) -
     return out
 
 
-def year_for(book: dict, audible: dict | None, sug: dict | None, extras: dict | None = None) -> tuple[int | None, str, str]:
-    """(year, where it came from, a note about disagreement). The folder name uses the year the book was first published, not the audiobook's release. In order: a year you set; Open Library's first-published year; Hardcover's; then, only as a fallback and flagged as such, the audiobook release year (Audible metadata file, Audible/Audnexus match, other providers) and a year read from the folder name. When Open Library and Hardcover differ by more than a year the note says what Hardcover has."""
-    def yr(x): m = re.match(r'(1\d{3}|2[01]\d{2})', str(x or '')); return int(m[1]) if m else None
-    if book.get('year') and book.get('year_source') == 'manual': return book['year'], 'set by hand', ''
-    ex = extras or {}; ol = yr(((ex.get('openlibrary') or {}).get('data') or {}).get('first_publish_year')); hc = yr(((ex.get('hardcover') or {}).get('data') or {}).get('release_date'))
-    if ol: return ol, 'Open Library (first published)', f"Hardcover says {hc}" if hc and abs(hc - ol) > 1 else ''
-    if hc: return hc, "Hardcover (book's release date)", ''
-    sug = sug or {}; srcs = set(sug.get('sources') or [sug.get('source')]); weak = 'no original publication year found, so this is the audiobook release year'
-    if audible and yr(audible.get('release_date')): return yr(audible['release_date']), 'Audible metadata file (audiobook release)', weak
-    if yr(sug.get('release_date')) and srcs & {'audible', 'audnexus'}: return yr(sug['release_date']), 'Audible/Audnexus match (audiobook release)', weak
-    if yr(sug.get('release_date')): return yr(sug['release_date']), f"{sug.get('source', 'provider')} match", weak
-    if book.get('year'): return book['year'], book.get('year_source') or 'folder name', 'no original publication year found; this year was read from the folder name'
-    return None, '', ''
-
-
-def effective(book: dict, audible: dict | None) -> dict:
-    """The narrator and series that go in the tags: the catalogue's, or the Audible metadata file's when the catalogue has none."""
-    a = audible or {}; aseries = (a.get('series') or [{}])[0]
-    narrator = book.get('narrator') or ', '.join(a.get('narrators') or [])
-    series = book.get('series') or aseries.get('title', '')
-    pos = book.get('series_position')
-    if not book.get('series') and aseries.get('sequence'):
-        try: pos = float(aseries['sequence'])
-        except ValueError: pass
-    return dict(narrator=narrator, series=series, series_position=pos if series else None)
-
-
-def meta_rows(book: dict, audible: dict | None, year, year_src: str, year_note: str = '') -> list[dict]:
-    """The metadata that will be written to the files, each value with where it came from (the provider match you confirmed, the Audible metadata file, or the catalogue: parsed from the folder name or entered by hand) and a note where the Audible metadata file says something different."""
-    sug = book.get('suggestion') or {}; srcs = ' + '.join(s for s in dict.fromkeys(sug.get('sources') or ([sug['source']] if sug.get('source') else []))); a = audible or {}; eff = effective(book, audible)
-    n = lambda x: re.sub(r'\W+', '', str(x or '').lower())
-    def src(value, sug_val, aud_val) -> str:
-        if value in (None, ''): return ''
-        if sug and n(sug_val) == n(value): return f'{srcs} match (confirmed)'
-        if audible and n(aud_val) == n(value): return 'Audible metadata file'
-        return 'the catalogue: parsed from the folder name, or entered by hand'
-    def note(value, aud_val) -> str:
-        return f'the Audible metadata file says: {aud_val}' if audible and aud_val and value and n(aud_val) != n(value) else ''
-    a_title, a_author, a_narr = a.get('title'), ', '.join(a.get('authors') or []), ', '.join(a.get('narrators') or [])
-    aseries = (a.get('series') or [{}])[0].get('title')
-    rows = [('Title', book['title'], src(book['title'], sug.get('title'), a_title), note(book['title'], a_title)),
-            ('Author', book.get('author') or '', src(book.get('author'), sug.get('author'), a_author), note(book.get('author'), a_author)),
-            ('Narrator', eff['narrator'], src(eff['narrator'], ', '.join(sug.get('narrators') or []), a_narr) if book.get('narrator') else ('Audible metadata file' if eff['narrator'] else ''), note(book.get('narrator'), a_narr)),
-            ('Series', eff['series'] + (f" #{eff['series_position']:g}" if eff['series'] and eff['series_position'] is not None else ''), src(eff['series'], sug.get('series'), aseries) if book.get('series') else ('Audible metadata file' if eff['series'] else ''), note(book.get('series'), aseries)),
-            ('Year', str(year) if year else '', year_src, year_note), ('ASIN', book.get('asin') or '', src(book.get('asin'), sug.get('asin'), a.get('asin')), '')]
-    return [dict(field=f, value=v, source=sr, note=nt) for f, v, sr, nt in rows if v]
-
-
 def out_dir_for(book: dict, final_dir: str, year: int | None = None) -> str:
     """<final>/<Author>/[<year>] <Title>: no series level (series is kept in the tags and metadata.json)."""
     author = clean_name(book.get('author') or 'Unknown author'); title = clean_name(book['title'])
     return os.path.join(final_dir, author, f'[{year}] {title}' if year else title)
 
 
-def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: dict | None = None) -> dict:
+def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: dict | None = None, records: dict | None = None) -> dict:
     """Everything needed to process the book, as plain data (JSON-serialisable)."""
-    year, year_src, year_note = year_for(book, audible, book.get('suggestion'), extras)
+    r = sources.resolve(book, records if records is not None else sources.local_records(book, audible, extras)); year, year_src, year_note = r['year'], r['year_source'], r['year_note']
+    title, author = r['title'], ', '.join(r['authors']); naming = dict(book, title=title, author=author)
     warnings_pre = ['no year found: the folder will have no [year]; set one with `./app edit ID --year YYYY`'] if not year else ([f'year: {year_note}'] if year_note else [])
     paths = sorted(details.audio_files(book['path']), key=probe.natural_key)
     if not paths: raise probe.ToolError(f"no audio files in {book['path']}")
@@ -266,9 +219,9 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: d
     if m.get('mono_I') is not None and m['mono_I'] < m['I'] - 3:
         downmix = 'left'; warnings.append(f"stereo channels partly cancel in a mono mix ({m['mono_I']:.1f} vs {m['I']:.1f} LUFS): using the left channel only")
     if m['TP'] is not None and m['TP'] >= -0.2: warnings.append(f"the source reaches full scale (true peak {m['TP']:+.1f} dBFS), so it is probably already clipped; processing keeps it from getting worse but cannot repair it")
-    chapters, source = derive_chapters(files, m['silences'], (audible or {}).get('chapters'), book['title'])
+    chapters, source = derive_chapters(files, m['silences'], (audible or {}).get('chapters'), title)
     for c in chapters:
-        segs = segments(tl, c['start'], c['end']); c['segments'] = segs; c['duration'] = round(c['end'] - c['start'], 2); c['file'] = file_name(c['label'], book.get('author') or '', book['title'], chapter_name(c['base'], book.get('author') or ''))
+        segs = segments(tl, c['start'], c['end']); c['segments'] = segs; c['duration'] = round(c['end'] - c['start'], 2); c['file'] = file_name(c['label'], author, title, chapter_name(c['base'], author))
         if copyable(segs, by_path): c.update(mode='copy', tier='copy', kbps=round(max(by_path[p]['bit_rate'] for p, _, _ in segs), 1))
         else:
             sp = probe.spectrum([sg for a, b in sample_ranges(c['start'], c['end']) for sg in segments(tl, a, b)]); t = pick_tier(sp['hf_db'], sp['pause_frac']); c.update(mode='encode', tier=t, kbps=TIERS[t]['kbps'], hf_db=sp['hf_db'], pause_frac=sp['pause_frac'])
@@ -283,6 +236,6 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: d
     short = round(g['db'] - g['apply_db'], 1)
     if g['db'] > QUIET_TOL and short > 0.5: warnings.append(f"ends {short:.1f} dB below the target because its peaks leave no more room")
     in_bytes = sum(os.path.getsize(f['path']) for f in files); est = sum(c['duration'] * c['kbps'] * 1000 / 8 for c in chapters)
-    return dict(book_id=book['id'], title=book['title'], author=book.get('author', ''), out_dir=out_dir_for(book, final_dir, year), year=year, year_source=year_src, metadata=meta_rows(book, audible, year, year_src, year_note), **effective(book, audible), chapter_source=source, downmix=downmix, duration=round(sum(f['duration'] for f in files), 1),
+    return dict(book_id=book['id'], title=title, author=author, out_dir=out_dir_for(naming, final_dir, year), year=year, year_source=year_src, metadata=sources.rows(book, r), narrator=', '.join(r['narrators']), series=r['series'], series_position=r['series_position'], publisher=r['publisher'], genres=r['genres'][:6], chapter_source=source, downmix=downmix, duration=round(sum(f['duration'] for f in files), 1),
                 loudness=dict(I=m['I'], TP=m['TP'], LRA=m['LRA'], target=TARGET_LUFS, gain_db=g['db'], apply_db=g['apply_db'], gain_steps=g['steps'], decision=g['why'], reencoded=g['reencode'], peak_p99=m.get('peak_p99')), chapters=chapters, warnings=warnings,
                 in_bytes=in_bytes, est_bytes=int(est), in_files=len(files), channels=max(f['channels'] for f in files))

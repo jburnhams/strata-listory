@@ -9,7 +9,7 @@ API = 'https://api.hardcover.app/v1/graphql'
 SEARCH = 'query($q: String!, $n: Int) { search(query: $q, query_type: "Book", per_page: $n, page: 1) { results } }'
 BY_ASIN = 'query($a: String!) { editions(where: {asin: {_eq: $a}}, limit: 1) { book { id title subtitle slug rating ratings_count release_date cached_image cached_contributors } } }'
 DETAILS = '''query($id: Int!) {
-  books(where: {id: {_eq: $id}}, limit: 1) { id title subtitle slug description pages release_date rating ratings_count reviews_count users_count users_read_count lists_count cached_tags cached_contributors book_series { position series { name } } }
+  books(where: {id: {_eq: $id}}, limit: 1) { id title subtitle slug cached_contributors description pages release_date rating ratings_count reviews_count users_count users_read_count lists_count cached_tags cached_contributors book_series { position series { name } } }
   user_books(where: {book_id: {_eq: $id}, has_review: {_eq: true}}, limit: 5, order_by: {likes_count: desc}) { rating review_raw review_has_spoilers likes_count reviewed_at user { username } }
   editions(where: {book_id: {_eq: $id}, reading_format_id: {_eq: 2}}, limit: 5) { asin audio_seconds edition_format release_date publisher { name } }
 }'''
@@ -76,7 +76,7 @@ class Hardcover(Provider):
         books = res.get('books') or []
         if not books: return None
         b = books[0]; ct = b.get('cached_tags')
-        return dict(source='hardcover', id=str(b['id']), url=f"https://hardcover.app/books/{b['slug']}" if b.get('slug') else '', title=b.get('title', ''), subtitle=b.get('subtitle') or '', description=b.get('description') or '', pages=b.get('pages'), release_date=b.get('release_date') or '',
+        return dict(source='hardcover', id=str(b['id']), authors=[c['author']['name'] for c in b.get('cached_contributors') or [] if c.get('author') and c.get('contribution') in ('Author', None)], url=f"https://hardcover.app/books/{b['slug']}" if b.get('slug') else '', title=b.get('title', ''), subtitle=b.get('subtitle') or '', description=b.get('description') or '', pages=b.get('pages'), release_date=b.get('release_date') or '',
                     rating=b.get('rating'), ratings_count=b.get('ratings_count'), reviews_count=b.get('reviews_count'), readers=b.get('users_count'), finished=b.get('users_read_count'), lists=b.get('lists_count'),
                     genres=_tags(ct, 'Genre'), moods=_tags(ct, 'Mood'), tags=_tags(ct, 'Tag'), content_warnings=_tags(ct, 'Content Warning', spoilers=True),
                     series=[dict(name=(s.get('series') or {}).get('name', ''), position=s.get('position')) for s in b.get('book_series') or []],

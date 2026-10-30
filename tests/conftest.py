@@ -29,7 +29,9 @@ def no_year_lookup(request, monkeypatch):
     from app.providers.openlibrary import OpenLibrary
     if request.node.get_closest_marker('year_lookup'): return
     monkeypatch.setattr(OpenLibrary, 'search', lambda self, title, author='': [])               # Open Library finds nothing unless a test gives it something
+    from app import sources
     monkeypatch.setattr(enrich, 'ensure_year_sources', lambda book: catalogue.get_extras(book['id']))
+    monkeypatch.setattr(sources, 'gather', lambda book, audible=None: sources.local_records(book, audible, catalogue.get_extras(book['id'])))
 
 
 @pytest.fixture(autouse=True)

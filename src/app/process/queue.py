@@ -4,7 +4,7 @@ States (catalogue.PLAN_STATES): planning -> proposed -> approved -> running -> d
 import os, queue as _queue, threading
 from concurrent.futures import ThreadPoolExecutor
 
-from app import catalogue, details, enrich, fs, settings
+from app import catalogue, details, fs, settings, sources
 from app.process import plan as P, probe, run as R
 
 
@@ -21,7 +21,8 @@ def summary(plan: dict) -> dict:
 
 def _plan_one(book: dict, final_dir: str) -> dict:
     side = details.sidecar(book['path']) if os.path.exists(book['path']) else None
-    return P.make_plan(book, final_dir, details.audible_summary(side) if side else None, enrich.ensure_year_sources(book))        # asks Open Library (and Hardcover) for the original publication year first
+    audible = details.audible_summary(side) if side else None
+    return P.make_plan(book, final_dir, audible, None, sources.gather(book, audible))        # asks every source that can be asked (Audnexus, Audible, AudiobookDB, Open Library, Hardcover), then merges
 
 
 def propose(limit: int = 5, jobs: int = 2) -> dict:

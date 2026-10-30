@@ -39,7 +39,7 @@ def test_enrich_book_stores_the_data_and_writes_the_mirror():
     assert ex['data']['ratings_count'] == 10 and ex['fetched'] and mirror.read_meta(b)['extras']['hardcover']['data']['id'] == '42'
     hc.calls.clear(); enrich.enrich_book(catalogue.get_book(b['id']), [hc])
     assert hc.calls == [('details', '42')]                                                      # a refresh goes straight to the known id
-    nf = confirmed('Nothing'); assert enrich.enrich_book(nf, [HC()]) is None and catalogue.get_extras(nf['id'])['hardcover']['data'] == dict(not_found=True)
+    nf = confirmed('Nothing'); assert enrich.enrich_book(nf, [HC()]) is None and catalogue.get_extras(nf['id'])['hardcover']['data'] == dict(not_found=True, asked='nothing|frank herbert')
     with pytest.raises(MatchError, match='Hardcover is not available'): enrich.enrich_book(b, [])
     with pytest.raises(MatchError, match='503'): enrich.enrich_book(confirmed('Z'), [HC(hits=[candidate('hardcover', id='1', title='Z', authors=['Frank Herbert'])], fail=True)])
 
@@ -90,7 +90,7 @@ def test_enrich_openlibrary_stores_the_work_or_remembers_it_was_not_found():
     b = confirmed('Brave New World', 'Aldous Huxley')
     assert enrich.enrich_openlibrary(b, OL([ol_cand('Brave New World', 'Aldous Huxley', 1932)]))['first_publish_year'] == 1932
     assert catalogue.get_extras(b['id'])['openlibrary']['data']['first_publish_year'] == 1932 and mirror.read_meta(b)['extras']['openlibrary']['data']['rating'] == 3.9
-    nf = confirmed('Nothing'); assert enrich.enrich_openlibrary(nf, OL()) is None and catalogue.get_extras(nf['id'])['openlibrary']['data'] == dict(not_found=True)
+    nf = confirmed('Nothing'); assert enrich.enrich_openlibrary(nf, OL()) is None and catalogue.get_extras(nf['id'])['openlibrary']['data'] == dict(not_found=True, asked='nothing|frank herbert')
     with pytest.raises(MatchError, match='down'): enrich.enrich_openlibrary(b, OL(fail=True))
 
 

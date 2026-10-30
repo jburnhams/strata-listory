@@ -14,7 +14,7 @@ class MatchError(RuntimeError):
 
 
 def candidate(source: str, **f) -> dict:
-    out = dict(source=source, id='', asin='', title='', subtitle='', author='', authors=[], narrators=[], series='', series_position=None, runtime_minutes=None, cover_url='', language='', release_date='', rating=None, ratings_count=None, genres=[], pages=None, url='', original_year=None)
+    out = dict(source=source, id='', asin='', title='', subtitle='', author='', authors=[], narrators=[], series='', series_position=None, runtime_minutes=None, cover_url='', language='', release_date='', rating=None, ratings_count=None, genres=[], pages=None, url='', original_year=None, publisher='', isbns=[], description='')
     out.update({k: v for k, v in f.items() if k in out})
     out['author'] = out['author'] or ', '.join(out['authors'])
     return out

@@ -22,7 +22,7 @@ def _cover_small(src: str | None, tmp: str) -> str | None:
 
 
 def tags(book: dict, plan: dict, ch: dict, n: int) -> list[str]:
-    md = dict(title=ch['title'], album=book['title'], artist=book.get('author') or '', album_artist=book.get('author') or '', composer=plan.get('narrator') or book.get('narrator') or '', track=f'{n}/{len(plan["chapters"])}', genre='Audiobook')
+    md = dict(title=ch['title'], album=plan.get('title') or book['title'], artist=plan.get('author') or book.get('author') or '', album_artist=plan.get('author') or book.get('author') or '', composer=plan.get('narrator') or book.get('narrator') or '', publisher=plan.get('publisher') or '', track=f'{n}/{len(plan["chapters"])}', genre='Audiobook')
     if plan.get('year'): md['date'] = str(plan['year'])
     series = plan.get('series') if 'series' in plan else book.get('series'); pos = plan.get('series_position') if 'series' in plan else book.get('series_position')
     if series: md['grouping'] = series + (f' #{pos:g}' if pos is not None else '')

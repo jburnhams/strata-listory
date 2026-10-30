@@ -46,11 +46,14 @@ def clean(fields: dict, partial: bool = False) -> dict:
     return out
 
 
-COLUMNS = 'id, title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count, suggestion, match_score, year, year_source'
+COLUMNS = 'id, title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count, suggestion, match_score, year, year_source, locked'
+
+
+LOCKABLE = ('title', 'author', 'narrator', 'series', 'series_position', 'asin', 'year')       # fields a person can set; once set by hand they are not replaced by merged values from the sources
 
 
 def _row(r) -> dict:
-    d = dict(r); d['suggestion'] = json.loads(d['suggestion']) if d['suggestion'] else None      # None: matching not tried yet; {}: tried, nothing found
+    d = dict(r); d['locked'] = [x for x in (d.get('locked') or '').split(',') if x]; d['suggestion'] = json.loads(d['suggestion']) if d['suggestion'] else None      # None: matching not tried yet; {}: tried, nothing found
     return d
 
 
@@ -88,19 +91,22 @@ def add_book(**fields) -> dict:
     rec = clean(fields); c = db.connect()
     try:
         with c:
-            cur = c.execute('INSERT INTO books (title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count, year, year_source) VALUES (:title, :author, :narrator, :series, :series_position, :duration_seconds, :path, :status, :added, :asin, :kind, :review, :file_count, :year, :year_source)',
-                            dict(rec, added=datetime.now(timezone.utc).isoformat(), year_source='manual' if rec['year'] else ''))
+            cur = c.execute('INSERT INTO books (title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count, year, year_source, locked) VALUES (:title, :author, :narrator, :series, :series_position, :duration_seconds, :path, :status, :added, :asin, :kind, :review, :file_count, :year, :year_source, :locked)',
+                            dict(rec, added=datetime.now(timezone.utc).isoformat(), year_source='manual' if rec['year'] else '', locked=','.join(k for k in LOCKABLE if fields.get(k) not in (None, ''))))
         return _mirrored(_one(c, cur.lastrowid))
     finally: c.close()
 
 
-def update_book(book_id: int, **fields) -> dict:
-    """Change the given fields of a book; returns the updated record."""
+def update_book(book_id: int, *, lock: bool = True, **fields) -> dict:
+    """Change the given fields of a book; returns the updated record. Fields changed this way (title, author, narrator, series, ASIN, year ...) are locked: merged values from the metadata sources no longer replace them. Internal updates pass lock=False."""
     changes = clean(fields, partial=True); c = db.connect()
     try:
         with c:
             _one(c, book_id)
             if 'year' in changes: changes['year_source'] = 'manual' if changes['year'] else ''            # a year you set is never replaced by a guessed one
+            if lock:
+                cur = [x for x in (c.execute('SELECT locked FROM books WHERE id=?', (book_id,)).fetchone()['locked'] or '').split(',') if x]
+                changes['locked'] = ','.join(dict.fromkeys(cur + [k for k in LOCKABLE if k in changes and changes[k] not in (None, '')]))
             if changes: c.execute(f"UPDATE books SET {', '.join(f'{k}=:{k}' for k in changes)} WHERE id=:id", dict(changes, id=book_id))
         return _mirrored(_one(c, book_id))
     finally: c.close()
@@ -159,11 +165,11 @@ def confirm(book_id: int) -> dict:
         if sug.get(k) not in (None, ''): changes[k] = sug[k]
     if sug.get('narrators'): changes['narrator'] = ', '.join(sug['narrators'])
     if sug.get('runtime_minutes') and not b['duration_seconds']: changes['duration_seconds'] = int(sug['runtime_minutes']) * 60
-    return update_book(book_id, **changes)
+    return update_book(book_id, lock=False, **changes)
 
 
 def ignore(book_id: int) -> dict:
-    return update_book(book_id, review='ignored')
+    return update_book(book_id, lock=False, review='ignored')
 
 
 def set_extra(book_id: int, source: str, data: dict):

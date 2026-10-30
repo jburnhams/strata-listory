@@ -19,5 +19,5 @@ class Audnexus(Provider):
                 try: pos = float(sp['position']) if sp.get('position') else None
                 except ValueError: pos = None
                 return candidate('audnexus', id=raw.get('asin', asin), asin=raw.get('asin', asin), title=raw.get('title', ''), subtitle=raw.get('subtitle') or '', authors=[a['name'] for a in raw.get('authors') or []], narrators=[n['name'] for n in raw.get('narrators') or []],
-                                 series=sp.get('name', ''), series_position=pos, runtime_minutes=raw.get('runtimeLengthMin'), cover_url=raw.get('image') or '', language=raw.get('language', ''), release_date=(raw.get('releaseDate') or '')[:10])
+                                 series=sp.get('name', ''), series_position=pos, runtime_minutes=raw.get('runtimeLengthMin'), cover_url=raw.get('image') or '', language=raw.get('language', ''), release_date=(raw.get('releaseDate') or '')[:10], publisher=raw.get('publisherName') or '', isbns=[raw['isbn']] if raw.get('isbn') else [], description=raw.get('summary') or raw.get('description') or '', genres=[g['name'] for g in raw.get('genres') or [] if g.get('type') == 'genre'])
         return None

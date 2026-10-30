@@ -56,29 +56,6 @@ def test_out_dir_for_and_years():
     assert P.out_dir_for(dict(title='Dune', author='Frank Herbert'), f, 1965) == '/final/Frank Herbert/[1965] Dune'
     assert P.out_dir_for(dict(title='Dune', author='', series='Dune Chronicles', series_position=1.0), f) == '/final/Unknown author/Dune'          # no year: no brackets; no series level
     assert P.out_dir_for(dict(title='A/B: C', author='X?'), f, 2001) == '/final/X_/[2001] A_B_ C'
-    aud = dict(release_date='2008-01-16'); sug = lambda **k: dict(source='hardcover', release_date='1932', **k)
-    ol = lambda y: dict(openlibrary=dict(data=dict(first_publish_year=y))); hc = lambda d: dict(hardcover=dict(data=dict(release_date=d)))
-    assert P.year_for(dict(year=1999, year_source='manual'), aud, sug(), ol(1932)) == (1999, 'set by hand', '')                                              # your own year always wins
-    assert P.year_for(dict(), aud, sug(), ol(1932)) == (1932, 'Open Library (first published)', '')                                                          # the original year beats the audiobook's
-    assert P.year_for(dict(), aud, None, {**ol(2016), **hc('1986-01-01')}) == (2016, 'Open Library (first published)', 'Hardcover says 1986') and P.year_for(dict(), None, None, {**ol(2016), **hc('2017-03-01')})[2] == ''     # a disagreement is noted; a year apart is not
-    assert P.year_for(dict(), aud, None, {**ol(None), **hc('1999-05-05')}) == (1999, "Hardcover (book's release date)", '')
-    y = P.year_for(dict(), aud, sug()); assert y[0] == 2008 and y[1] == 'Audible metadata file (audiobook release)' and 'no original publication year' in y[2]                  # only a fallback, and says so
-    assert P.year_for(dict(), None, dict(source='audnexus', release_date='2010-05-01'))[:2] == (2010, 'Audible/Audnexus match (audiobook release)')
-    assert P.year_for(dict(), None, dict(sources=['audible', 'hardcover'], source='hardcover', release_date='2010-05-01'))[1] == 'Audible/Audnexus match (audiobook release)'
-    assert P.year_for(dict(), None, sug())[:2] == (1932, 'hardcover match')
-    assert P.year_for(dict(year=2015, year_source='folder name'), None, None)[:2] == (2015, 'folder name') and P.year_for(dict(), None, None) == (None, '', '') and P.year_for(dict(), dict(release_date='junk'), None) == (None, '', '')
-
-
-def test_metadata_rows_show_values_and_sources():
-    book = dict(title='Dune', author='Frank Herbert', narrator='', series='', series_position=None, asin='B0X', suggestion=dict(title='Dune', author='Frank Herbert', sources=['audible', 'audiobookdb'], asin='B0X'))
-    aud = dict(title='Dune', authors=['Frank Herbert'], narrators=['Scott Brick'], series=[dict(title='Dune Chronicles', sequence='1')], asin='B0X')
-    rows = {r['field']: r for r in P.meta_rows(book, aud, 2007, 'Open Library (first published)', 'Hardcover says 1986')}
-    assert rows['Title']['source'] == 'audible + audiobookdb match (confirmed)' and rows['Author']['note'] == '' and rows['ASIN']['value'] == 'B0X'
-    assert rows['Narrator'] == dict(field='Narrator', value='Scott Brick', source='Audible metadata file', note='') and rows['Series']['value'] == 'Dune Chronicles #1' and rows['Year'] == dict(field='Year', value='2007', source='Open Library (first published)', note='Hardcover says 1986')      # filled in from the Audible file when the catalogue has none
-    assert P.effective(book, aud) == dict(narrator='Scott Brick', series='Dune Chronicles', series_position=1.0) and P.effective(dict(narrator='N', series='S', series_position=2.0), aud) == dict(narrator='N', series='S', series_position=2.0)
-    odd = P.meta_rows(dict(title='Brave New World', author='CBS Radio Workshop, Aldous Huxley', narrator='', suggestion=dict(author='CBS Radio Workshop, Aldous Huxley', title='Brave New World', sources=['audiobookdb'])), dict(title='Brave New World', authors=['Aldous Huxley']), None, '')
-    assert {r['field'] for r in odd} == {'Title', 'Author'} and [r['note'] for r in odd if r['field'] == 'Author'] == ['the Audible metadata file says: Aldous Huxley']      # a disagreement is shown
-    plain = P.meta_rows(dict(title='T', author='A', narrator='', suggestion=None), None, None, ''); assert [r['source'] for r in plain] == ['the catalogue: parsed from the folder name, or entered by hand'] * 2
 
 
 def test_tiers_gain_and_copy_rules():

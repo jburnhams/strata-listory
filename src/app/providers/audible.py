@@ -1,5 +1,5 @@
 """Audible's public catalogue search (`api.audible.<region>/1.0/catalog/products`): title and author search that returns ASIN, authors, narrators, series, runtime and cover. No key needed. It is an undocumented endpoint (the one Audnexus and the Audible apps use), so it can change without notice; failures are handled per provider."""
-import urllib.parse
+import re, urllib.parse
 
 from app.providers.base import Http, Provider, candidate
 from app import settings
@@ -14,7 +14,7 @@ def to_candidate(p: dict) -> dict:
     except ValueError: pos = None
     imgs = p.get('product_images') or {}
     return candidate('audible', id=p.get('asin', ''), asin=p.get('asin', ''), title=p.get('title', ''), subtitle=p.get('subtitle') or '', authors=[a['name'] for a in p.get('authors') or []], narrators=[n['name'] for n in p.get('narrators') or []],
-                     series=s.get('title', ''), series_position=pos, runtime_minutes=p.get('runtime_length_min'), cover_url=imgs.get('500') or next(iter(imgs.values()), ''), language=p.get('language', ''), release_date=p.get('release_date', ''))
+                     series=s.get('title', ''), series_position=pos, runtime_minutes=p.get('runtime_length_min'), cover_url=imgs.get('500') or next(iter(imgs.values()), ''), language=p.get('language', ''), release_date=p.get('release_date', ''), publisher=p.get('publisher_name') or '', description=re.sub(r'<[^>]+>', ' ', p.get('publisher_summary') or p.get('merchandising_summary') or '').strip())
 
 
 class AudibleSearch(Provider):
