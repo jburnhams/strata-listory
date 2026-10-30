@@ -158,6 +158,7 @@ def test_hardcover_errors_and_key(fake_urlopen, monkeypatch, tmp_path):
 OL_DOC = dict(key='/works/OL1W', title='Brave New World', author_name=['Aldous Huxley'], first_publish_year=1932, ratings_average=3.97, ratings_count=483, subject=['Utopias', 'Brainwashing'] + [f's{i}' for i in range(40)], edition_count=300, cover_i=8231823)
 
 
+@pytest.mark.year_lookup
 def test_openlibrary_search_gives_the_first_published_year_and_is_not_a_default_matcher(fake_urlopen):
     from app.providers import openlibrary
     p = openlibrary.OpenLibrary(); fake_urlopen.reply(dict(docs=[OL_DOC]), dict(docs=[]))

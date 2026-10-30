@@ -10,6 +10,7 @@ IMAGES = ('.jpg', '.jpeg', '.png', '.webp')
 COVER_NAMES = ('cover', 'folder', 'front', 'albumart', 'albumartsmall', 'artwork')
 MAX_FILES = 500
 PROBE_FILES = 60                 # a book with more files than this is probed on its first few only
+MIN_IMAGE_BYTES = 2000
 NONE_FOR = timedelta(days=1)     # how long "no cover found" is remembered
 
 
@@ -125,21 +126,44 @@ def _download(url: str) -> bytes | None:
     if not url.startswith('https://'): return None
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'strata-listory/0.1 (personal audiobook catalogue)'}), timeout=20) as r: b = r.read(6_000_000)
-        return b if _image_kind(b) else None
+        return b if _image_kind(b) and len(b) >= MIN_IMAGE_BYTES else None          # a 1x1 placeholder is not a cover
     except (OSError, ValueError): return None
 
 
+OL_COVERS = 'https://covers.openlibrary.org/b'
+
+
+def openlibrary_covers(book: dict) -> list[str]:
+    """Open Library cover URLs for a book (`?default=false` makes it answer 404 instead of a blank picture): by ISBN when the ASIN field holds one (it often does for books bought as print), and the cover of the Open Library work matched to the book. These are covers of print editions, so they are the last resort after the audiobook covers."""
+    urls = []
+    isbn = re.sub(r'[\s-]', '', book.get('asin') or '')
+    if re.fullmatch(r'\d{9}[\dXx]|\d{13}', isbn): urls.append(f'{OL_COVERS}/isbn/{isbn}-L.jpg?default=false')
+    work = ((catalogue_extras(book).get('openlibrary') or {}).get('data')) or {}
+    if work.get('cover_url'): urls.append(work['cover_url'] + ('&' if '?' in work['cover_url'] else '?') + 'default=false')
+    return urls
+
+
+def catalogue_extras(book: dict) -> dict:
+    from app import catalogue                         # late import: catalogue needs the mirror, the mirror needs this module
+    return catalogue.get_extras(book['id'])
+
+
 def _provider_cover(book: dict) -> tuple[bytes, str] | None:
-    """A cover from the providers for a book's match: the suggestion's own cover URL, then each enabled provider by ASIN, then AudiobookDB by its id. Raises MatchError only when nothing was found and a provider was unreachable (so it is retried later)."""
-    sug = book.get('suggestion') or {}
-    if not (sug.get('id') and (book.get('review') == 'confirmed' or (book.get('match_score') or 0) >= 0.85)): return None
-    tried = [(sug.get('source') or '?', sug.get('cover_url') or '')]; failure = None
-    asin = sug.get('asin') or book.get('asin') or ''
-    for p in providers.enabled():
-        try:
-            if p.name == sug.get('source') and not tried[0][1] and sug.get('id'): tried.append((p.name, p.cover_url(sug['id'])))
-            if asin and (c := p.by_asin(asin)): tried.append((p.name, c['cover_url']))
-        except providers.MatchError as e: failure = e
+    """A cover from the providers for a book's match: the suggestion's own cover URL, then each enabled provider by ASIN, then AudiobookDB by its id; last, Open Library's. Raises MatchError only when nothing was found and a provider was unreachable (so it is retried later)."""
+    sug = book.get('suggestion') or {}; tried: list[tuple[str, str]] = []; failure = None
+    if sug.get('id') and (book.get('review') == 'confirmed' or (book.get('match_score') or 0) >= 0.85):
+        tried.append((sug.get('source') or '?', sug.get('cover_url') or '')); asin = sug.get('asin') or book.get('asin') or ''
+        for p in providers.enabled():
+            try:
+                if p.name == sug.get('source') and not tried[0][1] and sug.get('id'): tried.append((p.name, p.cover_url(sug['id'])))
+                if asin and (c := p.by_asin(asin)): tried.append((p.name, c['cover_url']))
+            except providers.MatchError as e: failure = e
+    if book.get('review') == 'confirmed':
+        if 'openlibrary' not in catalogue_extras(book):                       # not asked yet: ask once (answers, including "not found", are remembered)
+            from app import enrich
+            try: enrich.enrich_openlibrary(book)
+            except providers.MatchError as e: failure = failure or e
+        tried += [('openlibrary', u) for u in openlibrary_covers(book)]
     for source, url in tried:
         if url and (data := _download(url)): return data, source
     if failure: raise failure

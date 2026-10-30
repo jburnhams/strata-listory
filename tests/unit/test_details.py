@@ -76,6 +76,7 @@ def test_cover_falls_back_to_embedded_art_then_the_audible_url(tmp_path, monkeyp
 
 
 def test_download_rules(monkeypatch, fake_urlopen):
+    monkeypatch.setattr(details, 'MIN_IMAGE_BYTES', 0)
     assert details._download('http://insecure/x.jpg') is None
     fake_urlopen.reply(PNG, b'<html>', OSError('down'))
     assert details._download('https://x/y.png') == PNG and details._download('https://x/y.png') is None and details._download('https://x/y.png') is None
@@ -163,3 +164,37 @@ def test_covers_cached_before_the_mirror_are_moved_into_it(tmp_path):
     with open(os.path.join(old, f"{b['id']}.jpg"), 'wb') as f: f.write(JPG)
     p = details.cover(b)
     assert p == os.path.join(mirror.dir_for(b), 'cover.jpg') and not os.path.exists(os.path.join(old, f"{b['id']}.jpg")) and mirror.read_meta(b)['cover_source'] == 'cache'
+
+
+def test_tiny_images_are_not_covers(monkeypatch, fake_urlopen):
+    fake_urlopen.reply(PNG, PNG + b'0' * 3000)
+    assert details._download('https://x/placeholder.png') is None and details._download('https://x/real.png') is not None            # a 1x1 placeholder is under 2 KB
+
+
+def test_open_library_covers_are_the_last_resort_and_only_for_confirmed_books(tmp_path, monkeypatch):
+    from app.providers import openlibrary
+    monkeypatch.setattr(details, '_embedded', lambda files: None); got = []
+    monkeypatch.setattr(details, '_download', lambda u: got.append(u) or (PNG if 'covers.openlibrary.org' in u else None))
+    # a confirmed book with an ISBN-style ASIN and a matched work: the ISBN cover is tried first, then the work's cover
+    b = book(tmp_path, 'ISBN book'); catalogue.update_book(b['id'], asin='024199215X', review='confirmed')
+    catalogue.set_extra(b['id'], 'openlibrary', dict(cover_url='https://covers.openlibrary.org/b/id/8231823-L.jpg'))
+    c = details.cover(catalogue.get_book(b['id']))
+    assert c.endswith('.png') and got == ['https://covers.openlibrary.org/b/isbn/024199215X-L.jpg?default=false'] and mirror.read_meta(b)['cover_source'] == 'provider:openlibrary'
+    got.clear(); monkeypatch.setattr(details, '_download', lambda u: got.append(u) or (PNG if 'id/8231823' in u else None))      # the ISBN has no cover: fall through to the work's
+    d = book(tmp_path, 'Work book'); catalogue.update_book(d['id'], asin='B0NOTISBN', review='confirmed'); catalogue.set_extra(d['id'], 'openlibrary', dict(cover_url='https://covers.openlibrary.org/b/id/8231823-L.jpg'))
+    assert details.cover(catalogue.get_book(d['id'])) and got == ['https://covers.openlibrary.org/b/id/8231823-L.jpg?default=false']
+    got.clear(); u = book(tmp_path, 'Unconfirmed'); catalogue.update_book(u['id'], asin='024199215X', review='suggested')
+    assert details.cover(catalogue.get_book(u['id'])) is None and got == []                                                         # printed-book covers only for books you have confirmed
+
+
+def test_a_confirmed_book_is_matched_on_open_library_once_when_a_cover_is_wanted(tmp_path, monkeypatch):
+    from app import enrich
+    monkeypatch.setattr(details, '_embedded', lambda files: None); monkeypatch.setattr(details, '_download', lambda u: None)
+    asked = []
+    monkeypatch.setattr(enrich, 'enrich_openlibrary', lambda book, ol=None: asked.append(book['id']) or catalogue.set_extra(book['id'], 'openlibrary', dict(not_found=True)))
+    b = book(tmp_path, 'Ask'); catalogue.update_book(b['id'], review='confirmed')
+    assert details.cover(catalogue.get_book(b['id'])) is None and asked == [b['id']]
+    details.cover(catalogue.get_book(b['id'])); assert asked == [b['id']]                                                           # "not found" is remembered, not asked again
+    monkeypatch.setattr(enrich, 'enrich_openlibrary', lambda book, ol=None: (_ for _ in ()).throw(providers.MatchError('Open Library down')))
+    c = book(tmp_path, 'Down'); catalogue.update_book(c['id'], review='confirmed')
+    assert details.cover(catalogue.get_book(c['id'])) is None and not os.path.exists(os.path.join(settings.data_dir(), 'covers', f"{c['id']}.none"))        # an outage is retried, not remembered as "no cover"

@@ -24,9 +24,11 @@ def isolated_env(tmp_path_factory, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def no_year_lookup(request, monkeypatch):
-    """Planning asks Open Library and Hardcover for the original publication year; in tests it only reads what is already stored. A test of the lookup itself uses `@pytest.mark.year_lookup`."""
-    if request.node.get_closest_marker('year_lookup'): return
+    """Planning asks Open Library and Hardcover for the original publication year; in tests it only reads what is already stored. A test of the lookup itself (or of the Open Library provider) uses `@pytest.mark.year_lookup`."""
     from app import catalogue, enrich
+    from app.providers.openlibrary import OpenLibrary
+    if request.node.get_closest_marker('year_lookup'): return
+    monkeypatch.setattr(OpenLibrary, 'search', lambda self, title, author='': [])               # Open Library finds nothing unless a test gives it something
     monkeypatch.setattr(enrich, 'ensure_year_sources', lambda book: catalogue.get_extras(book['id']))
 
 
