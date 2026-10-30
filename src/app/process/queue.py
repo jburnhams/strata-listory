@@ -15,6 +15,7 @@ def summary(plan: dict) -> dict:
     l = plan['loudness']
     return dict(hours=round(plan['duration'] / 3600, 2), files=plan['in_files'], chapters=len(plan['chapters']), chapter_source=plan['chapter_source'], tiers=tiers, in_bytes=plan['in_bytes'], est_bytes=plan['est_bytes'], out_dir=plan['out_dir'],
                 loudness_before=l['I'], loudness_after_est=round(l['I'] + l['apply_db'], 1), decision=l['decision'], reencoded=l['reencoded'], warnings=plan['warnings'], downmix=plan['downmix'],
+                metadata=plan.get('metadata', []), year=plan.get('year'),
                 chapter_list=[dict(file=c['file'], title=c['title'], minutes=round(c['duration'] / 60, 1), mode=c['mode'], tier=c['tier']) for c in plan['chapters']])
 
 

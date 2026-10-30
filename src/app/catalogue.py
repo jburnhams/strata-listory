@@ -11,7 +11,7 @@ KINDS = ('book', 'radio')                                   # radio: broadcast e
 REVIEWS = ('new', 'suggested', 'confirmed', 'ignored')      # new: scanned, not matched; suggested: a match awaits review; confirmed: accepted (or entered by hand); ignored: not wanted
 TEXT_FIELDS = ('title', 'author', 'narrator', 'series', 'path', 'asin')
 CHOICES = dict(status=STATUSES, kind=KINDS, review=REVIEWS)
-EDITABLE = TEXT_FIELDS + ('series_position', 'duration_seconds', 'status', 'kind', 'review', 'file_count')
+EDITABLE = TEXT_FIELDS + ('series_position', 'duration_seconds', 'status', 'kind', 'review', 'file_count', 'year')
 
 
 class CatalogueError(ValueError):
@@ -36,16 +36,17 @@ def clean(fields: dict, partial: bool = False) -> dict:
         elif v is not None:
             try: v = float(v) if k == 'series_position' else int(v)
             except (TypeError, ValueError): raise CatalogueError(f'{k} must be a number')
-            if v < 0: raise CatalogueError(f'{k} cannot be negative')
+            if v is not None and v < 0: raise CatalogueError(f'{k} cannot be negative')
+            if k == 'year' and v is not None and not 1000 <= v <= 2200: raise CatalogueError('year must be between 1000 and 2200')
         out[k] = v
     if not partial:
         if not out.get('title'): raise CatalogueError('a title is required')
-        out = dict(dict(author='', narrator='', series='', path='', asin='', series_position=None, duration_seconds=None, file_count=None, status='unlistened', kind='book', review='confirmed'), **out)
+        out = dict(dict(author='', narrator='', series='', path='', asin='', series_position=None, duration_seconds=None, file_count=None, year=None, status='unlistened', kind='book', review='confirmed'), **out)
     elif 'title' in out and not out['title']: raise CatalogueError('a title is required')
     return out
 
 
-COLUMNS = 'id, title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count, suggestion, match_score'
+COLUMNS = 'id, title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count, suggestion, match_score, year, year_source'
 
 
 def _row(r) -> dict:
@@ -87,8 +88,8 @@ def add_book(**fields) -> dict:
     rec = clean(fields); c = db.connect()
     try:
         with c:
-            cur = c.execute('INSERT INTO books (title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count) VALUES (:title, :author, :narrator, :series, :series_position, :duration_seconds, :path, :status, :added, :asin, :kind, :review, :file_count)',
-                            dict(rec, added=datetime.now(timezone.utc).isoformat()))
+            cur = c.execute('INSERT INTO books (title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count, year, year_source) VALUES (:title, :author, :narrator, :series, :series_position, :duration_seconds, :path, :status, :added, :asin, :kind, :review, :file_count, :year, :year_source)',
+                            dict(rec, added=datetime.now(timezone.utc).isoformat(), year_source='manual' if rec['year'] else ''))
         return _mirrored(_one(c, cur.lastrowid))
     finally: c.close()
 
@@ -99,6 +100,7 @@ def update_book(book_id: int, **fields) -> dict:
     try:
         with c:
             _one(c, book_id)
+            if 'year' in changes: changes['year_source'] = 'manual' if changes['year'] else ''            # a year you set is never replaced by a guessed one
             if changes: c.execute(f"UPDATE books SET {', '.join(f'{k}=:{k}' for k in changes)} WHERE id=:id", dict(changes, id=book_id))
         return _mirrored(_one(c, book_id))
     finally: c.close()
@@ -124,8 +126,8 @@ def add_scanned(candidates) -> dict:
                     replaced += c.execute("DELETE FROM books WHERE review='new' AND (suggestion IS NULL OR suggestion='{}') AND path LIKE ? ESCAPE '\\'", (k['path'].replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + os.sep + '%',)).rowcount
                 if c.execute('SELECT 1 FROM books WHERE path=?', (k['path'],)).fetchone():
                     c.execute('UPDATE books SET file_count=? WHERE path=?', (k['file_count'], k['path'])); existing += 1; continue
-                rec = clean(dict(title=k['title'] or os.path.basename(k['path']), author=k['author'], narrator=k['narrator'], series_position=k['series_position'], path=k['path'], asin=k['asin'], kind=k['kind'], review='new', file_count=k['file_count']))
-                c.execute('INSERT INTO books (title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count) VALUES (:title, :author, :narrator, :series, :series_position, :duration_seconds, :path, :status, :added, :asin, :kind, :review, :file_count)', dict(rec, added=datetime.now(timezone.utc).isoformat()))
+                rec = clean(dict(title=k['title'] or os.path.basename(k['path']), author=k['author'], narrator=k['narrator'], series_position=k['series_position'], path=k['path'], asin=k['asin'], kind=k['kind'], review='new', file_count=k['file_count'], year=k.get('year')))
+                c.execute('INSERT INTO books (title, author, narrator, series, series_position, duration_seconds, path, status, added, asin, kind, review, file_count, year, year_source) VALUES (:title, :author, :narrator, :series, :series_position, :duration_seconds, :path, :status, :added, :asin, :kind, :review, :file_count, :year, :year_source)', dict(rec, added=datetime.now(timezone.utc).isoformat(), year_source='folder name' if rec['year'] else ''))
                 added += 1
         return dict(added=added, existing=existing, replaced=replaced)
     finally: c.close()

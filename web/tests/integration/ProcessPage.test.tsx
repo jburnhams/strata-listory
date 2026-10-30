@@ -7,13 +7,18 @@ import { mock, server } from '../utils/server'
 describe('ProcessPage', () => {
   it('shows proposals with their plans, lets you approve some, reject one and process the approved', async () => {
     const { user } = setup(<ProcessPage />)
-    expect(await screen.findByText('Dune')).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Dune' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'To review (2)' })).toBeInTheDocument()
     expect(screen.getAllByText(/8.2 h · 18 chapters \(from Audible chapter list\) · 17× V5 · 1× V3/)).toHaveLength(2)
     expect(screen.getAllByText(/ends 2.9 dB below the target/)).toHaveLength(1)         // only Dune has a warning
+    const meta = within(screen.getByLabelText('Metadata for Dune'))
+    expect(meta.getByText('Dune')).toBeInTheDocument()
+    expect(meta.getByText(/audible \+ audiobookdb match \(confirmed\)/)).toBeInTheDocument()
+    expect(meta.getByText('· Audible metadata file')).toBeInTheDocument()          // the year's source
+    expect(meta.getByText(/the Audible metadata file says: Frank Herbert/)).toBeInTheDocument()          // a disagreement between the match and the file is pointed out
     expect(screen.getByRole('button', { name: 'Process approved (0)' })).toBeDisabled()
     await user.click(screen.getAllByText('Chapters and output')[0])
-    expect(screen.getAllByText('/home/u/audiobooks/A/Dune')).toHaveLength(2)
+    expect(screen.getAllByText('/home/u/audiobooks/A/Dune/')).toHaveLength(2)
     expect(screen.getAllByText('29.4 min · V5')[0]).toBeInTheDocument()
     expect(screen.getAllByText('21.4 min · kept as is')[0]).toBeInTheDocument()
 
@@ -33,12 +38,12 @@ describe('ProcessPage', () => {
     await user.click(screen.getByRole('button', { name: 'Process approved (1)' }))
     expect(await screen.findByRole('tab', { name: 'Done (1)' })).toBeInTheDocument()
     await user.click(screen.getByRole('tab', { name: 'Done (1)' }))
-    expect(screen.getByText('Dune')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Dune' })).toBeInTheDocument()
   })
 
   it('finds more candidates, selects all, and reports errors', async () => {
     const { user } = setup(<ProcessPage />)
-    await screen.findByText('Dune')
+    await screen.findByRole('link', { name: 'Dune' })
     await user.click(screen.getByRole('button', { name: 'Find candidates (5 more)' }))
     expect(await screen.findByText('Persuasion')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Select all' }))

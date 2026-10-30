@@ -26,9 +26,17 @@ function Row({ r, selected, onToggle, result }: { r: QueueRow; selected: boolean
       {s && (
         <div className="mt-1 text-stone-600 dark:text-stone-300">
           {s.hours.toFixed(1)} h · {s.chapters} chapters (from {s.chapter_source}) · {tiers} · {formatBytes(s.in_bytes)} → about {formatBytes(s.est_bytes)} · loudness {s.loudness_before.toFixed(1)} → {s.loudness_after_est.toFixed(1)} LUFS
+          <dl className="my-1 grid grid-cols-[6rem_1fr] gap-x-3 gap-y-0.5" aria-label={`Metadata for ${r.title}`}>
+            {s.metadata.map(m => (
+              <div key={m.field} className="contents">
+                <dt className="text-stone-500">{m.field}</dt>
+                <dd>{m.value} <span className="text-xs text-stone-500">· {m.source}</span>{m.note && <div className="text-xs text-amber-700 dark:text-amber-400">⚠ {m.note}</div>}</dd>
+              </div>
+            ))}
+          </dl>
           {s.warnings.map((w, i) => <div key={i} className="text-amber-700 dark:text-amber-400">⚠ {w}</div>)}
           <details className="mt-1"><summary className="cursor-pointer text-stone-500">Chapters and output</summary>
-            <div className="font-mono text-xs break-all my-1">{s.out_dir}</div>
+            <div className="font-mono text-xs break-all my-1">{s.out_dir}/</div>
             <ol className="space-y-0.5">{s.chapter_list.map((c, i) => <li key={i} className="flex justify-between gap-2"><span>{c.title}</span><span className="text-stone-500">{c.minutes} min · {c.mode === 'copy' ? 'kept as is' : c.tier}</span></li>)}</ol>
           </details>
         </div>

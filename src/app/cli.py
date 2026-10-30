@@ -264,7 +264,7 @@ def main(argv=None):
     sub.add_parser('doctor', help='check the environment').set_defaults(fn=doctor)
     def book_fields(sp, edit=False):
         sp.add_argument('--title' if edit else 'title', **(dict(help='new title') if edit else {})); sp.add_argument('--author'); sp.add_argument('--narrator'); sp.add_argument('--series'); sp.add_argument('--series-position', dest='series_position', type=float)
-        sp.add_argument('--duration-seconds', dest='duration_seconds', type=int); sp.add_argument('--path', help='where the audio files live'); sp.add_argument('--status', choices=catalogue.STATUSES); sp.add_argument('--json', action='store_true')
+        sp.add_argument('--duration-seconds', dest='duration_seconds', type=int); sp.add_argument('--year', type=int, help='the year of this audiobook release (used in the final library folder name)'); sp.add_argument('--path', help='where the audio files live'); sp.add_argument('--status', choices=catalogue.STATUSES); sp.add_argument('--json', action='store_true')
     ad = sub.add_parser('add', help='add a book to the catalogue'); book_fields(ad); ad.set_defaults(fn=cmd_add)
     ls = sub.add_parser('list', help='list the catalogue'); ls.add_argument('query', nargs='?', help='match title, author, narrator or series'); ls.add_argument('--status', choices=catalogue.STATUSES); ls.add_argument('--review', choices=catalogue.REVIEWS); ls.add_argument('--kind', choices=catalogue.KINDS); ls.add_argument('--json', action='store_true'); ls.set_defaults(fn=cmd_list)
     sh = sub.add_parser('show', help='show one book as JSON'); sh.add_argument('id', type=int); sh.set_defaults(fn=cmd_show)

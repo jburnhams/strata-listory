@@ -51,11 +51,30 @@ def test_names_and_titles():
     assert P.file_title(info('Book'), 'Book', 9) == 'Chapter 9'
 
 
-def test_out_dir_for():
+def test_out_dir_for_and_years():
     f = '/final'
-    assert P.out_dir_for(dict(title='Dune', author='Frank Herbert'), f) == '/final/Frank Herbert/Dune'
-    assert P.out_dir_for(dict(title='Dune', author='', series='Dune Chronicles', series_position=1.0), f) == '/final/Unknown author/Dune Chronicles/01 - Dune'
-    assert P.out_dir_for(dict(title='Half', author='A', series='S', series_position=1.5), f) == '/final/A/S/1.5 - Half' and P.out_dir_for(dict(title='T', author='A', series='S', series_position=None), f) == '/final/A/S/T'
+    assert P.out_dir_for(dict(title='Dune', author='Frank Herbert'), f, 1965) == '/final/Frank Herbert/[1965] Dune'
+    assert P.out_dir_for(dict(title='Dune', author='', series='Dune Chronicles', series_position=1.0), f) == '/final/Unknown author/Dune'          # no year: no brackets; no series level
+    assert P.out_dir_for(dict(title='A/B: C', author='X?'), f, 2001) == '/final/X_/[2001] A_B_ C'
+    aud = dict(release_date='2008-01-16'); sug = lambda **k: dict(source='hardcover', release_date='1932', **k)
+    assert P.year_for(dict(year=1999, year_source='manual'), aud, sug()) == (1999, 'set by hand')                                                  # your own year always wins
+    assert P.year_for(dict(), aud, sug()) == (2008, 'Audible metadata file')
+    assert P.year_for(dict(), None, dict(source='audnexus', release_date='2010-05-01')) == (2010, 'Audible/Audnexus match')
+    assert P.year_for(dict(), None, dict(sources=['audible', 'hardcover'], source='hardcover', release_date='2010-05-01'))[1] == 'Audible/Audnexus match'
+    assert P.year_for(dict(), None, sug()) == (1932, "hardcover match (the book's own publication year)")
+    assert P.year_for(dict(year=2015, year_source='folder name'), None, None) == (2015, 'folder name') and P.year_for(dict(), None, None) == (None, '') and P.year_for(dict(), dict(release_date='junk'), None) == (None, '')
+
+
+def test_metadata_rows_show_values_and_sources():
+    book = dict(title='Dune', author='Frank Herbert', narrator='', series='', series_position=None, asin='B0X', suggestion=dict(title='Dune', author='Frank Herbert', sources=['audible', 'audiobookdb'], asin='B0X'))
+    aud = dict(title='Dune', authors=['Frank Herbert'], narrators=['Scott Brick'], series=[dict(title='Dune Chronicles', sequence='1')], asin='B0X')
+    rows = {r['field']: r for r in P.meta_rows(book, aud, 2007, 'Audible metadata file')}
+    assert rows['Title']['source'] == 'audible + audiobookdb match (confirmed)' and rows['Author']['note'] == '' and rows['ASIN']['value'] == 'B0X'
+    assert rows['Narrator'] == dict(field='Narrator', value='Scott Brick', source='Audible metadata file', note='') and rows['Series']['value'] == 'Dune Chronicles #1' and rows['Year']['value'] == '2007'      # filled in from the Audible file when the catalogue has none
+    assert P.effective(book, aud) == dict(narrator='Scott Brick', series='Dune Chronicles', series_position=1.0) and P.effective(dict(narrator='N', series='S', series_position=2.0), aud) == dict(narrator='N', series='S', series_position=2.0)
+    odd = P.meta_rows(dict(title='Brave New World', author='CBS Radio Workshop, Aldous Huxley', narrator='', suggestion=dict(author='CBS Radio Workshop, Aldous Huxley', title='Brave New World', sources=['audiobookdb'])), dict(title='Brave New World', authors=['Aldous Huxley']), None, '')
+    assert {r['field'] for r in odd} == {'Title', 'Author'} and [r['note'] for r in odd if r['field'] == 'Author'] == ['the Audible metadata file says: Aldous Huxley']      # a disagreement is shown
+    plain = P.meta_rows(dict(title='T', author='A', narrator='', suggestion=None), None, None, ''); assert [r['source'] for r in plain] == ['the catalogue: parsed from the folder name, or entered by hand'] * 2
 
 
 def test_tiers_gain_and_copy_rules():
@@ -135,9 +154,9 @@ def test_chapter_sources(monkeypatch):
     assert src == 'file boundaries (short ones combined)' and [c['title'] for c in cs] == ['The Start', 'The End'] and cs[0]['start'] == 0 and cs[0]['end'] == 630       # the 30 s track joins the next; 10 + 13 minutes are not both under 10, so they stay apart
     sil = [(2700.0, 2703.0), (5400.0, 5402.0)]
     cs, src = P.derive_chapters([f('long.mp3', 8100)], sil, None, 'B')
-    assert src == 'whole file (long ones split)' and [(c['title'], c['start'], c['end']) for c in cs] == [('Chapter 1 (a)', 0, 2701.5), ('Chapter 1 (b)', 2701.5, 5401.0), ('Chapter 1 (c)', 5401.0, 8100)] and [c['label'] for c in cs] == ['01a', '01b', '01c']
+    assert src == 'whole file (long ones split)' and [(c['title'], c['start'], c['end']) for c in cs] == [('Chapter 1 (a)', 0, 2701.5), ('Chapter 1 (b)', 2701.5, 5401.0), ('Chapter 1 (c)', 5401.0, 8100)] and [c['label'] for c in cs] == ['001a', '001b', '001c']
     cs, _ = P.derive_chapters([f('01.mp3', 7200, title='B - Big'), f('02.mp3', 1200, title='B - Small')], [], None, 'B')
-    assert [c['title'] for c in cs] == ['Big (a)', 'Big (b)', 'Big (c)', 'Small'] and [c['label'] for c in cs] == ['01a', '01b', '01c', '02'] and cs[0]['end'] == 2400.0 and cs[2]['end'] == 7200.0       # two hours: three parts of 40 minutes, the next chapter is 02
+    assert [c['title'] for c in cs] == ['Big (a)', 'Big (b)', 'Big (c)', 'Small'] and [c['label'] for c in cs] == ['001a', '001b', '001c', '002'] and cs[0]['end'] == 2400.0 and cs[2]['end'] == 7200.0       # two hours: three parts of 40 minutes, the next chapter is 02
     assert [P.letters(k) for k in (0, 1, 25, 26, 27, 701, 702)] == ['a', 'b', 'z', 'aa', 'ab', 'zz', 'aaa']
 
 
@@ -353,5 +372,5 @@ def test_a_long_file_is_split_into_lettered_parts_at_pauses(tmp_path):
     d = tmp_path / 'Long'; d.mkdir()
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=f=220:d=3900:r=8000', '-af', "volume=0.3,volume=enable='between(mod(t,10),7,10)':volume=0", '-ac', '1', '-c:a', 'libmp3lame', '-b:a', '16k', str(d / 'Long book.mp3')], check=True)
     b = catalogue.add_book(title='Long', author='A', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
-    assert [c['label'] for c in p['chapters']] == ['01a', '01b'] and [c['file'] for c in p['chapters']] == ['01a - Chapter 1.mp3', '01b - Chapter 1.mp3'] and [c['title'] for c in p['chapters']] == ['Chapter 1 (a)', 'Chapter 1 (b)']
+    assert [c['label'] for c in p['chapters']] == ['001a', '001b'] and [c['file'] for c in p['chapters']] == ['001a - A - Long.mp3', '001b - A - Long.mp3'] and [c['title'] for c in p['chapters']] == ['Chapter 1 (a)', 'Chapter 1 (b)']
     cut = p['chapters'][0]['end']; assert abs(cut - 1950) < 360 and any(s <= cut <= e + 5 for s, e in probe.measure_book([(str(d / 'Long book.mp3'), 0.0, None)])['silences'])        # near the middle, inside a pause

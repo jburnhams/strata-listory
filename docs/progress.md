@@ -2,6 +2,8 @@
 
 ## 2026-10-30: the processor
 
+- Output naming set by the user: `Author/[year] title/00n - author - title.mp3` (book title in every file name, chapter titles in the tags and playlist; no series folder). Added `year` and `year_source` to books (migration 6) with the priority described in the README, and a year tag (`date`). The Processing page now lists the metadata that will be written with each value's source and flags disagreements with the Audible metadata file; the first real example caught Brave New World's author as "CBS Radio Workshop, Aldous Huxley" (an AudiobookDB match) while the Audible file says "Aldous Huxley".
+
 - Chapter sizes set by the user: split only above 60 minutes (parts of about 45), combine only when one is under 10 minutes and the pair stays within 30. Added one exception, flagged to the user: credits-length pieces (under 2 minutes) join a neighbour up to an hour. Real books: a 150-file title went to 26 chapters (12 to 51 minutes), the others stayed at 16 to 30.
 
 - Limiter budget measured from the book's peaks instead of a fixed 3 dB: peak levels per short window are collected in the same pass as loudness; the lift is allowed until the 99th-percentile peak would lose more than 2 dB (loudest peak: 7 dB). On three real books this moved the end level from -20.9/-21.1/-20.6 to -18.7/-18.2/-18.0 LUFS; the one book re-encoded as a test kept its loudness range (6.6 to 6.1 LU) and came out at -1.2 dBTP.

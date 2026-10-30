@@ -4,7 +4,7 @@ import { STATUSES, type Book, type Settings } from '../../src/api'
 
 export const defaultSettings: Settings = { data_dir: '/tmp/appdata', library_dir: '', backup_dir: '/tmp/appdata/backups' }
 export const initialBooks: Book[] = [
-  { id: 1, title: 'Dune', author: 'Frank Herbert', narrator: '', series: 'Dune', series_position: 1, duration_seconds: 75600, path: '', status: 'unlistened', added: '2026-10-29T12:00:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null },
+  { id: 1, title: 'Dune', author: 'Frank Herbert', narrator: '', series: 'Dune', series_position: 1, duration_seconds: 75600, path: '', status: 'unlistened', added: '2026-10-29T12:00:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null, year: null, year_source: '' },
 ]
 
 export const hardcover = {
@@ -13,7 +13,7 @@ export const hardcover = {
   reviews: [{ user: 'reader1', rating: 5, text: 'A masterpiece.', spoilers: false, likes: 12, date: '2020-01-02' }, { user: 'reader2', rating: 3, text: 'x'.repeat(800), spoilers: false, likes: 3, date: '' }, { user: 'reader3', rating: null, text: 'The twist is big.', spoilers: true, likes: 1, date: '2021-05-06' }],
 }
 
-const planSummary = (over: object = {}) => ({ hours: 8.2, files: 18, chapters: 18, chapter_source: 'Audible chapter list', tiers: { V5: 17, V3: 1 }, in_bytes: 382_000_000, est_bytes: 177_000_000, out_dir: '/home/u/audiobooks/A/Dune', loudness_before: -23.4, loudness_after_est: -20.9, decision: 'too quiet: lifted with a limiter', reencoded: false, warnings: ['ends 2.9 dB below the target because its peaks leave no more room'], downmix: 'average',
+const planSummary = (over: object = {}) => ({ year: 2007, metadata: [{ field: 'Title', value: 'Dune', source: 'audible + audiobookdb match (confirmed)', note: '' }, { field: 'Author', value: 'CBS Radio Workshop, Frank Herbert', source: 'audiobookdb match (confirmed)', note: 'the Audible metadata file says: Frank Herbert' }, { field: 'Year', value: '2007', source: 'Audible metadata file', note: '' }], hours: 8.2, files: 18, chapters: 18, chapter_source: 'Audible chapter list', tiers: { V5: 17, V3: 1 }, in_bytes: 382_000_000, est_bytes: 177_000_000, out_dir: '/home/u/audiobooks/A/Dune', loudness_before: -23.4, loudness_after_est: -20.9, decision: 'too quiet: lifted with a limiter', reencoded: false, warnings: ['ends 2.9 dB below the target because its peaks leave no more room'], downmix: 'average',
   chapter_list: [{ file: '01 - One.mp3', title: 'One', minutes: 29.4, mode: 'encode', tier: 'V5' }, { file: '02 - Two.mp3', title: 'Two', minutes: 21.4, mode: 'copy', tier: 'copy' }], ...over })
 
 export const mock: { settings: Settings; books: Book[]; extras: Record<string, { fetched: string; data: object }>; processed: object | null; queue: { book_id: number; title: string; author: string; state: string; error: string; updated: string; summary: object | null }[] } = {
@@ -55,7 +55,7 @@ export const handlers = [
   http.post('/api/books', async ({ request }) => {
     const b = (await request.json()) as Partial<Book>
     if (!(b.title || '').trim()) return HttpResponse.json({ detail: 'a title is required' }, { status: 400 })
-    const entry: Book = { id: mock.books.length + 1, title: b.title!.trim(), author: b.author || '', narrator: '', series: '', series_position: null, duration_seconds: null, path: '', status: 'unlistened', added: '2026-10-29T12:01:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null }
+    const entry: Book = { id: mock.books.length + 1, title: b.title!.trim(), author: b.author || '', narrator: '', series: '', series_position: null, duration_seconds: null, path: '', status: 'unlistened', added: '2026-10-29T12:01:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null, year: null, year_source: '' }
     mock.books = [...mock.books, entry]
     return HttpResponse.json(entry)
   }),
