@@ -170,3 +170,23 @@ def test_scan_reports_a_down_share_and_an_interrupted_scan(capsys, tmp_path, mon
     monkeypatch.setattr(fs, 'reachable', lambda p: True)
     monkeypatch.setattr(scan, 'scan', lambda root: (_ for _ in ()).throw(OSError(errno.EHOSTDOWN, 'Host is down')))
     with pytest.raises(SystemExit, match='interrupted .Host is down.; nothing was changed'): cli.main(['scan', str(lib)])
+
+
+def test_use_library_checks_the_copy_then_moves_paths_and_setting(capsys, tmp_path):
+    from app import catalogue, settings
+    old, new = tmp_path / 'share', tmp_path / 'local'
+    for root in (old, new): (root / 'A').mkdir(parents=True)
+    (old / 'A' / '01.mp3').write_bytes(b'x'); (old / 'B.m4b').write_bytes(b'x'); (new / 'A' / '01.mp3').write_bytes(b'x')           # B.m4b has not been copied yet
+    cli.main(['set', 'library_dir', str(old)]); catalogue.add_book(title='A', path=str(old / 'A' / '01.mp3')); catalogue.add_book(title='B', path=str(old / 'B.m4b')); capsys.readouterr()
+    with pytest.raises(SystemExit, match='1 are missing in the new folder'): cli.main(['use-library', str(new)])
+    out = capsys.readouterr().out
+    assert '2 books live under' in out and '1 of them exist' in out and 'missing: /B.m4b' in out and settings.library_dir() == str(old)      # nothing changed
+    (new / 'B.m4b').write_bytes(b'x')
+    assert cli.main(['use-library', str(new)]) == 0 and '2 book paths moved' in capsys.readouterr().out
+    assert settings.library_dir() == str(new) and sorted(b['path'] for b in catalogue.list_books()) == [str(new / 'A' / '01.mp3'), str(new / 'B.m4b')]
+    assert any(b['reason'] == 'pre-rebase' for b in __import__('app.backup', fromlist=['x']).list_backups())                          # backed up first
+    with pytest.raises(SystemExit, match='not a folder with files'): cli.main(['use-library', str(tmp_path / 'nothing')])
+    cli.main(['set', 'library_dir', 'default']); capsys.readouterr()
+    with pytest.raises(SystemExit, match='no current audiobook folder'): cli.main(['use-library', str(new)])
+    (new / 'C.m4b').write_bytes(b'x'); catalogue.add_book(title='C', path=str(old / 'C.m4b'))
+    assert cli.main(['use-library', str(new), '--from', str(old), '--force']) == 0 and '1 book paths moved' in capsys.readouterr().out

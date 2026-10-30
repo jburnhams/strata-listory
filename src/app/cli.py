@@ -102,6 +102,20 @@ def cmd_match(args):
     print(f"tried {res['tried']}: {res['suggested']} suggestions, {res['none']} without a match; {res['remaining']} still to try (providers: {', '.join(res['providers'])})"); return 0
 
 
+def cmd_use_library(args):
+    new = os.path.abspath(os.path.expanduser(args.folder)); old = os.path.abspath(os.path.expanduser(args.old)) if args.old else settings.library_dir()
+    if not old: sys.exit('no current audiobook folder: give --from')
+    if not os.path.isdir(new) or not os.listdir(new): sys.exit(f'{new} is not a folder with files in it')
+    paths = catalogue.paths_under(old); missing = [p for p in paths if not os.path.exists(new + p[len(old.rstrip(os.sep)):])]
+    print(f'{len(paths)} books live under {old}; {len(paths) - len(missing)} of them exist under {new}')
+    if missing and not args.force:
+        for p in missing[:5]: print('  missing:', p[len(old.rstrip(os.sep)):])
+        sys.exit(f'{len(missing)} are missing in the new folder (has the copy finished? audio-sync status); use --force to switch anyway')
+    backup.backup('pre-rebase')
+    n = catalogue.rebase_paths(old, new); settings.save(dict(library_dir=new))
+    print(f'{n} book paths moved to {new}; library_dir is now {new}. Restart the app (systemctl --user restart strata-listory) and check APP_LIBRARY in its unit.'); return 0
+
+
 def cmd_mirror(args):
     books = catalogue.list_books(review='confirmed') if not args.all else catalogue.list_books()
     n = mirror.write_all(books)
@@ -168,6 +182,7 @@ def main(argv=None):
     rm = sub.add_parser('remove', help='remove a book from the catalogue (audio files are never touched)'); rm.add_argument('id', type=int); rm.set_defaults(fn=cmd_remove)
     sc = sub.add_parser('scan', help='find audiobooks in a folder (default: the library_dir setting) and add them as new, unreviewed books; never writes to the folder'); sc.add_argument('folder', nargs='?'); sc.add_argument('--dry-run', action='store_true'); sc.set_defaults(fn=cmd_scan)
     mt = sub.add_parser('match', help='look scanned books up with the metadata providers and record suggestions'); mt.add_argument('--limit', type=int, default=25); mt.add_argument('--providers', help='comma separated, in order (default: the match_providers setting)'); mt.set_defaults(fn=cmd_match)
+    ul = sub.add_parser('use-library', help='switch the audiobook folder (for example to the local copy), moving every book path with it'); ul.add_argument('folder'); ul.add_argument('--from', dest='old', help='the folder the paths currently live under (default: library_dir)'); ul.add_argument('--force', action='store_true', help='switch even if some books are missing in the new folder'); ul.set_defaults(fn=cmd_use_library)
     mr = sub.add_parser('mirror', help='rewrite metadata.json in the data mirror (<data_dir>/library) for confirmed books'); mr.add_argument('--all', action='store_true', help='every book, not only confirmed ones'); mr.set_defaults(fn=cmd_mirror)
     en = sub.add_parser('enrich', help='fetch Hardcover ratings, reviews and other community data for confirmed books'); en.add_argument('id', nargs='?', type=int, help='one book (refetched even if recent); default: confirmed books without recent data'); en.add_argument('--limit', type=int, default=25); en.set_defaults(fn=cmd_enrich)
     sub.add_parser('providers', help='list the metadata providers and whether each can run').set_defaults(fn=cmd_providers)

@@ -77,3 +77,13 @@ def test_clean_keeps_explicit_none_numbers_and_ignores_unknown_fields():
     assert out['duration_seconds'] is None and 'bogus' not in out
     assert catalogue.clean(dict(status='finished'), partial=True) == dict(status='finished')
     assert catalogue.clean(dict(), partial=True) == {}
+
+
+def test_rebase_paths_moves_only_books_under_the_old_folder():
+    for p in ('/share/audio/A', '/share/audio/B/01.mp3', '/share/audio', '/share/audio2/C', '/other/D', ''): catalogue.add_book(title=p or 'hand', path=p)
+    assert sorted(catalogue.paths_under('/share/audio/')) == ['/share/audio', '/share/audio/A', '/share/audio/B/01.mp3']
+    assert catalogue.rebase_paths('/share/audio', '/local/audio-local/') == 3
+    assert sorted(b['path'] for b in catalogue.list_books()) == ['', '/local/audio-local', '/local/audio-local/A', '/local/audio-local/B/01.mp3', '/other/D', '/share/audio2/C']      # audio2 is not under audio
+    assert catalogue.rebase_paths('/share/audio', '/x') == 0
+    catalogue.add_book(title='odd', path='/share/100%_real/a')
+    assert catalogue.rebase_paths('/share/100%_real', '/y') == 1                                                 # LIKE wildcards in names are literal

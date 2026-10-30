@@ -186,3 +186,19 @@ def pending_extra(source: str, days: float, limit: int) -> list[dict]:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(); c = db.connect()
     try: return [_row(r) for r in c.execute(f"SELECT {COLUMNS} FROM books b WHERE review='confirmed' AND kind='book' AND NOT EXISTS (SELECT 1 FROM book_extra e WHERE e.book_id=b.id AND e.source=? AND e.fetched>?) ORDER BY id LIMIT ?", (source, cutoff, limit))]
     finally: c.close()
+
+
+def rebase_paths(old: str, new: str) -> int:
+    """Point every book whose path is under `old` at the same place under `new` (the library moved, for example from the share to a local copy); returns how many."""
+    old, new = old.rstrip(os.sep), new.rstrip(os.sep); c = db.connect()
+    try:
+        with c:
+            esc = old.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            return c.execute("UPDATE books SET path = ? || substr(path, ?) WHERE path = ? OR path LIKE ? ESCAPE '\\'", (new, len(old) + 1, old, esc + os.sep + '%')).rowcount
+    finally: c.close()
+
+
+def paths_under(root: str) -> list[str]:
+    root = root.rstrip(os.sep); c = db.connect()
+    try: return [r['path'] for r in c.execute("SELECT path FROM books WHERE path = ? OR path LIKE ? ESCAPE '\\'", (root, root.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + os.sep + '%'))]
+    finally: c.close()
