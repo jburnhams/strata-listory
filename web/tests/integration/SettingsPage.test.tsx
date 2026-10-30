@@ -8,11 +8,13 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('/tmp/appdata')).toBeInTheDocument()
 
     await user.type(screen.getByLabelText('Audiobook folder'), '/srv/audiobooks')
+    await user.type(screen.getByLabelText('Backup folder'), '/mnt/share/backups')
     await user.type(screen.getByLabelText('Data folder'), '/var/appdata')
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
 
     expect(await screen.findByText('Saved')).toBeInTheDocument()
     expect(await screen.findByText('/srv/audiobooks')).toBeInTheDocument()
+    expect(await screen.findByText('/mnt/share/backups')).toBeInTheDocument()
 
     await user.clear(screen.getByLabelText('Data folder'))
     await user.type(screen.getByLabelText('Data folder'), 'relative/path')

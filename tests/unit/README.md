@@ -10,6 +10,7 @@ Fast and isolated: synthetic data and fakes; no external services, no network. `
 | --- | --- | --- | --- | --- |
 | `settings.py` | `test_settings.py` | 100% | done | home/data_dir/library_dir defaults, overrides, save/load, corrupt JSON |
 | `catalogue.py` | `test_catalogue.py` | 93% | done | validation, defaults, ids, search/sort, corrupt database refused and restored, hypothesis title strip |
+| `details.py` | `test_details.py` | 96% | done | Audible sidecar parsing, file list, cached probe, cover order and negative cache, loose-file covers, download rules, real ffmpeg probe/embedded art (skipped without ffmpeg) |
 | `scan.py` | `test_scan.py` | 97% | done | name parsing (table), one-work decisions, library shapes in a tmp tree, never writes |
 | `matcher.py` | `test_matcher.py` | 97% | done | scoring, ASIN-then-title, pending/radio/tried, confirm/ignore, cache + expiry, 429/5xx retries, key lookup, v1 migration |
 | `db.py`, `backup.py` | `test_backup.py` | 97% | done | daily backup, restore with safety copy, migration backup, pruning, failed verification |

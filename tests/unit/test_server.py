@@ -1,3 +1,4 @@
+import os
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
@@ -43,12 +44,15 @@ def test_book_lifecycle(client):
 def test_settings_roundtrip_and_server_main(client, tmp_path, monkeypatch):
     assert client.put('/api/settings', json=dict(data_dir='relative/path')).status_code == 400
     assert client.put('/api/settings', json=dict(library_dir='relative/path')).status_code == 400
+    assert client.put('/api/settings', json=dict(backup_dir='relative/path')).status_code == 400
     new_dir, lib = str(tmp_path / 'custom_data'), str(tmp_path / 'books')
     monkeypatch.delenv('APP_DATA', raising=False)
     res = client.put('/api/settings', json=dict(data_dir=new_dir, library_dir=lib)).json()
-    assert res == dict(data_dir=new_dir, library_dir=lib)
+    assert res == dict(data_dir=new_dir, library_dir=lib, backup_dir=os.path.join(new_dir, 'backups'))
     assert client.get('/api/settings').json() == res
     assert client.put('/api/settings', json=dict(library_dir='')).json()['library_dir'] == ''      # empty resets
+    elsewhere = str(tmp_path / 'share' / 'backups')
+    assert client.put('/api/settings', json=dict(backup_dir=elsewhere)).json()['backup_dir'] == elsewhere
 
     runs = []
     monkeypatch.setattr(uvicorn, 'run', lambda app, host, port, log_level: runs.append((host, port, log_level)))
@@ -88,3 +92,22 @@ def test_scan_match_confirm_endpoints(client, tmp_path, monkeypatch):
     def broken(limit): raise matcher.MatchError('no AudiobookDB API key')
     monkeypatch.setattr(matcher, 'match_pending', broken)
     r = client.post('/api/match'); assert r.status_code == 502 and 'API key' in r.json()['detail']
+
+
+def test_book_details_and_cover_endpoints(client, tmp_path, monkeypatch):
+    from app import details
+    d = tmp_path / 'Book'; d.mkdir(); (d / '01.mp3').write_bytes(b'x'); (d / 'cover.jpg').write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 10)
+    monkeypatch.setattr(details, 'probe', lambda files: dict(available=True, files_probed=1, complete=True, duration_seconds=3700))
+    b = client.post('/api/books', json=dict(title='Book', path=str(d))).json()
+    r = client.get(f"/api/books/{b['id']}/details").json()
+    assert r['book']['duration_seconds'] == 3700 and r['files']['count'] == 1 and r['path_exists'] is True       # the duration is filled in from the probe
+    img = client.get(f"/api/books/{b['id']}/cover")
+    assert img.status_code == 200 and img.content.startswith(b'\xff\xd8\xff') and 'max-age' in img.headers['cache-control']
+    manual = client.post('/api/books', json=dict(title='By hand')).json()
+    assert client.get(f"/api/books/{manual['id']}/details").json()['path_exists'] is False
+    assert client.get(f"/api/books/{manual['id']}/cover").status_code == 404
+    monkeypatch.setattr(details, 'probe', lambda files: dict(available=True, files_probed=0))
+    d2 = tmp_path / 'Book2'; d2.mkdir(); (d2 / '01.mp3').write_bytes(b'x'); (d2 / 'x.metadata.json').write_text('{"runtime_length_min": 2}')
+    b2 = client.post('/api/books', json=dict(title='Book2', path=str(d2))).json()
+    assert client.get(f"/api/books/{b2['id']}/details").json()['book']['duration_seconds'] == 120               # no usable probe: Audible's runtime
+    assert client.get('/api/books/999/details').status_code == 404 and client.get('/api/books/999/cover').status_code == 404

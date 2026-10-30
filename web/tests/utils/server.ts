@@ -2,7 +2,7 @@ import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { STATUSES, type Book, type Settings } from '../../src/api'
 
-export const defaultSettings: Settings = { data_dir: '/tmp/appdata', library_dir: '' }
+export const defaultSettings: Settings = { data_dir: '/tmp/appdata', library_dir: '', backup_dir: '/tmp/appdata/backups' }
 export const initialBooks: Book[] = [
   { id: 1, title: 'Dune', author: 'Frank Herbert', narrator: '', series: 'Dune', series_position: 1, duration_seconds: 75600, path: '', status: 'unlistened', added: '2026-10-29T12:00:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null },
 ]
@@ -45,6 +45,18 @@ export const handlers = [
     if (!cur) return HttpResponse.json({ detail: 'no such book' }, { status: 404 })
     Object.assign(cur, b)
     return HttpResponse.json(cur)
+  }),
+  http.get('/api/books/:id/details', ({ params }) => {
+    const book = mock.books.find(x => x.id === Number(params.id))
+    if (!book) return HttpResponse.json({ detail: 'no such book' }, { status: 404 })
+    if (book.id === 1) return HttpResponse.json({
+      book, path_exists: true,
+      files: { count: 2, total_bytes: 5_000_000, truncated: false, list: [{ name: '01.mp3', bytes: 2_000_000 }, { name: '02.mp3', bytes: 3_000_000 }] },
+      probe: { available: true, files_probed: 2, complete: true, duration_seconds: 3700, tags: { album: 'Dune', artist: 'Frank Herbert' }, codec: 'mp3', bitrate_kbps: 64, chapters: 0, has_cover_art: true },
+      audible: { asin: 'B000TEST01', title: 'Dune', subtitle: 'Book One', authors: ['Frank Herbert'], narrators: ['Scott Brick'], series: [{ title: 'Dune Chronicles', sequence: '1' }], publisher: 'Macmillan', release_date: '2007-01-01', language: 'english', format: 'unabridged',
+        runtime_minutes: 1260, summary: 'A desert planet.', rating: '4.6', rating_count: 12000, categories: ['Science Fiction'], sample_url: '', chapters: [{ title: 'Chapter 1', start_sec: 0, length_sec: 600 }], cover_url: '' },
+    })
+    return HttpResponse.json({ book, path_exists: false, files: null, probe: null, audible: null })
   }),
   http.post('/api/scan', () => {
     mock.books = [...mock.books,

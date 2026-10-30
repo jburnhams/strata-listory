@@ -1,18 +1,21 @@
-// Hash routing: #/ (library), #/settings (settings).
+// Hash routing: #/ (library), #/book/12 (one book), #/settings (settings).
 import { useEffect, useState } from 'react'
 
 export type Route =
   | { page: 'library' }
+  | { page: 'book'; id: number }
   | { page: 'settings' }
 
 export function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent)
   if (parts[0] === 'settings') return { page: 'settings' }
+  if (parts[0] === 'book' && /^\d+$/.test(parts[1] || '')) return { page: 'book', id: Number(parts[1]) }
   return { page: 'library' }
 }
 
 export const href = {
   library: () => '#/',
+  book: (id: number) => `#/book/${id}`,
   settings: () => '#/settings',
 }
 

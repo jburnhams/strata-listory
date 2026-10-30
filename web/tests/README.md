@@ -28,6 +28,7 @@ vitest 4, Testing Library, user-event, msw (backend mocks). Run from `web/`: `np
 | `src/App.tsx` | 100 | done | Covered by integration/App.test.tsx |
 | `src/api.ts` | 100 | done | Covered by unit/logic.test.ts and integration tests |
 | `src/route.ts` | 100 | done | Covered by unit/logic.test.ts and navigation tests |
+| `src/components/BookPage.tsx` | 94 | done | Covered by integration/BookPage.test.tsx |
 | `src/components/LibraryPage.tsx` | 100 | done | Covered by integration/LibraryPage.test.tsx |
 | `src/components/SettingsPage.tsx` | 100 | done | Covered by integration/SettingsPage.test.tsx |
 | `src/components/ui.tsx` | 100 | done | Shared UI primitives |

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parse, href } from '../../src/route'
-import { booksUrl, withBase } from '../../src/api'
+import { booksUrl, coverUrl, withBase } from '../../src/api'
+import { formatBytes } from '../../src/components/BookPage'
 import { describeCount, formatDuration, matchLabel } from '../../src/components/LibraryPage'
 
 describe('routes', () => {
@@ -8,6 +9,11 @@ describe('routes', () => {
     expect(parse('')).toEqual({ page: 'library' })
     expect(parse('#/')).toEqual({ page: 'library' })
     expect(parse('#/settings')).toEqual({ page: 'settings' })
+    expect(parse('#/book/12')).toEqual({ page: 'book', id: 12 })
+    expect(parse('#/book/x')).toEqual({ page: 'library' })
+    expect(parse('#/book')).toEqual({ page: 'library' })
+    expect(parse('#/nonsense/1')).toEqual({ page: 'library' })
+    expect(href.book(3)).toBe('#/book/3')
     expect(href.library()).toBe('#/')
     expect(href.settings()).toBe('#/settings')
   })
@@ -32,5 +38,15 @@ describe('library formatting', () => {
     expect(matchLabel(null)).toBe('')
     expect(matchLabel(1)).toBe('100% match')
     expect(matchLabel(0.7)).toBe('70% match (check)')
+  })
+})
+
+describe('book page helpers', () => {
+  it('formats sizes and builds the cover URL', () => {
+    expect(formatBytes(500)).toBe('500 B')
+    expect(formatBytes(2048)).toBe('2.0 KB')
+    expect(formatBytes(150 * 1024 * 1024)).toBe('150 MB')
+    expect(formatBytes(5 * 1024 ** 3)).toBe('5.0 GB')
+    expect(coverUrl(7)).toBe('/api/books/7/cover')
   })
 })

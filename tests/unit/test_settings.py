@@ -43,3 +43,11 @@ def test_corrupt_or_non_dict_settings_file():
     with open(p, 'w', encoding='utf8') as f: f.write('[1, 2, 3]')
     assert settings.load() == {}
     assert settings.all_settings()['library_dir'] == ''
+
+
+def test_backup_dir_defaults_to_the_data_folder_and_can_be_moved(tmp_path, monkeypatch):
+    assert settings.backup_dir() == os.path.join(settings.data_dir(), 'backups')
+    settings.save(dict(backup_dir=str(tmp_path / 'share')))
+    assert settings.backup_dir() == str(tmp_path / 'share')
+    monkeypatch.setenv('APP_BACKUP', str(tmp_path / 'env'))
+    assert settings.backup_dir() == str(tmp_path / 'env')

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import LibraryPage from '../../src/components/LibraryPage'
+import { fireEvent } from '@testing-library/react'
 import { setup, screen } from '../utils/render'
 import { mock, server } from '../utils/server'
 import { http, HttpResponse } from 'msw'
@@ -47,5 +48,16 @@ describe('scan, match and review', () => {
     await screen.findByText('1 book')
     await user.click(screen.getByRole('button', { name: 'Match new books' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('no AudiobookDB API key')
+  })
+})
+
+describe('library thumbnails', () => {
+  it('hides a thumbnail whose book has no cover', async () => {
+    setup(<LibraryPage />)
+    await screen.findByText('1 book')
+    const img = document.querySelector('img[loading="lazy"]') as HTMLImageElement
+    expect(img.getAttribute('src')).toBe('/api/books/1/cover')
+    fireEvent.error(img)
+    expect(img).toHaveStyle({ visibility: 'hidden' })
   })
 })
