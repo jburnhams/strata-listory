@@ -96,7 +96,7 @@ def test_scan_match_confirm_endpoints(client, tmp_path, monkeypatch):
     r = client.post('/api/match'); assert r.status_code == 502 and 'API key' in r.json()['detail']
     monkeypatch.undo()
     assert client.post('/api/match', params=dict(providers='nope')).status_code == 400
-    assert [p['name'] for p in client.get('/api/providers').json()] == ['audnexus', 'audible', 'hardcover', 'audiobookdb']
+    assert [p['name'] for p in client.get('/api/providers').json()] == ['audnexus', 'audible', 'hardcover', 'audiobookdb', 'openlibrary']
 
 
 def test_book_details_and_cover_endpoints(client, tmp_path, monkeypatch):
@@ -127,16 +127,19 @@ def test_enrich_endpoints_and_extras_in_details(client, monkeypatch):
         def search(self, t, a=''): return [candidate('hardcover', id='42', title='Dune', authors=['Frank Herbert'])]
         def by_asin(self, a): return None
         def details(self, i): return dict(source='hardcover', id=i, rating=4.0, ratings_count=3, reviews_count=1, reviews=[])
+    from app import catalogue, matcher, enrich as enrich_mod
     monkeypatch.setattr(providers, 'enabled', lambda names=None: [HC()])
+    monkeypatch.setattr(enrich_mod, 'enrich_openlibrary', lambda book, ol=None: catalogue.set_extra(book['id'], 'openlibrary', dict(first_publish_year=1965)) or dict(first_publish_year=1965))
     b = client.post('/api/books', json=dict(title='Dune', author='Frank Herbert')).json()
     assert client.get(f"/api/books/{b['id']}/details").json()['extras'] == {}
     r = client.post(f"/api/books/{b['id']}/enrich").json()
-    assert r['found'] is True and r['extras']['hardcover']['data']['rating'] == 4.0
+    assert r['found'] is True and r['extras']['hardcover']['data']['rating'] == 4.0 and r['extras']['openlibrary']['data']['first_publish_year'] == 1965      # both sources
     assert client.get(f"/api/books/{b['id']}/details").json()['extras']['hardcover']['data']['id'] == '42'
     assert client.post('/api/books/99/enrich').status_code == 404
     other = client.post('/api/books', json=dict(title='Other')).json()
     assert client.post('/api/enrich', params=dict(limit=5)).json() == dict(tried=1, enriched=0, not_found=1, remaining=0)      # 'Other' is not on Hardcover
     monkeypatch.setattr(providers, 'enabled', lambda names=None: [])
+    monkeypatch.setattr(enrich_mod, 'enrich_openlibrary', lambda book, ol=None: (_ for _ in ()).throw(matcher.MatchError('Open Library down')))
     assert client.post(f"/api/books/{other['id']}/enrich").status_code == 502
 
 

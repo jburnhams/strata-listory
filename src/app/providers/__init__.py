@@ -9,8 +9,9 @@ from app.providers.audiobookdb import AudiobookDB
 from app.providers.audnexus import Audnexus
 from app.providers.base import MatchError, Provider
 from app.providers.hardcover import Hardcover
+from app.providers.openlibrary import OpenLibrary
 
-ALL = (Audnexus, AudibleSearch, Hardcover, AudiobookDB)
+ALL = (Audnexus, AudibleSearch, Hardcover, AudiobookDB, OpenLibrary)
 _instances: dict = {}
 
 
@@ -24,7 +25,7 @@ def get(name: str) -> Provider:
 
 def configured() -> list[str]:
     raw = os.environ.get('APP_PROVIDERS') or settings.load().get('match_providers') or ''
-    names = [n.strip() for n in raw.split(',') if n.strip()] or [c.name for c in ALL]
+    names = [n.strip() for n in raw.split(',') if n.strip()] or [c.name for c in ALL if c.matching]
     for n in names: get(n)                                    # unknown names fail loudly
     return names
 

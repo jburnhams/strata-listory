@@ -54,7 +54,7 @@ describe('BookPage with sparse or partial data', () => {
   const sparse = (over: object) => {
     const book = { ...mock.books[0], id: 5, title: 'Sparse', author: '', series: 'Saga', series_position: 3, kind: 'radio' as const, review: 'new' as const, duration_seconds: null, suggestion: { title: 'Sparse Match', matched_by: 'asin' }, match_score: 1 }
     mock.books.push(book)
-    server.use(http.get('/api/books/5/details', () => HttpResponse.json({ book, path_exists: true, files: { count: 1, total_bytes: 900, truncated: true, list: [{ name: 'a.m4b', bytes: 900 }] }, probe: null, audible: null, ...over })))
+    server.use(http.get('/api/books/5/details', () => HttpResponse.json({ book, extras: {}, processed: null, path_exists: true, files: { count: 1, total_bytes: 900, truncated: true, list: [{ name: 'a.m4b', bytes: 900 }] }, probe: null, audible: null, ...over })))
   }
 
   it('copes with no ffprobe, a partial probe, and a thin Audible file', async () => {
@@ -67,7 +67,7 @@ describe('BookPage with sparse or partial data', () => {
     unmount()
 
     server.use(http.get('/api/books/5/details', () => HttpResponse.json({
-      book: mock.books.at(-1), path_exists: true, files: { count: 90, total_bytes: 2048, truncated: false, list: [] },
+      book: mock.books.at(-1), extras: {}, processed: null, path_exists: true, files: { count: 90, total_bytes: 2048, truncated: false, list: [] },
       probe: { available: true, files_probed: 60, complete: false, duration_seconds: 7200, codec: 'aac', bitrate_kbps: null, tags: {} },
       audible: { asin: 'B0', title: 'Thin', subtitle: '', authors: [], narrators: [], series: [], publisher: '', release_date: '', language: '', format: '', runtime_minutes: null, summary: '', rating: null, rating_count: null, categories: [], sample_url: '', chapters: [], cover_url: '' },
     })))
@@ -83,7 +83,7 @@ describe('BookPage suggestion with few details', () => {
   it('handles a suggestion without sources, narrators or runtime and a single alternative', async () => {
     const book = { ...mock.books[0], id: 7, title: 'Bare', review: 'suggested' as const, match_score: 0.9, suggestion: { title: 'Bare Match', alternatives: [{ source: 'audiobookdb', title: 'Alt', author: 'Some One', asin: '', score: 0.65 }] } }
     mock.books.push(book)
-    server.use(http.get('/api/books/7/details', () => HttpResponse.json({ book, path_exists: false, files: null, probe: null, audible: null })))
+    server.use(http.get('/api/books/7/details', () => HttpResponse.json({ book, extras: {}, processed: null, path_exists: false, files: null, probe: null, audible: null })))
     setup(<BookPage id={7} />)
     expect(await screen.findByText('1 other candidate')).toBeInTheDocument()
     expect(screen.getByText('90% match')).toBeInTheDocument()
@@ -174,5 +174,28 @@ describe('BookPage final library section', () => {
     setup(<BookPage id={1} />)
     expect(await screen.findByText('5.0 GB → 900 B (0%)')).toBeInTheDocument()
     expect(screen.queryByText('Loudness')).toBeNull()
+  })
+})
+
+
+describe('BookPage Open Library section', () => {
+  it('shows the first-published year, rating and subjects, or that it was not found', async () => {
+    mock.extras = { openlibrary: { fetched: '2026-10-30T12:00:00+00:00', data: { first_publish_year: 1932, rating: 3.97, ratings_count: 483, edition_count: 300, subjects: ['Utopias', 'Brainwashing'], url: 'https://openlibrary.org/works/OL1W' } } }
+    const { unmount } = setup(<BookPage id={1} />)
+    expect(await screen.findByText('Open Library')).toBeInTheDocument()
+    expect(screen.getByText('1932')).toBeInTheDocument()
+    expect(screen.getByText('3.97 / 5 from 483 ratings')).toBeInTheDocument()
+    expect(screen.getByText('Utopias · Brainwashing')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'openlibrary.org' })).toHaveAttribute('href', 'https://openlibrary.org/works/OL1W')
+    unmount()
+    mock.extras = { openlibrary: { fetched: '2026-10-30T12:00:00+00:00', data: { first_publish_year: null, rating: null, edition_count: null } } }
+    const sparse = setup(<BookPage id={1} />)
+    expect(await screen.findByText('Open Library')).toBeInTheDocument()
+    expect(screen.queryByText('First published')).toBeNull()
+    sparse.unmount()
+    mock.extras = { openlibrary: { fetched: '2026-10-30T12:00:00+00:00', data: { not_found: true } } }
+    setup(<BookPage id={1} />)
+    expect(await screen.findByText('This book was not found on Open Library.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'openlibrary.org' })).toHaveAttribute('href', 'https://openlibrary.org')
   })
 })

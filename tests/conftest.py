@@ -23,6 +23,14 @@ def isolated_env(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_year_lookup(request, monkeypatch):
+    """Planning asks Open Library and Hardcover for the original publication year; in tests it only reads what is already stored. A test of the lookup itself uses `@pytest.mark.year_lookup`."""
+    if request.node.get_closest_marker('year_lookup'): return
+    from app import catalogue, enrich
+    monkeypatch.setattr(enrich, 'ensure_year_sources', lambda book: catalogue.get_extras(book['id']))
+
+
+@pytest.fixture(autouse=True)
 def no_network(monkeypatch):
     """A test that opens an outbound connection fails at once (loopback and unix sockets are fine)."""
     real = socket.socket.connect

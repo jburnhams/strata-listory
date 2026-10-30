@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { api, coverUrl, type AudibleInfo, type BookDetails, type Extras, type HardcoverInfo, type Processed } from '../api'
+import { api, coverUrl, type AudibleInfo, type BookDetails, type Extras, type HardcoverInfo, type OpenLibraryInfo, type Processed } from '../api'
 import { href, useLoad } from '../route'
 import { Card, Crumbs, Err } from './ui'
 import { formatDuration, matchLabel } from './LibraryPage'
@@ -49,6 +49,17 @@ function ProcessedSection({ p }: { p: Processed }) {
         <Rows rows={[['Folder', <span className="font-mono text-xs">{p.out_dir}</span>], ['Chapters', `${p.chapters} (from ${p.chapter_source})`], ['Encoding', p.tiers && Object.entries(p.tiers).map(([k, v]) => `${v}× ${k}`).join(' · ')], ['Size', saved],
           ['Loudness', p.loudness_before != null && p.loudness_after != null ? `${p.loudness_before.toFixed(1)} → ${p.loudness_after.toFixed(1)} LUFS` : ''], ['Peak', p.true_peak_after != null ? `${p.true_peak_after.toFixed(1)} dBTP${p.retries ? ` (gain lowered ${p.retries}×)` : ''}` : ''], ['Notes', p.warnings?.join('; ')], ['Processed', p.finished?.slice(0, 10)]]} />
       )}
+    </Section>
+  )
+}
+
+function OpenLibrarySection({ o }: { o: OpenLibraryInfo }) {
+  return (
+    <Section title="Open Library">
+      {o.not_found ? <p className="text-sm text-stone-500">This book was not found on Open Library.</p> : (
+        <Rows rows={[['First published', o.first_publish_year ? String(o.first_publish_year) : ''], ['Rating', o.rating ? `${o.rating.toFixed(2)} / 5 from ${o.ratings_count?.toLocaleString()} ratings` : ''], ['Editions', o.edition_count != null ? String(o.edition_count) : ''], ['Subjects', o.subjects?.slice(0, 12).join(' · ')]]} />
+      )}
+      <p className="text-xs text-stone-500 mt-2">Data from <a className="underline" href={o.url || 'https://openlibrary.org'}>openlibrary.org</a>. The folder year comes from here.</p>
     </Section>
   )
 }
@@ -113,6 +124,7 @@ export function Details({ d, onExtras }: { d: BookDetails; onExtras?: (e: Extras
 
       {d.processed && <ProcessedSection p={d.processed} />}
       {d.audible && <AudibleSection a={d.audible} />}
+      {d.extras.openlibrary && <OpenLibrarySection o={d.extras.openlibrary.data} />}
       {b.review === 'confirmed' && b.kind === 'book' && <Community id={b.id} extras={d.extras} onChange={e => onExtras?.(e)} />}
 
       {sug?.title && (

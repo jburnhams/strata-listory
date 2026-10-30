@@ -32,7 +32,7 @@ def hit_to_candidate(d: dict) -> dict:
     series = d.get('featured_series') or {}
     sname = (series.get('series') or {}).get('name') or (d.get('series_names') or [''])[0]
     return candidate('hardcover', id=str(d.get('id', '')), title=d.get('title', ''), subtitle=d.get('subtitle') or '', authors=d.get('author_names') or [], series=sname or '', series_position=series.get('position') if isinstance(series.get('position'), (int, float)) else None,
-                     cover_url=(d.get('image') or {}).get('url') or '', release_date=str(d.get('release_year') or ''), rating=d.get('rating'), ratings_count=d.get('ratings_count'), genres=(d.get('genres') or [])[:8], pages=d.get('pages'), url=f"https://hardcover.app/books/{d['slug']}" if d.get('slug') else '')
+                     cover_url=(d.get('image') or {}).get('url') or '', release_date=str(d.get('release_year') or ''), rating=d.get('rating'), ratings_count=d.get('ratings_count'), genres=(d.get('genres') or [])[:8], pages=d.get('pages'), url=f"https://hardcover.app/books/{d['slug']}" if d.get('slug') else '') | dict(original_year=d.get('release_year'))
 
 
 class Hardcover(Provider):

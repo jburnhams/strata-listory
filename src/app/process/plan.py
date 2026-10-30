@@ -198,16 +198,19 @@ def decide_gain(i: float, tp: float, any_copy: bool, p99: float | None = None) -
     return out
 
 
-def year_for(book: dict, audible: dict | None, sug: dict | None) -> tuple[int | None, str]:
-    """The year for the folder name, and where it came from. We want the year of this audiobook release: a year you set yourself comes first, then the Audible metadata file, then an Audible/Audnexus match, then other providers (these give the book's own publication year), then a year read from the folder name."""
+def year_for(book: dict, audible: dict | None, sug: dict | None, extras: dict | None = None) -> tuple[int | None, str, str]:
+    """(year, where it came from, a note about disagreement). The folder name uses the year the book was first published, not the audiobook's release. In order: a year you set; Open Library's first-published year; Hardcover's; then, only as a fallback and flagged as such, the audiobook release year (Audible metadata file, Audible/Audnexus match, other providers) and a year read from the folder name. When Open Library and Hardcover differ by more than a year the note says what Hardcover has."""
     def yr(x): m = re.match(r'(1\d{3}|2[01]\d{2})', str(x or '')); return int(m[1]) if m else None
-    if book.get('year') and book.get('year_source') == 'manual': return book['year'], 'set by hand'
-    if audible and yr(audible.get('release_date')): return yr(audible['release_date']), 'Audible metadata file'
-    sug = sug or {}; srcs = set(sug.get('sources') or [sug.get('source')])
-    if yr(sug.get('release_date')) and srcs & {'audible', 'audnexus'}: return yr(sug['release_date']), 'Audible/Audnexus match'
-    if yr(sug.get('release_date')): return yr(sug['release_date']), f"{sug.get('source', 'provider')} match (the book's own publication year)"
-    if book.get('year'): return book['year'], book.get('year_source') or 'folder name'
-    return None, ''
+    if book.get('year') and book.get('year_source') == 'manual': return book['year'], 'set by hand', ''
+    ex = extras or {}; ol = yr(((ex.get('openlibrary') or {}).get('data') or {}).get('first_publish_year')); hc = yr(((ex.get('hardcover') or {}).get('data') or {}).get('release_date'))
+    if ol: return ol, 'Open Library (first published)', f"Hardcover says {hc}" if hc and abs(hc - ol) > 1 else ''
+    if hc: return hc, "Hardcover (book's release date)", ''
+    sug = sug or {}; srcs = set(sug.get('sources') or [sug.get('source')]); weak = 'no original publication year found, so this is the audiobook release year'
+    if audible and yr(audible.get('release_date')): return yr(audible['release_date']), 'Audible metadata file (audiobook release)', weak
+    if yr(sug.get('release_date')) and srcs & {'audible', 'audnexus'}: return yr(sug['release_date']), 'Audible/Audnexus match (audiobook release)', weak
+    if yr(sug.get('release_date')): return yr(sug['release_date']), f"{sug.get('source', 'provider')} match", weak
+    if book.get('year'): return book['year'], book.get('year_source') or 'folder name', 'no original publication year found; this year was read from the folder name'
+    return None, '', ''
 
 
 def effective(book: dict, audible: dict | None) -> dict:
@@ -222,7 +225,7 @@ def effective(book: dict, audible: dict | None) -> dict:
     return dict(narrator=narrator, series=series, series_position=pos if series else None)
 
 
-def meta_rows(book: dict, audible: dict | None, year, year_src: str) -> list[dict]:
+def meta_rows(book: dict, audible: dict | None, year, year_src: str, year_note: str = '') -> list[dict]:
     """The metadata that will be written to the files, each value with where it came from (the provider match you confirmed, the Audible metadata file, or the catalogue: parsed from the folder name or entered by hand) and a note where the Audible metadata file says something different."""
     sug = book.get('suggestion') or {}; srcs = ' + '.join(s for s in dict.fromkeys(sug.get('sources') or ([sug['source']] if sug.get('source') else []))); a = audible or {}; eff = effective(book, audible)
     n = lambda x: re.sub(r'\W+', '', str(x or '').lower())
@@ -239,7 +242,7 @@ def meta_rows(book: dict, audible: dict | None, year, year_src: str) -> list[dic
             ('Author', book.get('author') or '', src(book.get('author'), sug.get('author'), a_author), note(book.get('author'), a_author)),
             ('Narrator', eff['narrator'], src(eff['narrator'], ', '.join(sug.get('narrators') or []), a_narr) if book.get('narrator') else ('Audible metadata file' if eff['narrator'] else ''), note(book.get('narrator'), a_narr)),
             ('Series', eff['series'] + (f" #{eff['series_position']:g}" if eff['series'] and eff['series_position'] is not None else ''), src(eff['series'], sug.get('series'), aseries) if book.get('series') else ('Audible metadata file' if eff['series'] else ''), note(book.get('series'), aseries)),
-            ('Year', str(year) if year else '', year_src, ''), ('ASIN', book.get('asin') or '', src(book.get('asin'), sug.get('asin'), a.get('asin')), '')]
+            ('Year', str(year) if year else '', year_src, year_note), ('ASIN', book.get('asin') or '', src(book.get('asin'), sug.get('asin'), a.get('asin')), '')]
     return [dict(field=f, value=v, source=sr, note=nt) for f, v, sr, nt in rows if v]
 
 
@@ -249,11 +252,10 @@ def out_dir_for(book: dict, final_dir: str, year: int | None = None) -> str:
     return os.path.join(final_dir, author, f'[{year}] {title}' if year else title)
 
 
-def make_plan(book: dict, final_dir: str, audible: dict | None = None) -> dict:
+def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: dict | None = None) -> dict:
     """Everything needed to process the book, as plain data (JSON-serialisable)."""
-    year, year_src = year_for(book, audible, book.get('suggestion'))
-    if not year: warnings_pre = ['no year found: the folder will have no [year]; set one with `./app edit ID --year YYYY`']
-    else: warnings_pre = []
+    year, year_src, year_note = year_for(book, audible, book.get('suggestion'), extras)
+    warnings_pre = ['no year found: the folder will have no [year]; set one with `./app edit ID --year YYYY`'] if not year else ([f'year: {year_note}'] if year_note else [])
     paths = sorted(details.audio_files(book['path']), key=probe.natural_key)
     if not paths: raise probe.ToolError(f"no audio files in {book['path']}")
     files = [probe.probe_file(p) for p in paths]; by_path = {f['path']: f for f in files}; tl = timeline(files)
@@ -281,6 +283,6 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None) -> dict:
     short = round(g['db'] - g['apply_db'], 1)
     if g['db'] > QUIET_TOL and short > 0.5: warnings.append(f"ends {short:.1f} dB below the target because its peaks leave no more room")
     in_bytes = sum(os.path.getsize(f['path']) for f in files); est = sum(c['duration'] * c['kbps'] * 1000 / 8 for c in chapters)
-    return dict(book_id=book['id'], title=book['title'], author=book.get('author', ''), out_dir=out_dir_for(book, final_dir, year), year=year, year_source=year_src, metadata=meta_rows(book, audible, year, year_src), **effective(book, audible), chapter_source=source, downmix=downmix, duration=round(sum(f['duration'] for f in files), 1),
+    return dict(book_id=book['id'], title=book['title'], author=book.get('author', ''), out_dir=out_dir_for(book, final_dir, year), year=year, year_source=year_src, metadata=meta_rows(book, audible, year, year_src, year_note), **effective(book, audible), chapter_source=source, downmix=downmix, duration=round(sum(f['duration'] for f in files), 1),
                 loudness=dict(I=m['I'], TP=m['TP'], LRA=m['LRA'], target=TARGET_LUFS, gain_db=g['db'], apply_db=g['apply_db'], gain_steps=g['steps'], decision=g['why'], reencoded=g['reencode'], peak_p99=m.get('peak_p99')), chapters=chapters, warnings=warnings,
                 in_bytes=in_bytes, est_bytes=int(est), in_files=len(files), channels=max(f['channels'] for f in files))

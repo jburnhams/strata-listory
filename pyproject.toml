@@ -6,6 +6,7 @@ filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`"]       # Te
 markers = [
     "integration: runs the CLI and HTTP server end-to-end (tests/integration)",
     "slow: slow tests; run manually or on a schedule",
+    "year_lookup: exercises the real original-year lookup instead of the stored-extras stub (tests/conftest.py)",
 ]
 
 [tool.coverage.run]

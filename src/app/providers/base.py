@@ -14,7 +14,7 @@ class MatchError(RuntimeError):
 
 
 def candidate(source: str, **f) -> dict:
-    out = dict(source=source, id='', asin='', title='', subtitle='', author='', authors=[], narrators=[], series='', series_position=None, runtime_minutes=None, cover_url='', language='', release_date='', rating=None, ratings_count=None, genres=[], pages=None, url='')
+    out = dict(source=source, id='', asin='', title='', subtitle='', author='', authors=[], narrators=[], series='', series_position=None, runtime_minutes=None, cover_url='', language='', release_date='', rating=None, ratings_count=None, genres=[], pages=None, url='', original_year=None)
     out.update({k: v for k, v in f.items() if k in out})
     out['author'] = out['author'] or ', '.join(out['authors'])
     return out
@@ -54,6 +54,7 @@ def cached(key: str, fetch, days: float = 7):
 class Provider:
     """A source of book metadata. Override `search` and/or `by_asin`; `unavailable` explains why it cannot run (for example no API key)."""
     name = ''; label = ''; site = ''
+    matching = True          # takes part in title matching by default; False for sources used only to enrich a book you already have
     min_interval = 0.2       # seconds between requests to this service (its rate limit, with margin)
     cache_days = 7           # how long its responses are reused; terms ask for cached data to be kept only as long as needed and refreshed
 

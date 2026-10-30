@@ -64,3 +64,43 @@ def test_removing_a_book_removes_its_extras():
     b = confirmed(); catalogue.set_extra(b['id'], 'hardcover', DETAILS); catalogue.remove_book(b['id'])
     assert catalogue.get_extras(b['id']) == {}
     with pytest.raises(catalogue.NotFound): catalogue.set_extra(b['id'], 'hardcover', DETAILS)
+
+
+class OL:
+    name = 'openlibrary'
+    def __init__(self, docs=None, fail=False): self.docs, self.fail = docs or [], fail
+    def search(self, t, a=''):
+        if self.fail: raise MatchError('Open Library down')
+        return self.docs
+
+
+def ol_cand(title, author, year, **kw):
+    c = candidate('openlibrary', id='/works/OL1W', title=title, authors=[author], rating=3.9, ratings_count=10, cover_url='https://c/x.jpg', url='https://openlibrary.org/works/OL1W'); c['original_year'] = year; c['subjects'] = ['S']; c['edition_count'] = 5
+    return c
+
+
+def test_openlibrary_work_is_accepted_only_when_it_is_a_likely_match():
+    b = confirmed('Brave New World', 'Aldous Huxley')
+    good = enrich.openlibrary_work(b, OL([ol_cand('Brave New World Revisited', 'Aldous Huxley', 1958), ol_cand('Brave New World', 'Aldous Huxley', 1932)]))
+    assert (good['first_publish_year'], good['id'], good['subjects'], good['match_score']) == (1932, '/works/OL1W', ['S'], 1.0)
+    assert enrich.openlibrary_work(b, OL([ol_cand('Totally Different', 'Someone Else', 1800)])) is None and enrich.openlibrary_work(b, OL()) is None
+
+
+def test_enrich_openlibrary_stores_the_work_or_remembers_it_was_not_found():
+    b = confirmed('Brave New World', 'Aldous Huxley')
+    assert enrich.enrich_openlibrary(b, OL([ol_cand('Brave New World', 'Aldous Huxley', 1932)]))['first_publish_year'] == 1932
+    assert catalogue.get_extras(b['id'])['openlibrary']['data']['first_publish_year'] == 1932 and mirror.read_meta(b)['extras']['openlibrary']['data']['rating'] == 3.9
+    nf = confirmed('Nothing'); assert enrich.enrich_openlibrary(nf, OL()) is None and catalogue.get_extras(nf['id'])['openlibrary']['data'] == dict(not_found=True)
+    with pytest.raises(MatchError, match='down'): enrich.enrich_openlibrary(b, OL(fail=True))
+
+
+@pytest.mark.year_lookup
+def test_ensure_year_sources_asks_each_source_once_and_survives_failures(monkeypatch):
+    b = confirmed('Brave New World', 'Aldous Huxley'); calls = []
+    monkeypatch.setattr(enrich, 'enrich_openlibrary', lambda book, ol=None: calls.append('ol') or catalogue.set_extra(book['id'], 'openlibrary', dict(first_publish_year=1932)))
+    monkeypatch.setattr(enrich, 'enrich_book', lambda book, plist=None: calls.append('hc') or (_ for _ in ()).throw(MatchError('Hardcover down')))
+    monkeypatch.setattr(providers.get('hardcover'), 'unavailable', lambda: None)
+    ex = enrich.ensure_year_sources(b)
+    assert calls == ['ol', 'hc'] and ex['openlibrary']['data']['first_publish_year'] == 1932 and 'hardcover' not in ex                      # Hardcover being down only means no second opinion
+    enrich.ensure_year_sources(b); assert calls == ['ol', 'hc', 'hc']                                                                       # Open Library was fresh; Hardcover is retried
+    monkeypatch.setattr(providers.get('hardcover'), 'unavailable', lambda: 'no key'); enrich.ensure_year_sources(b); assert calls == ['ol', 'hc', 'hc']      # not available: not asked

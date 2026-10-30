@@ -115,8 +115,13 @@ def create_app():
     @app.post('/api/books/{book_id}/enrich')
     def enrich_one(book_id: int):
         b = guard(catalogue.get_book, book_id)
-        try: return dict(found=guard(enrich.enrich_book, b) is not None, extras=catalogue.get_extras(book_id))
-        except matcher.MatchError as e: raise HTTPException(502, str(e))
+        found = False
+        try: guard(enrich.enrich_openlibrary, b); found = True                          # Open Library needs no key
+        except matcher.MatchError: pass
+        try: found = guard(enrich.enrich_book, b) is not None or found
+        except matcher.MatchError as e:
+            if not found: raise HTTPException(502, str(e))
+        return dict(found=found, extras=catalogue.get_extras(book_id))
 
     worker = pq.Worker()
 

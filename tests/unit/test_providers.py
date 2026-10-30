@@ -98,7 +98,7 @@ def test_cache_expires_after_a_week(fake_urlopen):
 
 def test_each_provider_declares_its_own_rate_limit_and_cache_lifetime(fake_urlopen):
     limits = {c.name: (c.min_interval, c.cache_days) for c in providers.ALL}
-    assert limits == {'audnexus': (0.3, 14), 'audible': (0.3, 14), 'hardcover': (1.1, 14), 'audiobookdb': (0.15, 7)}
+    assert limits == {'audnexus': (0.3, 14), 'audible': (0.3, 14), 'hardcover': (1.1, 14), 'audiobookdb': (0.15, 7), 'openlibrary': (0.5, 30)}
     assert all(c().http.min_interval == c.min_interval for c in providers.ALL)                 # the HTTP client throttles at the provider's own rate
     assert {s['name']: (s['min_interval'], s['cache_days']) for s in providers.status()} == limits
     p = audnexus.Audnexus(); p.cache_days = 0                                                      # a lifetime of zero: always refetched
@@ -153,3 +153,17 @@ def test_hardcover_errors_and_key(fake_urlopen, monkeypatch, tmp_path):
     with pytest.raises(MatchError, match='no Hardcover API token'): p.search('Another')
     (tmp_path / '.config' / 'strata-listory').mkdir(parents=True); (tmp_path / '.config' / 'strata-listory' / 'hardcover.key').write_text('Bearer hc_file\n')
     assert hardcover.key() == 'hc_file' and p.unavailable() is None
+
+
+OL_DOC = dict(key='/works/OL1W', title='Brave New World', author_name=['Aldous Huxley'], first_publish_year=1932, ratings_average=3.97, ratings_count=483, subject=['Utopias', 'Brainwashing'] + [f's{i}' for i in range(40)], edition_count=300, cover_i=8231823)
+
+
+def test_openlibrary_search_gives_the_first_published_year_and_is_not_a_default_matcher(fake_urlopen):
+    from app.providers import openlibrary
+    p = openlibrary.OpenLibrary(); fake_urlopen.reply(dict(docs=[OL_DOC]), dict(docs=[]))
+    c = p.search('Brave New World', 'Aldous Huxley')[0]
+    assert (c['source'], c['original_year'], c['rating'], c['ratings_count'], c['author'], c['edition_count'], c['url']) == ('openlibrary', 1932, 3.97, 483, 'Aldous Huxley', 300, 'https://openlibrary.org/works/OL1W')
+    assert c['cover_url'] == 'https://covers.openlibrary.org/b/id/8231823-L.jpg' and len(c['subjects']) == 25 and c['genres'][:2] == ['Utopias', 'Brainwashing'] and len(c['genres']) == 8
+    call = fake_urlopen.calls[0]; assert call['url'].startswith('https://openlibrary.org/search.json?') and 'title=Brave+New+World' in call['url'] and 'author=Aldous+Huxley' in call['url'] and 'strata-listory' in call['headers']['user-agent']
+    assert p.search('Nothing Here') == [] and p.search('x') == [] and openlibrary.to_candidate({})['cover_url'] == ''
+    assert 'openlibrary' not in providers.configured() and providers.get('openlibrary').unavailable() is None and 'openlibrary' in [s['name'] for s in providers.status()]

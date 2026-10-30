@@ -137,8 +137,8 @@ def _books_for(args):
 
 def _one_plan(b, final):
     from app.process import plan as P
-    side = details.sidecar(b['path']) if b['path'] and os.path.exists(b['path']) else None
-    return P.make_plan(b, final, details.audible_summary(side) if side else None)
+    from app.process import queue as pq
+    return pq._plan_one(b, final)
 
 
 def cmd_process(args):
