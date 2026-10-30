@@ -159,3 +159,14 @@ def test_enrich_command(capsys, monkeypatch):
     with pytest.raises(SystemExit, match='no such book'): cli.main(['enrich', '99'])
     monkeypatch.setattr(providers, 'enabled', lambda names=None: [])
     with pytest.raises(SystemExit, match='Hardcover is not available'): cli.main(['enrich', '1'])
+
+
+def test_scan_reports_a_down_share_and_an_interrupted_scan(capsys, tmp_path, monkeypatch):
+    import errno
+    from app import fs, scan
+    lib = tmp_path / 'lib'; lib.mkdir()
+    monkeypatch.setattr(fs, 'reachable', lambda p: False)
+    with pytest.raises(SystemExit, match='not reachable'): cli.main(['scan', str(lib)])
+    monkeypatch.setattr(fs, 'reachable', lambda p: True)
+    monkeypatch.setattr(scan, 'scan', lambda root: (_ for _ in ()).throw(OSError(errno.EHOSTDOWN, 'Host is down')))
+    with pytest.raises(SystemExit, match='interrupted .Host is down.; nothing was changed'): cli.main(['scan', str(lib)])

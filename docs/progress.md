@@ -1,5 +1,10 @@
 # Progress log
 
+## 2026-10-30: resilience to the share being down
+
+- Added `fs.py`: reachability probe with timeout, short memory and no pile-up, used before touching the audio share or a share-based backup folder; scans abort on a vanished share instead of storing half a library; the book page, covers, mirror and backups degrade as described in the README. The Linux mount table is read from `/proc/self/mountinfo` (`autofs` counts as a network mount because touching an unmounted automount mounts it, which can take a while); other systems skip the probe and rely on error handling.
+- Not changed: the data folder must stay on a local disk (SQLite). The systemd service has no dependency on the mounts.
+
 ## 2026-10-30: Hardcover
 
 - Hardcover's GraphQL API (token in `~/.config/strata-listory/hardcover.key`, not tracked) works as a search provider (4 of 4 test titles right) and gives ratings, counts, genres, moods, content warnings, tags, series, audiobook editions and public reviews. Its documentation pages returned 403 to my fetch tool, so the exact rate limit and terms were not read; the client keeps to about one request a second.

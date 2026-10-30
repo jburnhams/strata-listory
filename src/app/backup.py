@@ -5,7 +5,7 @@ Policy: one per day when the database is opened (db.py), before a schema migrati
 import os, re, shutil, sqlite3
 from datetime import datetime, timedelta, timezone
 
-from app import settings
+from app import fs, settings
 
 KEEP_DAYS, KEEP_WEEKS, KEEP_SPECIAL_DAYS, INTERVAL = 7, 4, 30, timedelta(hours=24)
 NAME = re.compile(r'^catalogue-(\d{8}-\d{6})(?:-([a-z-]+))?\.db$')
@@ -47,6 +47,7 @@ def _scratch(name: str) -> str:
 def _usable_folder() -> str:
     """The backup folder, or the local default one while the configured folder (a share, say) cannot be written, so a backup is never lost to an unreachable share."""
     try:
+        if not fs.reachable(folder()): raise OSError('backup folder not reachable')
         os.makedirs(folder(), exist_ok=True)
         probe = os.path.join(folder(), '.write-test'); open(probe, 'w').close(); os.remove(probe)
         return folder()

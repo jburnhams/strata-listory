@@ -115,7 +115,7 @@ export function Details({ d, onExtras }: { d: BookDetails; onExtras?: (e: Extras
         </Section>
       )}
 
-      {!d.path_exists && <Section title="Files"><p className="text-sm text-stone-500">{b.path ? 'The path does not exist on this machine.' : 'This book has no path (entered by hand).'}</p></Section>}
+      {!d.path_exists && <Section title="Files"><p className="text-sm text-stone-500">{d.share_down ? 'The audio folder is on a network share that is not reachable right now (is the server up?). Everything else on this page still works.' : b.path ? 'The path does not exist on this machine.' : 'This book has no path (entered by hand).'}</p></Section>}
       {d.files && (
         <Section title="Files">
           <p className="text-sm mb-2">{d.files.count}{d.files.truncated ? '+' : ''} audio file{d.files.count === 1 ? '' : 's'} · {formatBytes(d.files.total_bytes)}</p>

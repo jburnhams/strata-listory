@@ -1,7 +1,7 @@
 """Find audiobooks in a folder tree and turn their names into catalogue fields. Read-only: nothing under the library folder is ever written or moved.
 
 A *candidate* is one book: a single `.m4b`/`.m4a` file, a folder of chapter files (or of CD1/CD2 subfolders), or one loose file when a folder holds unrelated tracks. `kind` is 'radio' for things that look like broadcast episodes (S01E02, WebRip, BBC Radio, dated recordings), else 'book'."""
-import os, re
+import errno, os, re
 
 AUDIO = {'.mp3', '.m4b', '.m4a', '.aac', '.ogg', '.opus', '.flac', '.wma'}
 WHOLE_BOOK = {'.m4b', '.m4a', '.aac'}          # one file is one book (mp3 is usually one chapter among many)
@@ -71,13 +71,20 @@ def parse_name(name: str, parent: str = '') -> dict:
 
 
 def _count_audio(root: str) -> int:
-    return sum(is_audio(f) for _, _, fs in os.walk(root) for f in fs)
+    return sum(is_audio(f) for _, _, fs in os.walk(root, onerror=_walk_error) for f in fs)
+
+
+DOWN = {errno.EHOSTDOWN, errno.ETIMEDOUT, errno.EIO, errno.ENOTCONN, errno.ESTALE, errno.EHOSTUNREACH, errno.ENETUNREACH}
+
+
+def _walk_error(e: OSError):
+    if e.errno in DOWN: raise e                          # the share went away mid-scan: stop rather than return half a library (a permission error on one folder is just skipped)
 
 
 def scan(library: str):
     """Yield candidate books under `library`: dicts of path, kind, file_count and the parsed fields (title, author, narrator, year, asin, series_position)."""
     library = os.path.abspath(library)
-    for dirpath, dirnames, filenames in os.walk(library):
+    for dirpath, dirnames, filenames in os.walk(library, onerror=_walk_error):
         dirnames[:] = sorted(d for d in dirnames if not d.startswith(('.', '@')))
         files = sorted(f for f in filenames if is_audio(f) and f.lower() not in SKIP)
         parent = os.path.basename(os.path.dirname(dirpath)) if os.path.dirname(dirpath) != os.path.dirname(library) and dirpath != library else ''

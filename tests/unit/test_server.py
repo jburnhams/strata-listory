@@ -138,3 +138,14 @@ def test_enrich_endpoints_and_extras_in_details(client, monkeypatch):
     assert client.post('/api/enrich', params=dict(limit=5)).json() == dict(tried=1, enriched=0, not_found=1, remaining=0)      # 'Other' is not on Hardcover
     monkeypatch.setattr(providers, 'enabled', lambda names=None: [])
     assert client.post(f"/api/books/{other['id']}/enrich").status_code == 502
+
+
+def test_scan_reports_a_down_share_with_503(client, tmp_path, monkeypatch):
+    import errno
+    from app import fs, scan
+    lib = tmp_path / 'lib'; lib.mkdir()
+    monkeypatch.setattr(fs, 'reachable', lambda p: False)
+    r = client.post('/api/scan', json=dict(folder=str(lib))); assert r.status_code == 503 and 'not reachable' in r.json()['detail']
+    monkeypatch.setattr(fs, 'reachable', lambda p: True)
+    monkeypatch.setattr(scan, 'scan', lambda root: (_ for _ in ()).throw(OSError(errno.EHOSTDOWN, 'Host is down')))
+    r = client.post('/api/scan', json=dict(folder=str(lib))); assert r.status_code == 503 and 'interrupted' in r.json()['detail']

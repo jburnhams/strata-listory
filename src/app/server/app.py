@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import __version__, catalogue, db, details, enrich, matcher, providers, scan, settings
+from app import __version__, catalogue, db, details, enrich, fs, matcher, providers, scan, settings
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 LANDING = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'landing.html')
@@ -89,8 +89,11 @@ def create_app():
     @app.post('/api/scan')
     def post_scan(b: ScanIn):
         folder = b.folder or settings.library_dir()
-        if not folder or not os.path.isdir(folder): raise HTTPException(400, 'set the audiobook folder in Settings first' if not folder else f'not a folder: {folder}')
-        found = list(scan.scan(folder))
+        if not folder: raise HTTPException(400, 'set the audiobook folder in Settings first')
+        if not fs.reachable(folder): raise HTTPException(503, f'{folder} is on a network share that is not reachable (is the server up?)')
+        if not os.path.isdir(folder): raise HTTPException(400, f'not a folder: {folder}')
+        try: found = list(scan.scan(folder))
+        except OSError as e: raise HTTPException(503, f'the scan was interrupted ({e.strerror or e}); nothing was changed')
         return guard(lambda: dict(found=len(found), **catalogue.add_scanned(found)))
 
     @app.post('/api/match')

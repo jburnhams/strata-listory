@@ -1,7 +1,7 @@
 """Command line: `doctor` checks the environment, `add`/`list`/`show`/`edit`/`remove` manage the audiobook catalogue, `set` changes settings, `serve` starts the web server."""
 import argparse, importlib, json, os, sys
 
-from app import __version__, backup, catalogue, db, enrich, matcher, mirror, providers, scan, settings
+from app import __version__, backup, catalogue, db, enrich, fs, matcher, mirror, providers, scan, settings
 
 CHECKS = (('fastapi', 'fastapi'), ('uvicorn', 'uvicorn'), ('pydantic', 'pydantic'))
 
@@ -81,8 +81,10 @@ def cmd_restore(args):
 
 def cmd_scan(args):
     root = args.folder or settings.library_dir() or sys.exit('no audiobook folder: ./app scan /path/to/audio, or ./app set library_dir /path/to/audio')
+    if not fs.reachable(root): sys.exit(f'{root} is on a network share that is not reachable (is the server up?)')
     if not os.path.isdir(root): sys.exit(f'not a folder: {root}')
-    found = list(scan.scan(root))
+    try: found = list(scan.scan(root))
+    except OSError as e: sys.exit(f'the scan was interrupted ({e.strerror or e}); nothing was changed')
     kinds = {k: sum(f['kind'] == k for f in found) for k in catalogue.KINDS}
     if args.dry_run: print(f"{len(found)} candidates ({kinds['book']} books, {kinds['radio']} radio); nothing stored (dry run)"); return 0
     res = catalogue.add_scanned(found)

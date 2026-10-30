@@ -7,7 +7,7 @@ A book that is a single file gets a folder named after the file without its exte
 import json, os, re
 from datetime import datetime, timezone
 
-from app import settings
+from app import fs, settings
 
 IMAGES = ('.jpg', '.png', '.webp')
 
@@ -71,10 +71,14 @@ def write(book: dict, cover_source: str | None = None) -> str | None:
     from app import catalogue, details           # late imports: both need the mirror too
     try:
         d = dir_for(book); old = read_meta(book)
-        side = details.sidecar(book['path']) if book.get('path') and os.path.exists(book['path']) else None
+        path = book.get('path') or ''; side = None; audible = old.get('audible_file')           # while the share is down keep what was written before
+        if path and fs.reachable(path):
+            try: side = details.sidecar(path) if os.path.exists(path) else None
+            except OSError: side = None
+            audible = details.audible_summary(side) if side else None
         sug = book.get('suggestion') or {}
         rec = {k: v for k, v in book.items() if k not in ('suggestion', 'match_score')}
-        meta = dict(book=rec, match=dict(suggestion=sug, score=book.get('match_score')) if sug else None, audible_file=details.audible_summary(side) if side else None,
+        meta = dict(book=rec, match=dict(suggestion=sug, score=book.get('match_score')) if sug else None, audible_file=audible,
                     extras=catalogue.get_extras(book['id']) or None, cover=os.path.basename(cover_file(book) or '') or None, cover_source=cover_source or old.get('cover_source'), written=datetime.now(timezone.utc).isoformat())
         p = os.path.join(d, 'metadata.json'); _atomic(p, json.dumps(meta, indent=1, ensure_ascii=False).encode('utf8')); return p
     except OSError: return None

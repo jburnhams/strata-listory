@@ -41,7 +41,7 @@ def test_describe_lists_files_and_handles_a_missing_path(tmp_path, monkeypatch):
     assert d['probe']['duration_seconds'] == 100 and details.cached_probe(b['path'], details.audio_files(b['path']))['duration_seconds'] == 100
     monkeypatch.setattr(details, 'probe', lambda files: 1 / 0)
     assert details.cached_probe(b['path'], details.audio_files(b['path']))['duration_seconds'] == 100          # served from the cache, not probed again
-    assert details.describe(catalogue.add_book(title='Hand entered')) == dict(path_exists=False, files=None, probe=None, audible=None)
+    assert details.describe(catalogue.add_book(title='Hand entered')) == dict(path_exists=False, share_down=False, files=None, probe=None, audible=None)
     one = tmp_path / 'one.mp3'; one.write_bytes(b'x'); assert details.audio_files(str(one)) == [str(one)]
 
 

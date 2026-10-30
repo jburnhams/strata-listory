@@ -4,7 +4,7 @@ Cover order: an image file in the book's folder (cover/folder/front, then any pi
 import glob, html, json, os, re, shutil, subprocess, time, urllib.request
 from datetime import datetime, timedelta, timezone
 
-from app import db, mirror, providers, scan, settings
+from app import db, fs, mirror, providers, scan, settings
 
 IMAGES = ('.jpg', '.jpeg', '.png', '.webp')
 COVER_NAMES = ('cover', 'folder', 'front', 'albumart', 'albumartsmall', 'artwork')
@@ -152,7 +152,14 @@ def cover(book: dict) -> str | None:
             os.remove(prev); return mirror.save_cover(book, data, _image_kind(data) or e, 'cache')
     none = os.path.join(old, f"{book['id']}.none")
     if os.path.isfile(none) and datetime.now(timezone.utc) - datetime.fromtimestamp(os.path.getmtime(none), timezone.utc) < NONE_FOR: return None
-    path = book.get('path') or ''; data = None; source = ''
+    path = book.get('path') or ''
+    if path and not fs.reachable(path): return None                            # the share is down: no verdict, and nothing remembered (try again when it is back)
+    try: return _build_cover(book, path, none)
+    except OSError: return None
+
+
+def _build_cover(book: dict, path: str, none: str) -> str | None:
+    data = None; source = ''
     if path and os.path.exists(path):
         if (img := _folder_image(path)):
             try:
@@ -173,8 +180,15 @@ def cover(book: dict) -> str | None:
 
 def describe(book: dict) -> dict:
     """The data behind the book page: files, embedded tags and technical facts, and the Audible metadata file, when the book's path exists on this machine."""
-    path = book.get('path') or ''; out = dict(path_exists=bool(path) and os.path.exists(path), files=None, probe=None, audible=None)
+    path = book.get('path') or ''; out = dict(path_exists=False, share_down=False, files=None, probe=None, audible=None)
+    if path and not fs.reachable(path): out['share_down'] = True; return out           # the share is down: say so instead of hanging
+    out['path_exists'] = bool(path) and os.path.exists(path)
     if not out['path_exists']: return out
+    try: return _describe(book, path, out)
+    except OSError: out.update(path_exists=False, share_down=True, files=None, probe=None, audible=None); return out
+
+
+def _describe(book: dict, path: str, out: dict) -> dict:
     files = audio_files(path)
     out['files'] = dict(count=len(files), total_bytes=sum(os.path.getsize(f) for f in files), truncated=len(files) >= MAX_FILES, list=[dict(name=os.path.relpath(f, path if os.path.isdir(path) else os.path.dirname(path)), bytes=os.path.getsize(f)) for f in files[:200]])
     out['probe'] = cached_probe(path, files)

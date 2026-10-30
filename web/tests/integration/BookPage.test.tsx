@@ -138,3 +138,15 @@ describe('BookPage with thin Hardcover data', () => {
     mock.extras = { hardcover: { fetched: '2026-10-30T12:00:00+00:00', data: { id: '6' } } }
   })
 })
+
+
+describe('BookPage when the audio share is down', () => {
+  it('explains why there are no files and keeps the rest of the page', async () => {
+    const book = { ...mock.books[0], id: 8, title: 'Offline' }
+    mock.books.push(book)
+    server.use(http.get('/api/books/8/details', () => HttpResponse.json({ book, extras: {}, path_exists: false, share_down: true, files: null, probe: null, audible: null })))
+    setup(<BookPage id={8} />)
+    expect(await screen.findByText(/network share that is not reachable right now/)).toBeInTheDocument()
+    expect(screen.getByText('Catalogue')).toBeInTheDocument()
+  })
+})
