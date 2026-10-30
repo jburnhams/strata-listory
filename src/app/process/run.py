@@ -3,13 +3,15 @@
 Encoded chapters: decode the chapter's segments, downmix to mono, apply the book's gain with a peak limiter, resample for the chosen tier and encode with LAME VBR.
 Copied chapters: cut the mp3 on frame boundaries (stream copy, no new generation of loss) and re-gain it losslessly with mp3gain.
 Every chapter gets clean ID3 tags (the source tags are dropped) and a small cover; the book gets `metadata.json`, `playlist.m3u8` and `cover.jpg`."""
-import json, os, shutil, subprocess, tempfile, time
+import json, math, os, shutil, tempfile, time
 from datetime import datetime, timezone
 
 from app import details
 from app.process import plan as P, probe
 
 COVER_PX = 400
+CLIP_CEILING = -1.0          # dBTP: a finished book whose true peak is above this is rebuilt with less gain (the mp3 encoder overshoots a little, and players and phones add their own processing)
+MAX_RETRIES = 2
 
 
 def _cover_small(src: str | None, tmp: str) -> str | None:
@@ -62,24 +64,39 @@ def verify(plan: dict, files: list[str]) -> dict:
     return dict(seconds=round(got, 1), bytes=sum(os.path.getsize(f) for f in files), channels={i['channels'] for i in infos} == {1})
 
 
+def lessen(plan: dict, db: float):
+    """Take `db` off the book's gain (copied chapters in whole 1.5 dB steps) and let the ReplayGain tag make up the difference."""
+    l = plan['loudness']
+    if any(c['mode'] == 'copy' for c in plan['chapters']):
+        l['gain_steps'] -= math.ceil(db / P.GAIN_STEP); l['apply_db'] = round(l['gain_steps'] * P.GAIN_STEP, 2)
+    else: l['apply_db'] = round(l['apply_db'] - db, 2)
+    rem = round(l['gain_db'] - l['apply_db'], 2); l['remaining_db'] = rem if abs(rem) >= 0.4 else 0.0
+    plan['warnings'] = plan['warnings'] + [f'gain lowered by {db:.1f} dB after the first build came out too close to clipping']
+
+
 def execute(book: dict, plan: dict, force: bool = False) -> dict:
     """Process one planned book; returns a result summary. Raises ToolError on failure (nothing is left in the final library)."""
     out_dir = plan['out_dir']; partial = out_dir + '.partial'; t0 = time.time()
     if os.path.exists(out_dir) and not force: raise probe.ToolError(f'{out_dir} already exists (use --force to replace it)')
     shutil.rmtree(partial, ignore_errors=True); os.makedirs(partial)
     try:
-        cover_src = details.cover(book); small = _cover_small(cover_src, partial); names = []
-        for i, ch in enumerate(plan['chapters'], 1):
-            build_chapter(book, plan, ch, i, os.path.join(partial, ch['file']), small); names.append(os.path.join(partial, ch['file']))
-        v = verify(plan, names)
-        after = probe.measure_book([(f, 0.0, None) for f in names], 1)
+        cover_src = details.cover(book); small = _cover_small(cover_src, partial); retries = 0
+        while True:
+            names = []
+            for i, ch in enumerate(plan['chapters'], 1):
+                build_chapter(book, plan, ch, i, os.path.join(partial, ch['file']), small); names.append(os.path.join(partial, ch['file']))
+            v = verify(plan, names)
+            after = probe.measure_book([(f, 0.0, None) for f in names], 1)
+            if after['TP'] is None or after['TP'] <= CLIP_CEILING: break
+            if retries >= MAX_RETRIES: raise probe.ToolError(f"clipping risk: true peak {after['TP']:.1f} dBFS after {retries} gain reductions (ceiling {CLIP_CEILING:.1f}); nothing was written")
+            retries += 1; lessen(plan, after['TP'] - P.TP_LIMIT + 0.2)
         if small: os.remove(small)
         if cover_src: shutil.copyfile(cover_src, os.path.join(partial, 'cover' + os.path.splitext(cover_src)[1]))
         with open(os.path.join(partial, 'playlist.m3u8'), 'w', encoding='utf8') as f: f.write('#EXTM3U\n' + ''.join(f"#EXTINF:{round(c['duration'])},{c['title']}\n{c['file']}\n" for c in plan['chapters']))
         tiers: dict[str, int] = {}
         for c in plan['chapters']: tiers[c['tier']] = tiers.get(c['tier'], 0) + 1
         summary = dict(status='done', out_dir=out_dir, chapters=len(names), chapter_source=plan['chapter_source'], tiers=tiers, in_bytes=plan['in_bytes'], out_bytes=v['bytes'], in_seconds=plan['duration'], out_seconds=v['seconds'],
-                       loudness_before=plan['loudness']['I'], loudness_after=after['I'], true_peak_after=after['TP'], gain_db=plan['loudness']['apply_db'], downmix=plan['downmix'], warnings=plan['warnings'], seconds=round(time.time() - t0, 1),
+                       loudness_before=plan['loudness']['I'], loudness_after=after['I'], true_peak_after=after['TP'], gain_db=plan['loudness']['apply_db'], retries=retries, downmix=plan['downmix'], warnings=plan['warnings'], seconds=round(time.time() - t0, 1),
                        finished=datetime.now(timezone.utc).isoformat())
         if after['I'] is not None and abs(after['I'] - P.TARGET_LUFS) > 2.5: summary['warnings'] = summary['warnings'] + [f"final loudness {after['I']:.1f} LUFS is {after['I'] - P.TARGET_LUFS:+.1f} dB from the target"]
         with open(os.path.join(partial, 'metadata.json'), 'w', encoding='utf8') as f: json.dump(dict(book={k: v for k, v in book.items() if k != 'suggestion'}, result=summary, chapters=[{k: c[k] for k in ('file', 'title', 'start', 'end', 'duration', 'mode', 'tier')} for c in plan['chapters']]), f, indent=1, ensure_ascii=False)

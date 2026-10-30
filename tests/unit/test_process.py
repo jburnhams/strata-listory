@@ -229,3 +229,57 @@ def test_process_command_plan_run_status_and_failures(tmp_path, capsys, monkeypa
     with pytest.raises(SystemExit, match='no such book'): cli.main(['process', '999'])
     settings.save(dict(final_dir=str(tmp_path / 'elsewhere'))); assert settings.final_dir() == str(tmp_path / 'elsewhere')
     monkeypatch.setenv('APP_FINAL', str(tmp_path / 'env')); assert settings.final_dir() == str(tmp_path / 'env')
+
+
+# ---- clipping guard -----------------------------------------------------------------------------------------------------------
+
+def fake_book(tmp_path, mode='encode', **loud):
+    """A one-chapter plan whose building and measuring are faked, to test the clipping guard on its own."""
+    plan = dict(book_id=1, title='T', out_dir=str(tmp_path / 'final' / 'T'), chapter_source='x', downmix='average', duration=10.0, channels=1, in_bytes=100, warnings=[],
+                loudness=dict(I=-23.0, TP=-4.0, LRA=5.0, target=-18.0, gain_db=5.0, apply_db=3.0 if mode == 'encode' else 3.0, gain_steps=2, remaining_db=2.0, **loud),
+                chapters=[dict(title='C', file='01 - C.mp3', start=0.0, end=10.0, duration=10.0, mode=mode, tier='V5' if mode == 'encode' else 'copy', kbps=49, segments=[('/x.mp3', 0.0, None)])])
+    return dict(id=1, title='T', author='A'), plan
+
+
+def stub(monkeypatch, peaks):
+    built = []
+    monkeypatch.setattr(R.details, 'cover', lambda b: None)
+    monkeypatch.setattr(R, 'build_chapter', lambda book, plan, ch, n, out, cover: (open(out, 'wb').write(b'x'), built.append(dict(plan['loudness'])))[0])
+    monkeypatch.setattr(R, 'verify', lambda plan, files: dict(seconds=10.0, bytes=1, channels=True))
+    seq = iter(peaks)
+    monkeypatch.setattr(R.probe, 'measure_book', lambda segs, ch=1: dict(I=-18.0, TP=next(seq), LRA=5.0, silences=[]))
+    return built
+
+
+def test_a_book_that_comes_out_near_clipping_is_rebuilt_with_less_gain(tmp_path, monkeypatch):
+    book, plan = fake_book(tmp_path); built = stub(monkeypatch, [-0.4, -1.6])
+    res = R.execute(book, plan)
+    assert res['retries'] == 1 and len(built) == 2 and built[1]['apply_db'] == pytest.approx(3.0 - (-0.4 + 1.5 + 0.2)) and res['true_peak_after'] == -1.6        # took the excess (plus a little) off the gain
+    assert built[1]['remaining_db'] == pytest.approx(5.0 - built[1]['apply_db'], abs=0.01) and any('lowered' in w for w in res['warnings']) and os.path.isdir(plan['out_dir'])
+
+
+def test_copied_chapters_are_lowered_in_whole_steps(tmp_path, monkeypatch):
+    book, plan = fake_book(tmp_path, mode='copy'); built = stub(monkeypatch, [-0.2, -2.0])
+    res = R.execute(book, plan)
+    assert res['retries'] == 1 and built[1]['gain_steps'] == 2 - 1 and built[1]['apply_db'] == 1.5                                          # excess 1.5 dB -> one 1.5 dB step
+
+
+def test_a_book_that_cannot_be_made_safe_is_not_written(tmp_path, monkeypatch):
+    book, plan = fake_book(tmp_path); stub(monkeypatch, [-0.1, -0.2, -0.3])
+    with pytest.raises(probe.ToolError, match='clipping risk'): R.execute(book, plan)
+    assert not os.path.exists(plan['out_dir']) and not os.path.exists(plan['out_dir'] + '.partial')
+
+
+def test_a_clean_book_is_built_once(tmp_path, monkeypatch):
+    book, plan = fake_book(tmp_path); built = stub(monkeypatch, [-1.4]); res = R.execute(book, plan)
+    assert res['retries'] == 0 and len(built) == 1
+
+
+@needs_ffmpeg
+def test_real_quiet_book_with_loud_clicks_stays_clear_of_clipping(tmp_path):
+    d = tmp_path / 'Clicks'; d.mkdir()
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'aevalsrc=0.03*sin(2*PI*220*t)+if(lt(mod(t\\,10)\\,0.002)\\,0.95\\,0):d=60:s=44100', '-c:a', 'libmp3lame', '-b:a', '128k', str(d / '01.mp3')], check=True)
+    b = catalogue.add_book(title='Clicks', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
+    assert p['loudness']['gain_db'] > 6 and p['loudness']['TP'] > -2                                  # wants a big boost but the clicks leave no headroom
+    res = R.execute(b, p)
+    assert res['true_peak_after'] <= R.CLIP_CEILING and res['loudness_after'] > res['loudness_before'] + 3
