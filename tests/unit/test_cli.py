@@ -74,3 +74,30 @@ def test_backup_commands_and_corrupt_database(capsys, monkeypatch):
     with open(db.path(), 'wb') as f: f.write(b'junk' * 200)
     with pytest.raises(SystemExit, match='corrupt'): cli.main(['list'])
     assert cli.main(['restore']) == 0 and 'previous database' not in capsys.readouterr().out
+
+
+def test_scan_match_confirm_commands(capsys, tmp_path, monkeypatch):
+    from app import matcher
+    lib = tmp_path / 'lib'; (lib / 'Dune by Frank Herbert').mkdir(parents=True); (lib / 'Dune by Frank Herbert' / '01.mp3').write_text(''); (lib / 'Show S01E01.mp3').write_text('')
+    with pytest.raises(SystemExit, match='no audiobook folder'): cli.main(['scan'])
+    with pytest.raises(SystemExit, match='not a folder'): cli.main(['scan', str(tmp_path / 'nope')])
+    assert cli.main(['scan', str(lib), '--dry-run']) == 0 and '2 candidates (1 books, 1 radio); nothing stored' in capsys.readouterr().out
+    assert cli.main(['list', '--review', 'new']) == 0 and 'no books yet' in capsys.readouterr().out
+    cli.main(['set', 'library_dir', str(lib)]); capsys.readouterr()
+    assert cli.main(['scan']) == 0 and '2 added, 0 already known' in capsys.readouterr().out
+    assert cli.main(['scan']) == 0 and '0 added, 2 already known' in capsys.readouterr().out
+
+    class Source:
+        def search(self, t): return [matcher.candidate(dict(id='1', title='Dune', people=[dict(person=dict(name='Frank Herbert'), role=dict(name='Author'))]))]
+        def by_asin(self, a): return None
+    monkeypatch.setattr(matcher, 'AudiobookDB', Source)
+    assert cli.main(['match']) == 0 and 'tried 1: 1 suggestions, 0 without a match; 0 still to try' in capsys.readouterr().out
+    assert cli.main(['list', '--review', 'suggested']) == 0 and '[suggested -> Dune / Frank Herbert, 1.00]' in capsys.readouterr().out
+    assert cli.main(['list', '--kind', 'radio']) == 0 and 'Show' in capsys.readouterr().out
+    assert cli.main(['confirm', '2']) == 0 and 'suggested' not in capsys.readouterr().out
+    assert cli.main(['ignore', '1']) == 0 and '[ignored]' in capsys.readouterr().out
+    with pytest.raises(SystemExit, match='no such book'): cli.main(['confirm', '99'])
+
+    def broken(*a, **k): raise matcher.MatchError('no AudiobookDB API key')
+    monkeypatch.setattr(matcher, 'match_pending', broken)
+    with pytest.raises(SystemExit, match='no AudiobookDB API key'): cli.main(['match'])

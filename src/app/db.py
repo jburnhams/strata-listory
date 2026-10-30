@@ -9,6 +9,14 @@ SCHEMA = (
     '''CREATE TABLE books (
         id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, author TEXT NOT NULL DEFAULT '', narrator TEXT NOT NULL DEFAULT '', series TEXT NOT NULL DEFAULT '',
         series_position REAL, duration_seconds INTEGER, path TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'unlistened', added TEXT NOT NULL)''',
+    '''ALTER TABLE books ADD COLUMN kind TEXT NOT NULL DEFAULT 'book';
+       ALTER TABLE books ADD COLUMN review TEXT NOT NULL DEFAULT 'confirmed';
+       ALTER TABLE books ADD COLUMN asin TEXT NOT NULL DEFAULT '';
+       ALTER TABLE books ADD COLUMN file_count INTEGER;
+       ALTER TABLE books ADD COLUMN suggestion TEXT;
+       ALTER TABLE books ADD COLUMN match_score REAL;
+       CREATE UNIQUE INDEX books_path ON books(path) WHERE path <> '';
+       CREATE TABLE match_cache (key TEXT PRIMARY KEY, fetched TEXT NOT NULL, body TEXT NOT NULL)''',
 )       # schema version n is SCHEMA[n-1]; append new migrations, never edit old ones (PRAGMA user_version tracks the applied count)
 
 
@@ -44,6 +52,6 @@ def connect() -> sqlite3.Connection:
     v = c.execute('PRAGMA user_version').fetchone()[0]
     if v < len(SCHEMA):
         if v: backup.backup('pre-migration', conn=c)         # an existing database is about to change shape
-        for i in range(v, len(SCHEMA)): c.execute(SCHEMA[i])
+        for i in range(v, len(SCHEMA)): c.executescript(SCHEMA[i])
         c.execute(f'PRAGMA user_version={len(SCHEMA)}'); c.commit()
     return c

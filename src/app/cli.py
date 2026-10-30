@@ -1,7 +1,7 @@
 """Command line: `doctor` checks the environment, `add`/`list`/`show`/`edit`/`remove` manage the audiobook catalogue, `set` changes settings, `serve` starts the web server."""
-import argparse, importlib, json, sys
+import argparse, importlib, json, os, sys
 
-from app import __version__, backup, catalogue, db, settings
+from app import __version__, backup, catalogue, db, matcher, scan, settings
 
 CHECKS = (('fastapi', 'fastapi'), ('uvicorn', 'uvicorn'), ('pydantic', 'pydantic'))
 
@@ -20,7 +20,8 @@ def _fmt_duration(sec):
 
 def _line(b):
     series = f" [{b['series']} #{b['series_position']:g}]" if b.get('series') and b.get('series_position') is not None else (f" [{b['series']}]" if b.get('series') else '')
-    return f"  #{b['id']:<4} {b['title']}{series} - {b['author'] or 'unknown author'}  {_fmt_duration(b['duration_seconds'])}  ({b['status']})".rstrip()
+    flag = '' if b['review'] == 'confirmed' else f" [{b['review']}" + (f" -> {b['suggestion']['title']} / {b['suggestion']['author']}, {b['match_score']:.2f}" if b.get('suggestion') else '') + ']'
+    return f"  #{b['id']:<4} {b['title']}{series} - {b['author'] or 'unknown author'}  {_fmt_duration(b['duration_seconds'])}  ({b['status']}){flag}".rstrip()
 
 
 def _fields(args):
@@ -39,7 +40,7 @@ def cmd_add(args):
 
 
 def cmd_list(args):
-    books = catalogue.list_books(args.query or '', args.status)
+    books = catalogue.list_books(args.query or '', args.status, args.review, args.kind)
     if args.json: print(json.dumps(books, indent=1)); return 0
     if not books: print('  (no books yet: ./app add "Title" --author "Name")'); return 0
     for b in books: print(_line(b))
@@ -78,6 +79,30 @@ def cmd_restore(args):
     print(f'restored {path}' + (f'; the previous database is kept as {safety}' if safety else '')); return 0
 
 
+def cmd_scan(args):
+    root = args.folder or settings.library_dir() or sys.exit('no audiobook folder: ./app scan /path/to/audio, or ./app set library_dir /path/to/audio')
+    if not os.path.isdir(root): sys.exit(f'not a folder: {root}')
+    found = list(scan.scan(root))
+    kinds = {k: sum(f['kind'] == k for f in found) for k in catalogue.KINDS}
+    if args.dry_run: print(f"{len(found)} candidates ({kinds['book']} books, {kinds['radio']} radio); nothing stored (dry run)"); return 0
+    res = catalogue.add_scanned(found)
+    print(f"{len(found)} candidates ({kinds['book']} books, {kinds['radio']} radio): {res['added']} added, {res['existing']} already known"); return 0
+
+
+def cmd_match(args):
+    try: res = matcher.match_pending(args.limit)
+    except matcher.MatchError as e: sys.exit(str(e))
+    print(f"tried {res['tried']}: {res['suggested']} suggestions, {res['none']} without a match; {res['remaining']} still to try (matches by audiobookdb.org)"); return 0
+
+
+def cmd_confirm(args):
+    print(_line(_run(catalogue.confirm, args.id))); return 0
+
+
+def cmd_ignore(args):
+    print(_line(_run(catalogue.ignore, args.id))); return 0
+
+
 def cmd_set(args):
     if args.value is None: print(f'{args.key} = {settings.all_settings().get(args.key)}'); return 0
     try: settings.save({args.key: None if args.value == 'default' else args.value})
@@ -97,10 +122,14 @@ def main(argv=None):
         sp.add_argument('--title' if edit else 'title', **(dict(help='new title') if edit else {})); sp.add_argument('--author'); sp.add_argument('--narrator'); sp.add_argument('--series'); sp.add_argument('--series-position', dest='series_position', type=float)
         sp.add_argument('--duration-seconds', dest='duration_seconds', type=int); sp.add_argument('--path', help='where the audio files live'); sp.add_argument('--status', choices=catalogue.STATUSES); sp.add_argument('--json', action='store_true')
     ad = sub.add_parser('add', help='add a book to the catalogue'); book_fields(ad); ad.set_defaults(fn=cmd_add)
-    ls = sub.add_parser('list', help='list the catalogue'); ls.add_argument('query', nargs='?', help='match title, author, narrator or series'); ls.add_argument('--status', choices=catalogue.STATUSES); ls.add_argument('--json', action='store_true'); ls.set_defaults(fn=cmd_list)
+    ls = sub.add_parser('list', help='list the catalogue'); ls.add_argument('query', nargs='?', help='match title, author, narrator or series'); ls.add_argument('--status', choices=catalogue.STATUSES); ls.add_argument('--review', choices=catalogue.REVIEWS); ls.add_argument('--kind', choices=catalogue.KINDS); ls.add_argument('--json', action='store_true'); ls.set_defaults(fn=cmd_list)
     sh = sub.add_parser('show', help='show one book as JSON'); sh.add_argument('id', type=int); sh.set_defaults(fn=cmd_show)
     ed = sub.add_parser('edit', help='change fields of a book'); ed.add_argument('id', type=int); book_fields(ed, edit=True); ed.set_defaults(fn=cmd_edit)
     rm = sub.add_parser('remove', help='remove a book from the catalogue (audio files are never touched)'); rm.add_argument('id', type=int); rm.set_defaults(fn=cmd_remove)
+    sc = sub.add_parser('scan', help='find audiobooks in a folder (default: the library_dir setting) and add them as new, unreviewed books; never writes to the folder'); sc.add_argument('folder', nargs='?'); sc.add_argument('--dry-run', action='store_true'); sc.set_defaults(fn=cmd_scan)
+    mt = sub.add_parser('match', help='look scanned books up on audiobookdb.org and record suggestions'); mt.add_argument('--limit', type=int, default=25); mt.set_defaults(fn=cmd_match)
+    cf = sub.add_parser('confirm', help='accept a book, applying its suggestion if it has one'); cf.add_argument('id', type=int); cf.set_defaults(fn=cmd_confirm)
+    ig = sub.add_parser('ignore', help='mark a scanned item as not wanted'); ig.add_argument('id', type=int); ig.set_defaults(fn=cmd_ignore)
     sub.add_parser('backup', help='back up the catalogue database now').set_defaults(fn=cmd_backup)
     sub.add_parser('backups', help='list the automatic backups').set_defaults(fn=cmd_backups)
     rs = sub.add_parser('restore', help='replace the catalogue with a backup (default: the newest); the current one is kept'); rs.add_argument('backup', nargs='?', help='path from `backups`'); rs.set_defaults(fn=cmd_restore)
