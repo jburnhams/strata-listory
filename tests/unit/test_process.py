@@ -397,3 +397,35 @@ def test_file_names_include_a_chapter_name_only_when_there_is_one_and_always_fit
     n = P.file_name('001', 'Author', 'T' * 300, 'Short'); assert len(n.encode('utf8')) <= P.MAX_NAME_BYTES and 'Short' not in n          # no room for a chapter name at all: dropped, the title is cut
     n = P.file_name('001', 'Author', '‘' * 100, '’' * 100); assert len(n.encode('utf8')) <= P.MAX_NAME_BYTES                         # curly quotes are 3 bytes each: bytes, not characters, are counted
     assert n.encode('utf8').decode('utf8')                                                                                                       # and a cut never splits a character
+
+
+# ---- file order ---------------------------------------------------------------------------------------------------------------
+
+def test_natural_order_handles_single_and_double_digits_everywhere(tmp_path):
+    names = ['Track 2.mp3', 'Track 10.mp3', 'Track 1.mp3', 'Track 11.mp3', 'Track 9.mp3', 'track 3.MP3']
+    assert sorted(names, key=probe.natural_key) == ['Track 1.mp3', 'Track 2.mp3', 'track 3.MP3', 'Track 9.mp3', 'Track 10.mp3', 'Track 11.mp3']
+    assert sorted(['1-10.mp3', '1-2.mp3', '2-1.mp3', '01-3.mp3', 'a10b2.mp3', 'a10b10.mp3', 'a9b99.mp3'], key=probe.natural_key) == ['1-2.mp3', '01-3.mp3', '1-10.mp3', '2-1.mp3', 'a9b99.mp3', 'a10b2.mp3', 'a10b10.mp3']
+    for d in ('Disc 2', 'Disc 10', 'Disc 1'):
+        (tmp_path / d).mkdir()
+        for t in ('Track 10.mp3', 'Track 2.mp3', 'Track 1.mp3'): (tmp_path / d / t).write_bytes(b'x')
+    got = [os.path.relpath(f, tmp_path) for f in details.audio_files(str(tmp_path))]
+    assert got == [os.path.join(d, t) for d in ('Disc 1', 'Disc 2', 'Disc 10') for t in ('Track 1.mp3', 'Track 2.mp3', 'Track 10.mp3')]               # folders and files, 2 before 10
+
+
+def test_order_warning_compares_names_with_track_tags():
+    f = lambda name, track=None, disc=None: dict(path='/x/' + name, tags={k: v for k, v in (('track', track), ('disc', disc)) if v})
+    ok = [f('1.mp3', '1/3'), f('2.mp3', '2/3'), f('10.mp3', '3/3')]
+    assert P.order_warning(ok) == '' and P.order_warning(ok[:1]) == ''
+    bad = [f('a.mp3', '2/3'), f('b.mp3', '1/3'), f('c.mp3', '3/3')]
+    assert 'disagree about the order (first difference at file 1, a.mp3)' in P.order_warning(bad)
+    assert P.order_warning([f('a.mp3'), f('b.mp3', '1')]) == '' and P.order_warning([f('a.mp3', '1'), f('b.mp3', '1')]) == ''                          # tags missing or not unique: nothing to compare
+    assert P.order_warning([f('a.mp3', '5', '1'), f('b.mp3', '1', '2')]) == '' and 'disagree' in P.order_warning([f('a.mp3', '1', '2'), f('b.mp3', '5', '1')])      # disc first, then track
+
+
+@needs_ffmpeg
+def test_a_book_of_unpadded_files_is_planned_in_the_right_order(tmp_path):
+    d = tmp_path / 'Unpadded'; d.mkdir()
+    for i in (1, 2, 3, 9, 10, 11, 12):
+        synth(str(d / f'{i}.mp3'), 700, 'tone', kbps=16, rate=8000, title=f'Title {i}')
+    b = catalogue.add_book(title='Unpadded', author='A', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
+    assert [c['title'] for c in p['chapters']] == [f'Title {i}' for i in (1, 2, 3, 9, 10, 11, 12)] and [os.path.basename(c['segments'][0][0]) for c in p['chapters']] == [f'{i}.mp3' for i in (1, 2, 3, 9, 10, 11, 12)]

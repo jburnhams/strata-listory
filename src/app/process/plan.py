@@ -67,6 +67,15 @@ def file_name(label: str, author: str, title: str, chapter: str) -> str:
     return f'{label} - {a} - {t}' + (f' - {c}' if c else '') + '.mp3'
 
 
+def order_warning(files: list[dict]) -> str:
+    """files are in the order of their names (natural number order: 2 before 10). If every file also has a unique track (and disc) tag and those say a different order, say so: the plan uses the names, but a person should look."""
+    def num(v): m = re.match(r'\s*(\d+)', str(v or '')); return int(m[1]) if m else None
+    keys = [(num(f['tags'].get('disc') or f['tags'].get('discnumber')) or 1, num(f['tags'].get('track'))) for f in files]
+    if len(files) < 2 or any(k[1] is None for k in keys) or len(set(keys)) != len(keys) or keys == sorted(keys): return ''
+    i = next(i for i, (a, b) in enumerate(zip(keys, sorted(keys))) if a != b)
+    return f"the file names and the track tags disagree about the order (first difference at file {i + 1}, {os.path.basename(files[i]['path'])}); the order of the names was used"
+
+
 def timeline(files: list[dict]) -> list[tuple[float, float, dict]]:
     out, t = [], 0.0
     for f in files: out.append((t, t + f['duration'], f)); t += f['duration']
@@ -249,6 +258,7 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None) -> dict:
     if not paths: raise probe.ToolError(f"no audio files in {book['path']}")
     files = [probe.probe_file(p) for p in paths]; by_path = {f['path']: f for f in files}; tl = timeline(files)
     warnings = list(warnings_pre)
+    if (w := order_warning(files)): warnings.append(w)
     m = probe.measure_book([(f['path'], 0.0, None) for f in files], max(f['channels'] for f in files))
     downmix = 'average'
     if m.get('mono_I') is not None and m['mono_I'] < m['I'] - 3:

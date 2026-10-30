@@ -22,7 +22,7 @@ def audio_files(path: str) -> list[str]:
     if os.path.isfile(path): return [path]
     out = []
     for root, dirs, files in os.walk(path):
-        dirs[:] = sorted(d for d in dirs if not d.startswith(('.', '@')))
+        dirs[:] = sorted((d for d in dirs if not d.startswith(('.', '@'))), key=_natural)                # Disc 2 before Disc 10
         out += [os.path.join(root, f) for f in sorted(files, key=_natural) if scan.is_audio(f)]
         if len(out) >= MAX_FILES: break
     return out[:MAX_FILES]
