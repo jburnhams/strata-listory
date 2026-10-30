@@ -123,17 +123,16 @@ def _plan_line(p):
     tiers = {}
     for c in p['chapters']: tiers[c['tier']] = tiers.get(c['tier'], 0) + 1
     t = ' '.join(f'{k}x{v}' for k, v in sorted(tiers.items()))
-    return f"#{p['book_id']:<5} {p['title'][:38]:38} {p['duration'] / 3600:5.1f} h  {len(p['chapters']):3} ch ({p['chapter_source']})  {t:14} {p['loudness']['I']:6.1f} -> {settings_target():.0f} LUFS  {_mb(p['in_bytes'])} -> ~{_mb(p['est_bytes'])}" + (f"  !! {'; '.join(p['warnings'])}" if p['warnings'] else '')
-
-
-def settings_target():
-    from app.process import plan as P
-    return P.TARGET_LUFS
+    return f"#{p['book_id']:<5} {p['title'][:38]:38} {p['duration'] / 3600:5.1f} h  {len(p['chapters']):3} ch ({p['chapter_source']})  {t:14} {p['loudness']['I']:6.1f} -> {p['loudness']['I'] + p['loudness']['apply_db']:6.1f} LUFS  {_mb(p['in_bytes'])} -> ~{_mb(p['est_bytes'])}" + (f"  !! {'; '.join(p['warnings'])}" if p['warnings'] else '')
 
 
 def _books_for(args):
-    if args.ids: return [_run(catalogue.get_book, i) for i in args.ids]
-    return catalogue.pending_process(args.limit, args.include_unconfirmed)
+    if args.ids:
+        books = [_run(catalogue.get_book, i) for i in args.ids]
+        for b in books:
+            if b['review'] != 'confirmed': print(f"note: #{b['id']} {b['title']} is not confirmed ({b['review']}); processing it because you named it")
+        return books
+    return catalogue.pending_process(args.limit)
 
 
 def _one_plan(b, final):
@@ -146,7 +145,7 @@ def cmd_process(args):
     from app.process import probe, run as R
     final = os.path.abspath(os.path.expanduser(args.out)) if args.out else settings.final_dir()
     books = _books_for(args)
-    if not books: print('nothing to process (confirm some books first, or use --include-unconfirmed)'); return 0
+    if not books: print('nothing to process: only confirmed books with a title and author are picked up automatically (name book ids to process others)'); return 0
     for b in books:
         if not b['path'] or not os.path.exists(b['path']) or not fs.reachable(b['path']): sys.exit(f"#{b['id']} {b['title']}: its files are not available at {b['path'] or '(no path)'}")
     plans, failed = {}, 0
@@ -247,7 +246,7 @@ def main(argv=None):
     sc = sub.add_parser('scan', help='find audiobooks in a folder (default: the library_dir setting) and add them as new, unreviewed books; never writes to the folder'); sc.add_argument('folder', nargs='?'); sc.add_argument('--dry-run', action='store_true'); sc.set_defaults(fn=cmd_scan)
     mt = sub.add_parser('match', help='look scanned books up with the metadata providers and record suggestions'); mt.add_argument('--limit', type=int, default=25); mt.add_argument('--providers', help='comma separated, in order (default: the match_providers setting)'); mt.set_defaults(fn=cmd_match)
     ul = sub.add_parser('use-library', help='switch the audiobook folder (for example to the local copy), moving every book path with it'); ul.add_argument('folder'); ul.add_argument('--from', dest='old', help='the folder the paths currently live under (default: library_dir)'); ul.add_argument('--force', action='store_true', help='switch even if some books are missing in the new folder'); ul.set_defaults(fn=cmd_use_library)
-    pr = sub.add_parser('process', help='turn books into the final library: mono mp3 chapters, normalised loudness (--plan shows what would happen)'); pr.add_argument('ids', nargs='*', type=int, help='book ids (default: confirmed books not yet processed)'); pr.add_argument('--plan', action='store_true', help='measure and print the plan, change nothing'); pr.add_argument('--json', action='store_true'); pr.add_argument('--limit', type=int, default=5); pr.add_argument('--jobs', type=int, default=3); pr.add_argument('--force', action='store_true', help='replace an existing output folder'); pr.add_argument('--include-unconfirmed', action='store_true'); pr.add_argument('--out', help='final library folder (default: the final_dir setting, ~/audiobooks)'); pr.set_defaults(fn=cmd_process)
+    pr = sub.add_parser('process', help='turn books into the final library: mono mp3 chapters, normalised loudness (--plan shows what would happen)'); pr.add_argument('ids', nargs='*', type=int, help='book ids (default: confirmed books not yet processed)'); pr.add_argument('--plan', action='store_true', help='measure and print the plan, change nothing'); pr.add_argument('--json', action='store_true'); pr.add_argument('--limit', type=int, default=5); pr.add_argument('--jobs', type=int, default=3); pr.add_argument('--force', action='store_true', help='replace an existing output folder'); pr.add_argument('--out', help='final library folder (default: the final_dir setting, ~/audiobooks)'); pr.set_defaults(fn=cmd_process)
     sub.add_parser('process-status', help='how much of the library is processed').set_defaults(fn=cmd_process_status)
     mr = sub.add_parser('mirror', help='rewrite metadata.json in the data mirror (<data_dir>/library) for confirmed books'); mr.add_argument('--all', action='store_true', help='every book, not only confirmed ones'); mr.set_defaults(fn=cmd_mirror)
     en = sub.add_parser('enrich', help='fetch Hardcover ratings, reviews and other community data for confirmed books'); en.add_argument('id', nargs='?', type=int, help='one book (refetched even if recent); default: confirmed books without recent data'); en.add_argument('--limit', type=int, default=25); en.set_defaults(fn=cmd_enrich)

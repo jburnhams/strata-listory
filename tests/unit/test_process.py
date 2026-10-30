@@ -60,9 +60,16 @@ def test_out_dir_for():
 
 def test_tiers_gain_and_copy_rules():
     assert P.pick_tier(-30, 0.2) == 'V5' and P.pick_tier(-10, 0.2) == 'V5' and P.pick_tier(-30, 0.0) == 'V4' and P.pick_tier(-20, 0.0) == 'V3'
-    g = P.gain_for(-23.4, -1.0, False); assert g['db'] == 5.4 and g['apply_db'] == 5.4 + 0 - 0 - 2.9 + 0 or g['apply_db'] == pytest.approx(min(5.4, -0.5 + 6))
-    g = P.gain_for(-22.1, -3.8, True); assert (g['steps'], g['apply_db']) == (1, 1.5)                    # headroom 2.3 dB: one lossless step
-    assert P.gain_for(-14.0, -1.0, True)['steps'] == -3 and P.gain_for(-18.2, -3.0, True)['steps'] == 0 and P.gain_for(-40, -20, False)['warn']
+    inside = P.decide_gain(-20.0, -3.0, True); assert (inside['apply_db'], inside['steps'], inside['reencode']) == (0.0, 0, False) and 'tolerance' in inside['why']      # 2 dB quiet: left alone
+    assert P.decide_gain(-21.0, -3.0, False)['apply_db'] == 0.0 and P.decide_gain(-16.0, -3.0, False)['apply_db'] == 0.0                                  # edges of the band: 3 dB quiet, 2 dB loud
+    loud = P.decide_gain(-14.0, -1.0, True); assert (loud['steps'], loud['apply_db'], loud['reencode']) == (-3, -4.5, False)                              # too loud: lossless attenuation
+    assert P.decide_gain(-14.0, -1.0, False)['apply_db'] == -4.0
+    lift = P.decide_gain(-25.0, -3.0, True); assert (lift['steps'], lift['apply_db'], lift['reencode']) == (1, 1.5, False) or lift['reencode']             # 7 dB quiet, 1.5 dB of headroom: not enough for a lossless fix
+    assert lift['reencode'] is True and lift['apply_db'] == pytest.approx(min(7.0, 1.5 + P.LIMIT_DB))
+    ok_lossless = P.decide_gain(-23.5, -12.0, True); assert (ok_lossless['steps'], ok_lossless['reencode']) == (4, False) and ok_lossless['apply_db'] == 6.0     # plenty of headroom: lossless lift to within tolerance
+    enc = P.decide_gain(-25.0, -3.0, False); assert enc['reencode'] is False and enc['apply_db'] == pytest.approx(min(7.0, 1.5 + P.LIMIT_DB))             # already encoding: the limiter allowance, never past it
+    peaky = P.decide_gain(-30.0, 0.0, False); assert peaky['apply_db'] == pytest.approx(P.TP_LIMIT * -1 * 0 + (P.TP_LIMIT - 0.0) + P.LIMIT_DB) and peaky['apply_db'] < peaky['db']      # peaks leave little room: stays quieter
+    assert P.decide_gain(-50.0, 5.0, False)['apply_db'] == 0.0
     ok = dict(codec='mp3', channels=1, bit_rate=64.0, sample_rate=44100)
     by = {'a': ok, 'b': dict(ok), 'c': dict(ok, bit_rate=128.0), 'd': dict(ok, channels=2), 'e': dict(ok, sample_rate=22050), 'f': dict(ok, codec='aac')}
     assert P.copyable([('a', 0, None), ('b', 0, None)], by) and not any(P.copyable([('a', 0, None), (k, 0, None)], by) for k in 'cdef')
@@ -159,7 +166,6 @@ def test_small_mono_mp3s_are_cut_and_regained_without_re_encoding(tmp_path, monk
     infos = [probe.probe_file(os.path.join(out, n)) for n in names]
     assert len(names) == 3 and all(i['bit_rate'] < 70 and i['sample_rate'] == 44100 for i in infos)          # still the 64 kbps frames
     assert res['loudness_after'] > res['loudness_before'] + 1 and abs(sum(i['duration'] for i in infos) - p['duration']) < 1
-    assert 'replaygain_album_gain' in infos[0]['tags'] or p['loudness']['remaining_db'] == 0.0
     assert res['out_bytes'] <= res['in_bytes'] * 1.05                                         # nothing re-encoded: about the same size
 
 
@@ -179,24 +185,24 @@ def test_verify_catches_a_length_mismatch(tmp_path):
 
 
 def test_tags_and_filter_chain():
-    plan = dict(chapters=[1, 2], channels=2, downmix='left', loudness=dict(apply_db=3.5, TP=-4.0, remaining_db=2.0))
+    plan = dict(chapters=[1, 2], channels=2, downmix='left', loudness=dict(apply_db=3.5, TP=-4.0))
     t = R.tags(dict(title='B', author='A', narrator='', series='S', series_position=2.0), plan, dict(title='Ch'), 1)
     assert ['-metadata', 'title=Ch'] == t[0:2] and 'track=1/2' in t and 'grouping=S #2' in t and not any(x.startswith('composer') for x in t)
-    assert 'replaygain_album_gain=+2.00 dB' in t and any(x.startswith('replaygain_album_peak=0.9') for x in t)                # the part of the gain that lossless/limited gain could not apply
-    assert not any('replaygain' in x for x in R.tags(dict(title='B'), dict(chapters=[1], loudness=dict(apply_db=0.0, TP=-3.0, remaining_db=0.0)), dict(title='C'), 1))
+    assert not any('replaygain' in x for x in t)                                                                               # no compensation tags: a book that could not be lifted stays slightly quiet
     f = R.filter_chain(plan, {}, 24000); assert f.startswith('pan=mono|c0=c0,volume=3.5dB,alimiter=') and f.endswith('aresample=24000')
     assert R.filter_chain(dict(channels=1, downmix='average', loudness=dict(apply_db=0.0)), {}, 44100).startswith('alimiter=')
 
 
 def test_catalogue_processed_records():
-    a, b = catalogue.add_book(title='A', path='/x/a'), catalogue.add_book(title='B', path='/x/b'); catalogue.add_book(title='Hand')
+    a, b = catalogue.add_book(title='A', author='X', path='/x/a'), catalogue.add_book(title='B', author='X', path='/x/b'); catalogue.add_book(title='Hand', author='X')
     assert [x['title'] for x in catalogue.pending_process(10)] == ['A', 'B']
     catalogue.set_processed(a['id'], dict(status='done', finished='2026-10-30T00:00:00+00:00', in_bytes=100, out_bytes=40, out_seconds=3600.0))
     catalogue.set_processed(b['id'], dict(status='failed', finished='2026-10-30T00:00:00+00:00', error='x'))
     assert [x['title'] for x in catalogue.pending_process(10)] == ['B'] and catalogue.get_processed(a['id'])['out_bytes'] == 40 and catalogue.get_processed(999) is None
     assert catalogue.processed_summary() == dict(done=1, failed=1, in_bytes=100, out_bytes=40, seconds=3600.0)
     catalogue.add_scanned([dict(path='/x/c', title='C', author='', narrator='', series_position=None, asin='', kind='book', file_count=1)])
-    assert [x['title'] for x in catalogue.pending_process(10, include_unconfirmed=True)] == ['B', 'C']
+    catalogue.add_book(title='No author', path='/x/d'); catalogue.add_book(title='', path='/x/e') if False else None
+    assert [x['title'] for x in catalogue.pending_process(10)] == ['B']                                                          # scanned (unconfirmed) books and ones without an author are not picked up
     catalogue.remove_book(a['id']); assert catalogue.get_processed(a['id']) is None
 
 
@@ -210,7 +216,7 @@ def test_process_command_plan_run_status_and_failures(tmp_path, capsys, monkeypa
     b = make_book(tmp_path, 'Cli', 1, seconds=40)
     assert cli.main(['process', '--plan', '--out', str(final)]) == 0
     out = capsys.readouterr().out
-    assert f"#{b['id']}" in out and 'Cli' in out and '-> -18 LUFS' in out and '1 books,' in out and not final.exists()           # a plan changes nothing
+    assert f"#{b['id']}" in out and 'Cli' in out and '-> ' in out and 'LUFS' in out and '1 books,' in out and not final.exists()           # a plan changes nothing
     assert cli.main(['process', '--json', '--out', str(final)]) == 0 and json.loads(capsys.readouterr().out)[str(b['id'])]['title'] == 'Cli'
     assert cli.main(['process-status']) == 0 and '0 books processed' in capsys.readouterr().out
     assert cli.main(['process', '--jobs', '1', '--out', str(final)]) == 0
@@ -236,7 +242,7 @@ def test_process_command_plan_run_status_and_failures(tmp_path, capsys, monkeypa
 def fake_book(tmp_path, mode='encode', **loud):
     """A one-chapter plan whose building and measuring are faked, to test the clipping guard on its own."""
     plan = dict(book_id=1, title='T', out_dir=str(tmp_path / 'final' / 'T'), chapter_source='x', downmix='average', duration=10.0, channels=1, in_bytes=100, warnings=[],
-                loudness=dict(I=-23.0, TP=-4.0, LRA=5.0, target=-18.0, gain_db=5.0, apply_db=3.0 if mode == 'encode' else 3.0, gain_steps=2, remaining_db=2.0, **loud),
+                loudness=dict(I=-23.0, TP=-4.0, LRA=5.0, target=-18.0, gain_db=5.0, apply_db=3.0, gain_steps=2, decision='x', reencoded=False, **loud),
                 chapters=[dict(title='C', file='01 - C.mp3', start=0.0, end=10.0, duration=10.0, mode=mode, tier='V5' if mode == 'encode' else 'copy', kbps=49, segments=[('/x.mp3', 0.0, None)])])
     return dict(id=1, title='T', author='A'), plan
 
@@ -255,7 +261,7 @@ def test_a_book_that_comes_out_near_clipping_is_rebuilt_with_less_gain(tmp_path,
     book, plan = fake_book(tmp_path); built = stub(monkeypatch, [-0.4, -1.6])
     res = R.execute(book, plan)
     assert res['retries'] == 1 and len(built) == 2 and built[1]['apply_db'] == pytest.approx(3.0 - (-0.4 + 1.5 + 0.2)) and res['true_peak_after'] == -1.6        # took the excess (plus a little) off the gain
-    assert built[1]['remaining_db'] == pytest.approx(5.0 - built[1]['apply_db'], abs=0.01) and any('lowered' in w for w in res['warnings']) and os.path.isdir(plan['out_dir'])
+    assert any('lowered' in w for w in res['warnings']) and os.path.isdir(plan['out_dir'])
 
 
 def test_copied_chapters_are_lowered_in_whole_steps(tmp_path, monkeypatch):
@@ -281,8 +287,9 @@ def test_real_quiet_book_with_loud_clicks_stays_clear_of_clipping(tmp_path):
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'aevalsrc=0.03*sin(2*PI*220*t)+if(lt(mod(t\\,10)\\,0.002)\\,0.95\\,0):d=60:s=44100', '-c:a', 'libmp3lame', '-b:a', '128k', str(d / '01.mp3')], check=True)
     b = catalogue.add_book(title='Clicks', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
     assert p['loudness']['gain_db'] > 6 and p['loudness']['TP'] > -2                                  # wants a big boost but the clicks leave no headroom
+    assert any('below the target' in w for w in p['warnings'])                                         # and says it will stay quiet
     res = R.execute(b, p)
-    assert res['true_peak_after'] <= R.CLIP_CEILING and res['loudness_after'] > res['loudness_before'] + 3
+    assert res['true_peak_after'] <= R.CLIP_CEILING and res['loudness_after'] >= res['loudness_before']      # no clipping, even though that leaves it well under the target
 
 
 @needs_ffmpeg
@@ -291,3 +298,16 @@ def test_plan_warns_when_the_source_already_clips(tmp_path):
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=f=220:d=30', '-af', 'volume=24,aeval=clip(val(0)\\,-1\\,1)', '-c:a', 'libmp3lame', '-b:a', '128k', str(d / '01.mp3')], check=True)       # pushed past full scale
     b = catalogue.add_book(title='Hot', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
     assert p['loudness']['TP'] >= -0.2 and any('full scale' in w for w in p['warnings'])
+
+
+@needs_gain
+def test_a_small_mono_mp3_that_is_too_quiet_for_lossless_gain_is_re_encoded(tmp_path):
+    d = tmp_path / 'Quiet'; d.mkdir()
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'aevalsrc=0.02*sin(2*PI*220*t)+if(lt(mod(t\\,10)\\,0.002)\\,0.45\\,0):d=60:s=44100', '-ac', '1', '-c:a', 'libmp3lame', '-b:a', '64k', str(d / '01.mp3')], check=True)       # 64 kbps mono (copy-eligible), quiet speech with loud clicks
+    b = catalogue.add_book(title='Quiet', author='A', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
+    assert p['loudness']['reencoded'] is True and [c['mode'] for c in p['chapters']] == ['encode'] and any('re-encoded although' in w for w in p['warnings'])
+    res = R.execute(b, p); assert res['reencoded'] is True and res['true_peak_after'] <= R.CLIP_CEILING and res['loudness_after'] > res['loudness_before'] + 3
+    ok = tmp_path / 'Fine'; ok.mkdir()
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=f=220:d=60', '-af', 'volume=1.5', '-ac', '1', '-c:a', 'libmp3lame', '-b:a', '64k', str(ok / '01.mp3')], check=True)
+    q = P.make_plan(catalogue.add_book(title='Fine', author='A', path=str(ok)), str(tmp_path / 'final'))
+    assert q['loudness']['apply_db'] == 0.0 and [c['mode'] for c in q['chapters']] == ['copy'] and 'tolerance' in q['loudness']['decision']      # -18.9 LUFS: inside the band, copied untouched

@@ -222,10 +222,10 @@ def get_processed(book_id: int) -> dict | None:
     finally: c.close()
 
 
-def pending_process(limit: int, include_unconfirmed: bool = False) -> list[dict]:
-    """Books not yet processed successfully: confirmed books of kind `book` (or every scanned book with `include_unconfirmed`) that have a path."""
-    cond = "review IN ('confirmed','new','suggested')" if include_unconfirmed else "review='confirmed'"; c = db.connect()
-    try: return [_row(r) for r in c.execute(f"SELECT {COLUMNS} FROM books b WHERE {cond} AND kind='book' AND path<>'' AND NOT EXISTS (SELECT 1 FROM processed p WHERE p.book_id=b.id AND p.status='done') ORDER BY id LIMIT ?", (limit,))]
+def pending_process(limit: int) -> list[dict]:
+    """Books worth processing and not done yet: confirmed by the user, a book (not radio), with a path, a title and an author. Nothing else is processed unless asked for by id."""
+    c = db.connect()
+    try: return [_row(r) for r in c.execute(f"SELECT {COLUMNS} FROM books b WHERE review='confirmed' AND kind='book' AND path<>'' AND title<>'' AND author<>'' AND NOT EXISTS (SELECT 1 FROM processed p WHERE p.book_id=b.id AND p.status='done') ORDER BY id LIMIT ?", (limit,))]
     finally: c.close()
 
 

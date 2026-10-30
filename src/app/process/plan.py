@@ -2,7 +2,7 @@
 
 Chapters, first source that exists wins: chapters embedded in a single file; the chapter list of the Audible metadata file (when it matches the audio length); the files themselves (tiny ones merged into a neighbour); pauses in a single long file. Chapters longer than MAX_CHAPTER are split again at pauses.
 Each chapter is then `copy` (mono mp3 source at or below COPY_MAX_KBPS: cut on frame boundaries and re-gained losslessly, never re-encoded) or `encode` (LAME VBR, mono, with a tier chosen from how much high-frequency content the chapter really has).
-Loudness is one gain per book towards TARGET_LUFS, so chapters keep their level relative to each other."""
+Loudness is one gain per book towards TARGET_LUFS (so chapters keep their level relative to each other), only when the book is outside a tolerance band, and never at the price of clipping: a book may stay slightly quiet."""
 import math, os, re
 
 from app import details
@@ -19,7 +19,8 @@ TIERS = {'V5': dict(q=5, rate=24000, kbps=49), 'V4': dict(q=4, rate=32000, kbps=
 SAMPLE = (90.0, 3)                          # the spectrum is measured on up to 3 stretches of 90 s per chapter, not all of it
 BUSY = 0.02                                 # a chapter silent less than this fraction of the time is music-like (calibrated 2026-10-30 on 30 + 30 real excerpts: speech median 19% silent, only 1 of 30 under 2%; music-heavy folders median 0%, 27 of 30 under 2%)
 MUSIC_HF = -24.0                            # music-like chapters: energy above 10 kHz relative to the total (dB) at or below this -> V4 (32 kHz), above -> V3 (44.1 kHz). That ratio alone does not separate speech (median -25, p90 -21) from music (median -23, p90 -19), so it only chooses between the two music tiers
-LIMIT_DB = 6.0                              # encoded chapters may be boosted up to this far past the true-peak headroom, the limiter taking the few peaks that stick out
+LIMIT_DB = 3.0                              # encoded chapters may be boosted up to this far past the true-peak headroom, the limiter taking the few peaks that stick out (kept small: quieter is better than squashed or clipped)
+QUIET_TOL, LOUD_TOL = 3.0, 2.0              # a book at most this many dB quieter / louder than the target is left exactly as it is; outside that band it is normalised, even if it would otherwise be copied
 
 
 def clean_name(s: str) -> str:
@@ -109,13 +110,17 @@ def copyable(segs: list[tuple], by_path: dict) -> bool:
     return all(f['codec'] == 'mp3' and f['channels'] == 1 and f['bit_rate'] <= COPY_MAX_KBPS for f in fs) and len({f['sample_rate'] for f in fs}) == 1
 
 
-def gain_for(i: float, tp: float, has_copy: bool) -> dict:
-    """One gain for the whole book towards TARGET_LUFS. Copied chapters can only take whole 1.5 dB steps and never past the true-peak limit; encoded chapters can take any gain, up to LIMIT_DB beyond the headroom (peaks above it are limited). A book with both uses the copy gain so all its chapters stay level with each other. `apply_db` is what every chapter gets."""
+def decide_gain(i: float, tp: float, any_copy: bool) -> dict:
+    """The one gain for the whole book. Inside the tolerance band (QUIET_TOL below to LOUD_TOL above the target) nothing is changed. Louder than that: attenuated (lossless in 1.5 dB steps for copied chapters). Quieter than that: boosted, but never past the true-peak headroom for copied chapters; when that still leaves the book more than QUIET_TOL short, the whole book is re-encoded (`reencode`) so a limiter can add up to LIMIT_DB beyond the headroom. A book that still ends up short stays slightly quiet: no tags, no compensation. `apply_db` is what every chapter gets."""
     want = TARGET_LUFS - i; headroom = TP_LIMIT - tp
-    steps = round(want / GAIN_STEP)
-    if steps > 0: steps = min(steps, max(0, math.floor(headroom / GAIN_STEP)))
-    apply = steps * GAIN_STEP if has_copy else min(want, headroom + LIMIT_DB)
-    return dict(db=round(want, 2), steps=steps, apply_db=round(apply, 2), warn=('large gain (%+.1f dB)' % want) if abs(want) > 12 else '')
+    out = dict(db=round(want, 2), steps=0, apply_db=0.0, reencode=False, why='within tolerance, left as it is')
+    if -LOUD_TOL <= want <= QUIET_TOL: return out
+    if want < 0:
+        steps = round(want / GAIN_STEP); out.update(steps=steps if any_copy else 0, apply_db=round(steps * GAIN_STEP if any_copy else want, 2), why='too loud: attenuated'); return out
+    steps = max(0, min(round(want / GAIN_STEP), math.floor(headroom / GAIN_STEP)))
+    if any_copy and want - steps * GAIN_STEP <= QUIET_TOL: out.update(steps=steps, apply_db=round(steps * GAIN_STEP, 2), why='too quiet: lifted losslessly'); return out
+    out.update(steps=0, apply_db=round(max(0.0, min(want, headroom + LIMIT_DB)), 2), reencode=any_copy, why='too quiet: lifted with a limiter' + (' (re-encoded, because lossless gain was not enough)' if any_copy else ''))
+    return out
 
 
 def out_dir_for(book: dict, final_dir: str) -> str:
@@ -144,11 +149,17 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None) -> dict:
         if copyable(segs, by_path): c.update(mode='copy', tier='copy', kbps=round(max(by_path[p]['bit_rate'] for p, _, _ in segs), 1))
         else:
             sp = probe.spectrum([sg for a, b in sample_ranges(c['start'], c['end']) for sg in segments(tl, a, b)]); t = pick_tier(sp['hf_db'], sp['pause_frac']); c.update(mode='encode', tier=t, kbps=TIERS[t]['kbps'], hf_db=sp['hf_db'], pause_frac=sp['pause_frac'])
-    g = gain_for(m['I'], m['TP'], any(c['mode'] == 'copy' for c in chapters))
-    if g['warn']: warnings.append(g['warn'])
-    remaining = round(g['db'] - g['apply_db'], 2)
-    if abs(remaining) >= 0.4: warnings.append(f"peaks limit the change to {g['apply_db']:+.1f} dB of the {g['db']:+.1f} dB wanted; a ReplayGain tag carries the other {remaining:+.1f} dB")
+    g = decide_gain(m['I'], m['TP'], any(c['mode'] == 'copy' for c in chapters))
+    if g['reencode']:                                       # lossless gain could not make the book loud enough: re-encode all of it
+        for c in chapters:
+            if c['mode'] == 'copy':
+                sp = probe.spectrum([sg for a, b in sample_ranges(c['start'], c['end']) for sg in segments(tl, a, b)]); t = pick_tier(sp['hf_db'], sp['pause_frac'])
+                c.update(mode='encode', tier=t, kbps=TIERS[t]['kbps'], hf_db=sp['hf_db'], pause_frac=sp['pause_frac'])
+        warnings.append('re-encoded although the source is small enough to copy, because it needs normalising and lossless gain cannot reach it')
+    if abs(g['db']) > 12: warnings.append('large gain (%+.1f dB)' % g['db'])
+    short = round(g['db'] - g['apply_db'], 1)
+    if g['db'] > QUIET_TOL and short > 0.5: warnings.append(f"ends {short:.1f} dB below the target because its peaks leave no more room")
     in_bytes = sum(os.path.getsize(f['path']) for f in files); est = sum(c['duration'] * c['kbps'] * 1000 / 8 for c in chapters)
     return dict(book_id=book['id'], title=book['title'], author=book.get('author', ''), out_dir=out_dir_for(book, final_dir), chapter_source=source, downmix=downmix, duration=round(sum(f['duration'] for f in files), 1),
-                loudness=dict(I=m['I'], TP=m['TP'], LRA=m['LRA'], target=TARGET_LUFS, gain_db=g['db'], apply_db=g['apply_db'], gain_steps=g['steps'], remaining_db=remaining if abs(remaining) >= 0.4 else 0.0), chapters=chapters, warnings=warnings,
+                loudness=dict(I=m['I'], TP=m['TP'], LRA=m['LRA'], target=TARGET_LUFS, gain_db=g['db'], apply_db=g['apply_db'], gain_steps=g['steps'], decision=g['why'], reencoded=g['reencode']), chapters=chapters, warnings=warnings,
                 in_bytes=in_bytes, est_bytes=int(est), in_files=len(files), channels=max(f['channels'] for f in files))

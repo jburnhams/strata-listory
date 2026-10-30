@@ -2,6 +2,8 @@
 
 ## 2026-10-30: the processor
 
+- Decided with the user (later the same day): process only confirmed books with a title and author; loudness has a tolerance band (3 dB quiet / 2 dB loud around -18 LUFS) outside which a book is normalised even if it would otherwise be copied; quieter is better than clipping or compensating, so the earlier idea of ReplayGain tags for what gain could not do was dropped, and the limiter allowance was cut from 6 dB to 3 dB.
+
 - Built `./app process` after agreeing the design with the user: mono, LAME VBR tiers by content, -18 LUFS per book, copy-as-is for mono mp3 up to 96 kbps (lossless cut and `mp3gain`), chapters from embedded/Audible/file/pause sources.
 - Timings on beelink: LAME V5 about 550x realtime per core; `ebur128` about 1000x (the `loudnorm` filter is 16x slower, so it is not used for measuring); a whole book takes 1.5 to 2 minutes. Measuring the spectrum of whole chapters was the slow part, so it samples three 90 s stretches per chapter.
 - Calibration (30 speech and 30 music-heavy excerpts): silence fraction separates them (speech median 19%, music 0%); energy above 10 kHz does not (speech median -25 dB with p90 -21, music median -23, p90 -19). First guess thresholds on the HF ratio put every speech chapter in the top tier, which is why tiers are now chosen on pauses first.

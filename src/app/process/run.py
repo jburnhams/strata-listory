@@ -24,8 +24,6 @@ def _cover_small(src: str | None, tmp: str) -> str | None:
 def tags(book: dict, plan: dict, ch: dict, n: int) -> list[str]:
     md = dict(title=ch['title'], album=book['title'], artist=book.get('author') or '', album_artist=book.get('author') or '', composer=book.get('narrator') or '', track=f'{n}/{len(plan["chapters"])}', genre='Audiobook')
     if book.get('series'): md['grouping'] = book['series'] + (f" #{book['series_position']:g}" if book.get('series_position') is not None else '')
-    rem = plan['loudness'].get('remaining_db') or 0.0
-    if rem: md['replaygain_album_gain'] = f'{rem:+.2f} dB'; md['replaygain_album_peak'] = f"{10 ** ((plan['loudness']['TP'] + plan['loudness']['apply_db']) / 20):.6f}"      # ReplayGain 2 uses -18 LUFS as its reference, our target: players that honour the tag make up what lossless gain could not
     out = []
     for k, v in md.items():
         if v: out += ['-metadata', f'{k}={v}']
@@ -65,12 +63,11 @@ def verify(plan: dict, files: list[str]) -> dict:
 
 
 def lessen(plan: dict, db: float):
-    """Take `db` off the book's gain (copied chapters in whole 1.5 dB steps) and let the ReplayGain tag make up the difference."""
+    """Take `db` off the book's gain (copied chapters in whole 1.5 dB steps); the book stays slightly quieter, which is better than risking clipping."""
     l = plan['loudness']
     if any(c['mode'] == 'copy' for c in plan['chapters']):
         l['gain_steps'] -= math.ceil(db / P.GAIN_STEP); l['apply_db'] = round(l['gain_steps'] * P.GAIN_STEP, 2)
     else: l['apply_db'] = round(l['apply_db'] - db, 2)
-    rem = round(l['gain_db'] - l['apply_db'], 2); l['remaining_db'] = rem if abs(rem) >= 0.4 else 0.0
     plan['warnings'] = plan['warnings'] + [f'gain lowered by {db:.1f} dB after the first build came out too close to clipping']
 
 
@@ -96,7 +93,7 @@ def execute(book: dict, plan: dict, force: bool = False) -> dict:
         tiers: dict[str, int] = {}
         for c in plan['chapters']: tiers[c['tier']] = tiers.get(c['tier'], 0) + 1
         summary = dict(status='done', out_dir=out_dir, chapters=len(names), chapter_source=plan['chapter_source'], tiers=tiers, in_bytes=plan['in_bytes'], out_bytes=v['bytes'], in_seconds=plan['duration'], out_seconds=v['seconds'],
-                       loudness_before=plan['loudness']['I'], loudness_after=after['I'], true_peak_after=after['TP'], gain_db=plan['loudness']['apply_db'], retries=retries, downmix=plan['downmix'], warnings=plan['warnings'], seconds=round(time.time() - t0, 1),
+                       loudness_before=plan['loudness']['I'], loudness_after=after['I'], true_peak_after=after['TP'], gain_db=plan['loudness']['apply_db'], decision=plan['loudness']['decision'], reencoded=plan['loudness']['reencoded'], retries=retries, downmix=plan['downmix'], warnings=plan['warnings'], seconds=round(time.time() - t0, 1),
                        finished=datetime.now(timezone.utc).isoformat())
         if after['I'] is not None and abs(after['I'] - P.TARGET_LUFS) > 2.5: summary['warnings'] = summary['warnings'] + [f"final loudness {after['I']:.1f} LUFS is {after['I'] - P.TARGET_LUFS:+.1f} dB from the target"]
         with open(os.path.join(partial, 'metadata.json'), 'w', encoding='utf8') as f: json.dump(dict(book={k: v for k, v in book.items() if k != 'suggestion'}, result=summary, chapters=[{k: c[k] for k in ('file', 'title', 'start', 'end', 'duration', 'mode', 'tier')} for c in plan['chapters']]), f, indent=1, ensure_ascii=False)
