@@ -1,6 +1,6 @@
 """Decide what to do with one book, without changing anything: its chapters, how each is produced and the loudness gain for the whole book.
 
-Chapters, first source that exists wins: chapters embedded in a single file; the chapter list of the Audible metadata file (when it matches the audio length); the files themselves; or, for one long file without chapters, equal-ish parts cut at pauses. Then the size rules: a chapter under 10 minutes is combined with a neighbour if the two stay within 30 minutes (credits-length pieces always join one, up to an hour); a chapter over 60 minutes is split into parts of about 45 minutes at the nearest pause. Nothing else is split or combined.
+Chapters, first source that exists wins: chapters embedded in a single file; the chapter list of the Audible metadata file (when it matches the audio length); the files themselves; or, for one long file without chapters, equal-ish parts cut at pauses. Then the size rules: a chapter under 10 minutes is combined with a neighbour if the two stay within 30 minutes (credits-length pieces always join one, up to an hour); a chapter over 60 minutes is split into parts of about 45 minutes at the longest pause near each ideal cut; the parts keep the chapter's number with a letter (30a, 30b, 30c). Nothing else is split or combined.
 Each chapter is then `copy` (mono mp3 source at or below COPY_MAX_KBPS: cut on frame boundaries and re-gained losslessly, never re-encoded) or `encode` (LAME VBR, mono, with a tier chosen from how much high-frequency content the chapter really has).
 Loudness is one gain per book towards TARGET_LUFS (so chapters keep their level relative to each other), only when the book is outside a tolerance band, and never at the price of clipping: a book may stay slightly quiet."""
 import math, os, re
@@ -109,11 +109,23 @@ def derive_chapters(files: list[dict], silences, audible_chapters: list[dict] | 
     n_before = len(chs); chs = combine(chs)
     if len(chs) < n_before: source += ' (short ones combined)'
     out = []
-    for c in chs:
+    for g, c in enumerate(chs, 1):                          # g: the chapter's number; a split chapter keeps it and its parts are 30a, 30b, 30c ...
         cuts = split_points(c['start'], c['end'], silences); edges = [c['start'], *cuts, c['end']]
-        for k, (a, b) in enumerate(zip(edges, edges[1:])): out.append(dict(title=f"{c['title']} (part {k + 1})" if cuts else c['title'], start=round(a, 2), end=round(b, 2)))
+        for k, (a, b) in enumerate(zip(edges, edges[1:])):
+            suffix = letters(k) if cuts else ''
+            out.append(dict(title=f"{c['title']} ({suffix})" if cuts else c['title'], base=c['title'], start=round(a, 2), end=round(b, 2), group=g, suffix=suffix))
         if cuts and 'split' not in source: source += ' (long ones split)'
+    width = max(2, len(str(len(chs))))
+    for c in out: c['label'] = f"{c['group']:0{width}d}{c['suffix']}"
     return out, source
+
+
+def letters(k: int) -> str:
+    """a, b, ... z, aa, ab ... for the k-th part (0-based) of a split chapter."""
+    s = ''
+    k += 1
+    while k: k, r = divmod(k - 1, 26); s = chr(97 + r) + s
+    return s
 
 
 def sample_ranges(start: float, end: float) -> list[tuple[float, float]]:
@@ -168,9 +180,8 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None) -> dict:
         downmix = 'left'; warnings.append(f"stereo channels partly cancel in a mono mix ({m['mono_I']:.1f} vs {m['I']:.1f} LUFS): using the left channel only")
     if m['TP'] is not None and m['TP'] >= -0.2: warnings.append(f"the source reaches full scale (true peak {m['TP']:+.1f} dBFS), so it is probably already clipped; processing keeps it from getting worse but cannot repair it")
     chapters, source = derive_chapters(files, m['silences'], (audible or {}).get('chapters'), book['title'])
-    n = len(chapters); width = max(2, len(str(n)))
-    for i, c in enumerate(chapters):
-        segs = segments(tl, c['start'], c['end']); c['segments'] = segs; c['duration'] = round(c['end'] - c['start'], 2); c['file'] = f"{i + 1:0{width}d} - {clean_name(c['title'])}.mp3"
+    for c in chapters:
+        segs = segments(tl, c['start'], c['end']); c['segments'] = segs; c['duration'] = round(c['end'] - c['start'], 2); c['file'] = f"{c['label']} - {clean_name(c['base'])}.mp3"
         if copyable(segs, by_path): c.update(mode='copy', tier='copy', kbps=round(max(by_path[p]['bit_rate'] for p, _, _ in segs), 1))
         else:
             sp = probe.spectrum([sg for a, b in sample_ranges(c['start'], c['end']) for sg in segments(tl, a, b)]); t = pick_tier(sp['hf_db'], sp['pause_frac']); c.update(mode='encode', tier=t, kbps=TIERS[t]['kbps'], hf_db=sp['hf_db'], pause_frac=sp['pause_frac'])

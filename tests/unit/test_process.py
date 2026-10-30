@@ -135,9 +135,10 @@ def test_chapter_sources(monkeypatch):
     assert src == 'file boundaries (short ones combined)' and [c['title'] for c in cs] == ['The Start', 'The End'] and cs[0]['start'] == 0 and cs[0]['end'] == 630       # the 30 s track joins the next; 10 + 13 minutes are not both under 10, so they stay apart
     sil = [(2700.0, 2703.0), (5400.0, 5402.0)]
     cs, src = P.derive_chapters([f('long.mp3', 8100)], sil, None, 'B')
-    assert src == 'whole file (long ones split)' and [(c['title'], c['start'], c['end']) for c in cs] == [('Chapter 1 (part 1)', 0, 2701.5), ('Chapter 1 (part 2)', 2701.5, 5401.0), ('Chapter 1 (part 3)', 5401.0, 8100)]
+    assert src == 'whole file (long ones split)' and [(c['title'], c['start'], c['end']) for c in cs] == [('Chapter 1 (a)', 0, 2701.5), ('Chapter 1 (b)', 2701.5, 5401.0), ('Chapter 1 (c)', 5401.0, 8100)] and [c['label'] for c in cs] == ['01a', '01b', '01c']
     cs, _ = P.derive_chapters([f('01.mp3', 7200, title='B - Big'), f('02.mp3', 1200, title='B - Small')], [], None, 'B')
-    assert [c['title'] for c in cs] == ['Big (part 1)', 'Big (part 2)', 'Big (part 3)', 'Small'] and cs[0]['end'] == 2400.0 and cs[2]['end'] == 7200.0              # two hours: three parts of 40 minutes
+    assert [c['title'] for c in cs] == ['Big (a)', 'Big (b)', 'Big (c)', 'Small'] and [c['label'] for c in cs] == ['01a', '01b', '01c', '02'] and cs[0]['end'] == 2400.0 and cs[2]['end'] == 7200.0       # two hours: three parts of 40 minutes, the next chapter is 02
+    assert [P.letters(k) for k in (0, 1, 25, 26, 27, 701, 702)] == ['a', 'b', 'z', 'aa', 'ab', 'zz', 'aaa']
 
 
 # ---- with real audio ----------------------------------------------------------------------------------------------------------
@@ -345,3 +346,12 @@ def test_a_small_mono_mp3_that_is_too_quiet_for_lossless_gain_is_re_encoded(tmp_
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=f=220:d=60', '-af', 'volume=1.5', '-ac', '1', '-c:a', 'libmp3lame', '-b:a', '64k', str(ok / '01.mp3')], check=True)
     q = P.make_plan(catalogue.add_book(title='Fine', author='A', path=str(ok)), str(tmp_path / 'final'))
     assert q['loudness']['apply_db'] == 0.0 and [c['mode'] for c in q['chapters']] == ['copy'] and 'tolerance' in q['loudness']['decision']      # -18.9 LUFS: inside the band, copied untouched
+
+
+@needs_ffmpeg
+def test_a_long_file_is_split_into_lettered_parts_at_pauses(tmp_path):
+    d = tmp_path / 'Long'; d.mkdir()
+    subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=f=220:d=3900:r=8000', '-af', "volume=0.3,volume=enable='between(mod(t,10),7,10)':volume=0", '-ac', '1', '-c:a', 'libmp3lame', '-b:a', '16k', str(d / 'Long book.mp3')], check=True)
+    b = catalogue.add_book(title='Long', author='A', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
+    assert [c['label'] for c in p['chapters']] == ['01a', '01b'] and [c['file'] for c in p['chapters']] == ['01a - Chapter 1.mp3', '01b - Chapter 1.mp3'] and [c['title'] for c in p['chapters']] == ['Chapter 1 (a)', 'Chapter 1 (b)']
+    cut = p['chapters'][0]['end']; assert abs(cut - 1950) < 360 and any(s <= cut <= e + 5 for s, e in probe.measure_book([(str(d / 'Long book.mp3'), 0.0, None)])['silences'])        # near the middle, inside a pause
