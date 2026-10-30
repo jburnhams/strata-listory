@@ -61,3 +61,12 @@ def test_corrupt_metadata_reads_as_empty(tmp_path):
     b = catalogue.add_book(title='X'); p = os.path.join(mirror.dir_for(b), 'metadata.json')
     open(p, 'w').write('{bad'); assert mirror.read_meta(b) == {}
     open(p, 'w').write('[1]'); assert mirror.read_meta(b) == {}
+
+
+def test_confirming_clears_a_remembered_missing_cover(tmp_path):
+    from app import details
+    b = catalogue.add_scanned([dict(path=str(tmp_path / 'nowhere'), title='N', author='', narrator='', series_position=None, asin='', kind='book', file_count=1)]) and catalogue.list_books()[0]
+    assert details.cover(b) is None
+    none = os.path.join(settings.data_dir(), 'covers', f"{b['id']}.none"); assert os.path.exists(none)
+    catalogue.confirm(b['id']); assert not os.path.exists(none)
+    mirror.forget_missing_cover(b)                                                                       # nothing there: no error

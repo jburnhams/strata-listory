@@ -34,6 +34,12 @@ def dir_for(book: dict) -> str:
     return os.path.join(root(), '_external', _safe(os.path.basename(path.rstrip(os.sep)) or str(book['id'])))
 
 
+def forget_missing_cover(book: dict):
+    """Drop the remembered "no cover found" for a book (details.cover keeps that marker for a day) when something about it has changed, such as being confirmed, so the covers are looked for again."""
+    try: os.remove(os.path.join(settings.data_dir(), 'covers', f"{book['id']}.none"))
+    except OSError: pass
+
+
 def cover_file(book: dict) -> str | None:
     d = dir_for(book)
     return next((p for e in IMAGES if os.path.isfile(p := os.path.join(d, 'cover' + e))), None)

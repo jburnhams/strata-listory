@@ -61,7 +61,7 @@ def _one(c, book_id):
 
 def _mirrored(book: dict) -> dict:
     """Keep the on-disk mirror (mirror.py) current for books that are part of the catalogue proper (not just scanned); never fails the change."""
-    if book['review'] == 'confirmed': mirror.write(book)
+    if book['review'] == 'confirmed': mirror.forget_missing_cover(book); mirror.write(book)
     return book
 
 
