@@ -1,7 +1,7 @@
 """The SQLite database `<data_dir>/catalogue.db`: connections, schema, and a corruption check plus a daily automatic backup the first time a process opens it.
 
 Keep the data folder on a local disk: SQLite file locking is unreliable on SMB shares. Backups go to `<data_dir>/backups/` (see backup.py); restoring is `./app restore`."""
-import os, sqlite3
+import os, sqlite3, sys
 
 from app import backup, settings
 
@@ -17,6 +17,12 @@ SCHEMA = (
        ALTER TABLE books ADD COLUMN match_score REAL;
        CREATE UNIQUE INDEX books_path ON books(path) WHERE path <> '';
        CREATE TABLE match_cache (key TEXT PRIMARY KEY, fetched TEXT NOT NULL, body TEXT NOT NULL)''',
+    '''CREATE TABLE book_extra (book_id INTEGER NOT NULL, source TEXT NOT NULL, fetched TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (book_id, source))''',
+    '''CREATE TABLE processed (book_id INTEGER PRIMARY KEY, status TEXT NOT NULL, finished TEXT NOT NULL, summary TEXT NOT NULL)''',
+    '''CREATE TABLE process_plan (book_id INTEGER PRIMARY KEY, state TEXT NOT NULL, plan TEXT, error TEXT NOT NULL DEFAULT '', created TEXT NOT NULL, updated TEXT NOT NULL)''',
+    """ALTER TABLE books ADD COLUMN year INTEGER;
+       ALTER TABLE books ADD COLUMN year_source TEXT NOT NULL DEFAULT ''""",
+    "ALTER TABLE books ADD COLUMN locked TEXT NOT NULL DEFAULT ''",
 )       # schema version n is SCHEMA[n-1]; append new migrations, never edit old ones (PRAGMA user_version tracks the applied count)
 
 
@@ -40,7 +46,8 @@ def _first_open(p: str):
         finally: c.close()
     except sqlite3.DatabaseError: ok = False
     if not ok: raise CorruptDatabase(f'{p} is corrupt: restore the newest good backup with `./app restore` (`./app backups` lists them)')
-    backup.maybe_backup()
+    try: backup.maybe_backup()
+    except (OSError, RuntimeError, sqlite3.Error) as e: print(f'warning: automatic backup skipped ({e})', file=sys.stderr)      # a failing backup must never stop the app opening its database
 
 
 def connect() -> sqlite3.Connection:

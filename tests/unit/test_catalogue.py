@@ -1,3 +1,4 @@
+import sys
 import os
 import pytest
 from hypothesis import given, strategies as st
@@ -77,3 +78,28 @@ def test_clean_keeps_explicit_none_numbers_and_ignores_unknown_fields():
     assert out['duration_seconds'] is None and 'bogus' not in out
     assert catalogue.clean(dict(status='finished'), partial=True) == dict(status='finished')
     assert catalogue.clean(dict(), partial=True) == {}
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX-style absolute paths')
+def test_rebase_paths_moves_only_books_under_the_old_folder():
+    for p in ('/share/audio/A', '/share/audio/B/01.mp3', '/share/audio', '/share/audio2/C', '/other/D', ''): catalogue.add_book(title=p or 'hand', path=p)
+    assert sorted(catalogue.paths_under('/share/audio/')) == ['/share/audio', '/share/audio/A', '/share/audio/B/01.mp3']
+    assert catalogue.rebase_paths('/share/audio', '/local/audio-local/') == 3
+    assert sorted(b['path'] for b in catalogue.list_books()) == ['', '/local/audio-local', '/local/audio-local/A', '/local/audio-local/B/01.mp3', '/other/D', '/share/audio2/C']      # audio2 is not under audio
+    assert catalogue.rebase_paths('/share/audio', '/x') == 0
+    catalogue.add_book(title='odd', path='/share/100%_real/a')
+    assert catalogue.rebase_paths('/share/100%_real', '/y') == 1                                                 # LIKE wildcards in names are literal
+
+
+def test_fields_you_set_are_locked_but_internal_updates_and_matches_are_not():
+    hand = catalogue.add_book(title='By hand', author='Me', year=1999)
+    assert hand['locked'] == ['title', 'author', 'year']                                                      # everything entered by hand is yours
+    scanned = catalogue.add_scanned([dict(path='/x/s', title='Scanned', author='Auth', narrator='', series_position=None, asin='', kind='book', file_count=1, year=2001)]) and catalogue.list_books(review='new')[0]
+    assert scanned['locked'] == [] and scanned['year'] == 2001 and scanned['year_source'] == 'folder name'
+    assert catalogue.update_book(scanned['id'], author='Corrected')['locked'] == ['author']                  # an edit locks the field
+    assert catalogue.update_book(scanned['id'], title='Also', author='Corrected')['locked'] == ['author', 'title']
+    assert catalogue.update_book(scanned['id'], status='finished')['locked'] == ['author', 'title']           # status is not metadata
+    catalogue.set_suggestion(scanned['id'], dict(title='Suggested', author='From Match'), 0.9)
+    done = catalogue.confirm(scanned['id']); assert done['title'] == 'Suggested' and done['locked'] == ['author', 'title']       # confirming applies the match without locking
+    fresh = catalogue.add_scanned([dict(path='/x/t', title='T', author='A', narrator='', series_position=None, asin='', kind='book', file_count=1)]) and [b for b in catalogue.list_books(review='new')][0]
+    catalogue.set_suggestion(fresh['id'], dict(title='T2', author='A2'), 0.9); assert catalogue.confirm(fresh['id'])['locked'] == [] and catalogue.ignore(fresh['id'])['locked'] == []

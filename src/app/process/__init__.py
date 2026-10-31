@@ -1,0 +1,1 @@
+"""The audiobook processor: turns an inbox book (any number of files, any format) into a final-library book of mono mp3 chapter files, normalised to one loudness. See plan.py for the decisions it makes and run.py for how it carries them out; probe.py holds the ffmpeg measurements."""

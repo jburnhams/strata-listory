@@ -80,3 +80,14 @@ def test_backups_can_live_in_another_folder_and_are_built_locally(tmp_path, monk
     catalogue.add_book(title='Emma'); backup.restore(p)
     assert [b['title'] for b in catalogue.list_books()] == ['Dune']
     assert not os.path.exists(db.path() + '.restoring')
+
+
+def test_an_unreachable_backup_folder_falls_back_to_the_local_one_and_never_stops_the_app(tmp_path, monkeypatch):
+    blocker = tmp_path / 'share'; blocker.write_text('a file where the share folder should be')         # makedirs under it fails like a dead mount
+    monkeypatch.setenv('APP_BACKUP', str(blocker / 'backups'))
+    catalogue.add_book(title='Dune')
+    p = backup.backup('manual')
+    assert p and p.startswith(os.path.join(os.path.dirname(db.path()), 'backups')) and backup.check(p)       # went to <data_dir>/backups instead
+    assert [b['path'] for b in backup.list_backups()] == [p]                                                # and is still listed and restorable
+    monkeypatch.setattr(db, '_checked', set()); monkeypatch.setattr(backup, 'maybe_backup', lambda: (_ for _ in ()).throw(OSError('Host is down')))
+    assert [b['title'] for b in catalogue.list_books()] == ['Dune']                                          # opening the database survives a failing backup

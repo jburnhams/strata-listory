@@ -4,17 +4,38 @@ import { STATUSES, type Book, type Settings } from '../../src/api'
 
 export const defaultSettings: Settings = { data_dir: '/tmp/appdata', library_dir: '', backup_dir: '/tmp/appdata/backups' }
 export const initialBooks: Book[] = [
-  { id: 1, title: 'Dune', author: 'Frank Herbert', narrator: '', series: 'Dune', series_position: 1, duration_seconds: 75600, path: '', status: 'unlistened', added: '2026-10-29T12:00:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null },
+  { id: 1, title: 'Dune', author: 'Frank Herbert', narrator: '', series: 'Dune', series_position: 1, duration_seconds: 75600, path: '', status: 'unlistened', added: '2026-10-29T12:00:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null, year: null, year_source: '' },
 ]
 
-export const mock = {
+export const hardcover = {
+  id: '375699', url: 'https://hardcover.app/books/dune', description: 'A desert planet saga.', pages: 612, rating: 4.31, ratings_count: 12345, reviews_count: 99, readers: 5000, finished: 4000,
+  genres: ['Science Fiction'], moods: ['adventurous'], tags: ['classic'], content_warnings: ['Violence'], series: [{ name: 'Dune Chronicles', position: 1 }], audiobook_editions: [{ asin: 'B0A', hours: 21, publisher: 'Macmillan Audio', released: '2007-01-01', format: 'Audible' }],
+  reviews: [{ user: 'reader1', rating: 5, text: 'A masterpiece.', spoilers: false, likes: 12, date: '2020-01-02' }, { user: 'reader2', rating: 3, text: 'x'.repeat(800), spoilers: false, likes: 3, date: '' }, { user: 'reader3', rating: null, text: 'The twist is big.', spoilers: true, likes: 1, date: '2021-05-06' }],
+}
+
+const planSummary = (over: object = {}) => ({ year: 2007, metadata: [{ field: 'Title', value: 'Dune', source: 'audible + audiobookdb match (confirmed)', note: '' }, { field: 'Author', value: 'CBS Radio Workshop, Frank Herbert', source: 'audiobookdb match (confirmed)', note: 'the Audible metadata file says: Frank Herbert' }, { field: 'Year', value: '2007', source: 'Audible metadata file', note: '' }], hours: 8.2, files: 18, chapters: 18, chapter_source: 'Audible chapter list', tiers: { V5: 17, V3: 1 }, in_bytes: 382_000_000, est_bytes: 177_000_000, out_dir: '/home/u/audiobooks/A/Dune', loudness_before: -23.4, loudness_after_est: -20.9, decision: 'too quiet: lifted with a limiter', reencoded: false, warnings: ['ends 2.9 dB below the target because its peaks leave no more room'], downmix: 'average',
+  chapter_list: [{ file: '01 - One.mp3', title: 'One', minutes: 29.4, mode: 'encode', tier: 'V5' }, { file: '02 - Two.mp3', title: 'Two', minutes: 21.4, mode: 'copy', tier: 'copy' }], ...over })
+
+export const mock: { settings: Settings; books: Book[]; extras: Record<string, { fetched: string; data: object }>; processed: object | null; queue: { book_id: number; title: string; author: string; state: string; error: string; updated: string; summary: object | null }[] } = {
   settings: { ...defaultSettings },
   books: [...initialBooks],
+  extras: {},
+  processed: null,
+  queue: [
+    { book_id: 1, title: 'Dune', author: 'Frank Herbert', state: 'proposed', error: '', updated: '2026-10-30T12:00:00+00:00', summary: planSummary() },
+    { book_id: 2, title: 'Emma', author: 'Jane Austen', state: 'proposed', error: '', updated: '2026-10-30T12:01:00+00:00', summary: planSummary({ warnings: [] }) },
+  ],
 }
 
 export const resetMock = () => {
   mock.settings = { ...defaultSettings }
   mock.books = [...initialBooks]
+  mock.extras = {}
+  mock.processed = null
+  mock.queue = [
+    { book_id: 1, title: 'Dune', author: 'Frank Herbert', state: 'proposed', error: '', updated: '2026-10-30T12:00:00+00:00', summary: planSummary() },
+    { book_id: 2, title: 'Emma', author: 'Jane Austen', state: 'proposed', error: '', updated: '2026-10-30T12:01:00+00:00', summary: planSummary({ warnings: [] }) },
+  ]
 }
 
 // Every endpoint the app calls has a handler here; one without a handler fails the test (setup.ts: onUnhandledFrame 'error').
@@ -34,7 +55,7 @@ export const handlers = [
   http.post('/api/books', async ({ request }) => {
     const b = (await request.json()) as Partial<Book>
     if (!(b.title || '').trim()) return HttpResponse.json({ detail: 'a title is required' }, { status: 400 })
-    const entry: Book = { id: mock.books.length + 1, title: b.title!.trim(), author: b.author || '', narrator: '', series: '', series_position: null, duration_seconds: null, path: '', status: 'unlistened', added: '2026-10-29T12:01:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null }
+    const entry: Book = { id: mock.books.length + 1, title: b.title!.trim(), author: b.author || '', narrator: '', series: '', series_position: null, duration_seconds: null, path: '', status: 'unlistened', added: '2026-10-29T12:01:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null, year: null, year_source: '' }
     mock.books = [...mock.books, entry]
     return HttpResponse.json(entry)
   }),
@@ -50,13 +71,44 @@ export const handlers = [
     const book = mock.books.find(x => x.id === Number(params.id))
     if (!book) return HttpResponse.json({ detail: 'no such book' }, { status: 404 })
     if (book.id === 1) return HttpResponse.json({
-      book, path_exists: true,
+      book, extras: mock.extras, processed: mock.processed, path_exists: true,
       files: { count: 2, total_bytes: 5_000_000, truncated: false, list: [{ name: '01.mp3', bytes: 2_000_000 }, { name: '02.mp3', bytes: 3_000_000 }] },
       probe: { available: true, files_probed: 2, complete: true, duration_seconds: 3700, tags: { album: 'Dune', artist: 'Frank Herbert' }, codec: 'mp3', bitrate_kbps: 64, chapters: 0, has_cover_art: true },
       audible: { asin: 'B000TEST01', title: 'Dune', subtitle: 'Book One', authors: ['Frank Herbert'], narrators: ['Scott Brick'], series: [{ title: 'Dune Chronicles', sequence: '1' }], publisher: 'Macmillan', release_date: '2007-01-01', language: 'english', format: 'unabridged',
         runtime_minutes: 1260, summary: 'A desert planet.', rating: '4.6', rating_count: 12000, categories: ['Science Fiction'], sample_url: '', chapters: [{ title: 'Chapter 1', start_sec: 0, length_sec: 600 }], cover_url: '' },
     })
-    return HttpResponse.json({ book, path_exists: false, files: null, probe: null, audible: null })
+    return HttpResponse.json({ book, extras: {}, processed: null, path_exists: false, files: null, probe: null, audible: null })
+  }),
+  http.post('/api/books/:id/enrich', ({ params }) => {
+    if (!mock.books.find(x => x.id === Number(params.id))) return HttpResponse.json({ detail: 'no such book' }, { status: 404 })
+    mock.extras = { hardcover: { fetched: '2026-10-30T12:00:00+00:00', data: hardcover } }
+    return HttpResponse.json({ found: true, extras: mock.extras })
+  }),
+  http.post('/api/enrich', () => HttpResponse.json({ tried: 1, enriched: 1, not_found: 0, remaining: 0 })),
+  http.get('/api/process', () => HttpResponse.json({ rows: mock.queue, worker: { busy: mock.queue.some(r => r.state === 'running') ? 'run' : null, queued: 0, last: {}, counts: {} }, result: { 3: { in_bytes: 300_000_000, out_bytes: 140_000_000, loudness_after: -18.1, true_peak_after: -1.6 } } })),
+  http.post('/api/process/propose', () => {
+    mock.queue = [...mock.queue, { book_id: 3, title: 'Persuasion', author: 'Jane Austen', state: 'proposed', error: '', updated: '2026-10-30T12:05:00+00:00', summary: planSummary({ hours: 1.5, tiers: { copy: 3 } }) }]
+    return HttpResponse.json({ rows: mock.queue, worker: { busy: null, queued: 0, last: {}, counts: {} }, result: {} })
+  }),
+  http.post('/api/process/approve', async ({ request }) => {
+    const { ids } = (await request.json()) as { ids: number[] }
+    mock.queue = mock.queue.map(r => (ids.includes(r.book_id) && ['proposed', 'rejected'].includes(r.state) ? { ...r, state: 'approved' } : r))
+    return HttpResponse.json({ changed: ids })
+  }),
+  http.post('/api/process/reject', async ({ request }) => {
+    const { ids } = (await request.json()) as { ids: number[] }
+    mock.queue = mock.queue.map(r => (ids.includes(r.book_id) ? { ...r, state: 'rejected' } : r))
+    return HttpResponse.json({ changed: ids })
+  }),
+  http.post('/api/process/repropose', async ({ request }) => {
+    const { ids } = (await request.json()) as { ids: number[] }
+    mock.queue = mock.queue.filter(r => !ids.includes(r.book_id))
+    return HttpResponse.json({ changed: ids })
+  }),
+  http.post('/api/process/run', () => {
+    if (!mock.queue.some(r => r.state === 'approved')) return HttpResponse.json({ detail: 'nothing is approved yet' }, { status: 400 })
+    mock.queue = mock.queue.map(r => (r.state === 'approved' ? { ...r, state: 'done' } : r))
+    return HttpResponse.json({ rows: mock.queue, worker: { busy: null, queued: 0, last: {}, counts: {} }, result: {} })
   }),
   http.post('/api/scan', () => {
     mock.books = [...mock.books,
@@ -66,7 +118,7 @@ export const handlers = [
   }),
   http.post('/api/match', () => {
     const b = mock.books.find(x => x.id === 10)!
-    Object.assign(b, { review: 'suggested', match_score: 0.7, suggestion: { title: 'Dune Messiah', author: 'Frank Herbert', series: 'Dune Chronicles' } })
+    Object.assign(b, { review: 'suggested', match_score: 0.7, suggestion: { title: 'Dune Messiah', author: 'Frank Herbert', series: 'Dune Chronicles', sources: ['audible', 'audiobookdb'] } })
     return HttpResponse.json({ tried: 1, suggested: 1, none: 0, remaining: 0 })
   }),
   http.post('/api/books/:id/confirm', ({ params }) => {

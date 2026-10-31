@@ -1,16 +1,21 @@
 """Everything we can learn about one book from its own files, for the book page: the Audible `*.metadata.json` file that sits next to purchased books, the audio files and their embedded tags (ffprobe), and a cover image. All read-only on the library; covers are cached under `<data_dir>/covers/`.
 
-Cover order: an image file in the book's folder (cover/folder/front, then any picture; for a single loose file only a picture with the same name), then art embedded in the audio (ffmpeg), then the cover URL named in the book's own Audible metadata file, and last the cover of the book's AudiobookDB match (confirmed, or a likely match). The last two are downloaded once. AudiobookDB's terms do not license its images, so these are kept only in this private catalogue."""
+Cover order: an image file in the book's folder (cover/folder/front, then any picture; for a single loose file only a picture with the same name), then art embedded in the audio (ffmpeg), then the cover URL named in the book's own Audible metadata file, and last the covers offered by the metadata providers for the book's match (confirmed, or a likely match): the match's own cover, then each provider by ASIN. The cover is saved once in the book's mirror folder (mirror.py) with its source noted; AudiobookDB's terms do not license its images, so they are kept only in this private catalogue."""
 import glob, html, json, os, re, shutil, subprocess, time, urllib.request
 from datetime import datetime, timedelta, timezone
 
-from app import db, matcher, scan, settings
+from app import db, fs, mirror, providers, scan, settings
 
 IMAGES = ('.jpg', '.jpeg', '.png', '.webp')
 COVER_NAMES = ('cover', 'folder', 'front', 'albumart', 'albumartsmall', 'artwork')
 MAX_FILES = 500
 PROBE_FILES = 60                 # a book with more files than this is probed on its first few only
+MIN_IMAGE_BYTES = 2000
 NONE_FOR = timedelta(days=1)     # how long "no cover found" is remembered
+
+
+def _natural(s: str):
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', s)]
 
 
 def audio_files(path: str) -> list[str]:
@@ -18,8 +23,8 @@ def audio_files(path: str) -> list[str]:
     if os.path.isfile(path): return [path]
     out = []
     for root, dirs, files in os.walk(path):
-        dirs[:] = sorted(d for d in dirs if not d.startswith(('.', '@')))
-        out += [os.path.join(root, f) for f in sorted(files) if scan.is_audio(f)]
+        dirs[:] = sorted((d for d in dirs if not d.startswith(('.', '@'))), key=_natural)                # Disc 2 before Disc 10
+        out += [os.path.join(root, f) for f in sorted(files, key=_natural) if scan.is_audio(f)]
         if len(out) >= MAX_FILES: break
     return out[:MAX_FILES]
 
@@ -121,41 +126,97 @@ def _download(url: str) -> bytes | None:
     if not url.startswith('https://'): return None
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'strata-listory/0.1 (personal audiobook catalogue)'}), timeout=20) as r: b = r.read(6_000_000)
-        return b if _image_kind(b) else None
+        return b if _image_kind(b) and len(b) >= MIN_IMAGE_BYTES else None          # a 1x1 placeholder is not a cover
     except (OSError, ValueError): return None
 
 
+OL_COVERS = 'https://covers.openlibrary.org/b'
+
+
+def openlibrary_covers(book: dict) -> list[str]:
+    """Open Library cover URLs for a book (`?default=false` makes it answer 404 instead of a blank picture): by ISBN when the ASIN field holds one (it often does for books bought as print), and the cover of the Open Library work matched to the book. These are covers of print editions, so they are the last resort after the audiobook covers."""
+    urls = []
+    isbn = re.sub(r'[\s-]', '', book.get('asin') or '')
+    if re.fullmatch(r'\d{9}[\dXx]|\d{13}', isbn): urls.append(f'{OL_COVERS}/isbn/{isbn}-L.jpg?default=false')
+    work = ((catalogue_extras(book).get('openlibrary') or {}).get('data')) or {}
+    if work.get('cover_url'): urls.append(work['cover_url'] + ('&' if '?' in work['cover_url'] else '?') + 'default=false')
+    return urls
+
+
+def catalogue_extras(book: dict) -> dict:
+    from app import catalogue                         # late import: catalogue needs the mirror, the mirror needs this module
+    return catalogue.get_extras(book['id'])
+
+
+def _provider_cover(book: dict) -> tuple[bytes, str] | None:
+    """A cover from the providers for a book's match: the suggestion's own cover URL, then each enabled provider by ASIN, then AudiobookDB by its id; last, Open Library's. Raises MatchError only when nothing was found and a provider was unreachable (so it is retried later)."""
+    sug = book.get('suggestion') or {}; tried: list[tuple[str, str]] = []; failure = None
+    if sug.get('id') and (book.get('review') == 'confirmed' or (book.get('match_score') or 0) >= 0.85):
+        tried.append((sug.get('source') or '?', sug.get('cover_url') or '')); asin = sug.get('asin') or book.get('asin') or ''
+        for p in providers.enabled():
+            try:
+                if p.name == sug.get('source') and not tried[0][1] and sug.get('id'): tried.append((p.name, p.cover_url(sug['id'])))
+                if asin and (c := p.by_asin(asin)): tried.append((p.name, c['cover_url']))
+            except providers.MatchError as e: failure = e
+    if book.get('review') == 'confirmed':
+        if 'openlibrary' not in catalogue_extras(book):                       # not asked yet: ask once (answers, including "not found", are remembered)
+            from app import enrich
+            try: enrich.enrich_openlibrary(book)
+            except providers.MatchError as e: failure = failure or e
+        tried += [('openlibrary', u) for u in openlibrary_covers(book)]
+    for source, url in tried:
+        if url and (data := _download(url)): return data, source
+    if failure: raise failure
+    return None
+
+
 def cover(book: dict) -> str | None:
-    """Path of a cached cover image for the book (found or built on first request), or None when there is none."""
-    folder = os.path.join(settings.data_dir(), 'covers'); os.makedirs(folder, exist_ok=True)
+    """Path of the book's cover image (found or built on first request and saved in its mirror folder), or None when there is none."""
+    if (p := mirror.cover_file(book)): return p
+    old = os.path.join(settings.data_dir(), 'covers'); os.makedirs(old, exist_ok=True)       # before the mirror, covers lived here; they are moved in on first use
     for e in IMAGES:
-        if os.path.isfile(p := os.path.join(folder, f"{book['id']}{e}")): return p
-    none = os.path.join(folder, f"{book['id']}.none")
+        if os.path.isfile(prev := os.path.join(old, f"{book['id']}{e}")):
+            with open(prev, 'rb') as f: data = f.read()
+            os.remove(prev); return mirror.save_cover(book, data, _image_kind(data) or e, 'cache')
+    none = os.path.join(old, f"{book['id']}.none")
     if os.path.isfile(none) and datetime.now(timezone.utc) - datetime.fromtimestamp(os.path.getmtime(none), timezone.utc) < NONE_FOR: return None
-    path = book.get('path') or ''; data = None
+    path = book.get('path') or ''
+    if path and not fs.reachable(path): return None                            # the share is down: no verdict, and nothing remembered (try again when it is back)
+    try: return _build_cover(book, path, none)
+    except OSError: return None
+
+
+def _build_cover(book: dict, path: str, none: str) -> str | None:
+    data = None; source = ''
     if path and os.path.exists(path):
         if (img := _folder_image(path)):
             try:
                 with open(img, 'rb') as f: data = f.read(6_000_000)
             except OSError: data = None
-        data = data if data and _image_kind(data) else None
-        data = data or _embedded(audio_files(path))
-        if not data and (side := sidecar(path)): data = _download(audible_summary(side)['cover_url'])
-    sug = book.get('suggestion') or {}
-    if not data and sug.get('id') and (book.get('review') == 'confirmed' or (book.get('match_score') or 0) >= matcher.GOOD_SCORE):
-        try: data = _download(sug.get('cover_url') or matcher.AudiobookDB().cover_url(sug['id']))
-        except matcher.MatchError: return None                  # the service is down or has no key: try again next time rather than remembering "no cover"
+            data = data if data and _image_kind(data) else None; source = 'folder' if data else ''
+        if not data and (data := _embedded(audio_files(path))): source = 'embedded'
+        if not data and (side := sidecar(path)) and (data := _download(audible_summary(side)['cover_url'])): source = 'audible-file'
+    if not data:
+        try: found = _provider_cover(book)
+        except providers.MatchError: return None               # a service is down or has no key: try again next time rather than remembering "no cover"
+        data, source = found if found else (None, '')
+        source = f'provider:{source}' if data else ''
     if not data:
         open(none, 'w').close(); os.utime(none, (time.time(), time.time())); return None
-    p = os.path.join(folder, f"{book['id']}{_image_kind(data)}")
-    with open(p, 'wb') as f: f.write(data)
-    return p
+    return mirror.save_cover(book, data, _image_kind(data), source)
 
 
 def describe(book: dict) -> dict:
     """The data behind the book page: files, embedded tags and technical facts, and the Audible metadata file, when the book's path exists on this machine."""
-    path = book.get('path') or ''; out = dict(path_exists=bool(path) and os.path.exists(path), files=None, probe=None, audible=None)
+    path = book.get('path') or ''; out = dict(path_exists=False, share_down=False, files=None, probe=None, audible=None)
+    if path and not fs.reachable(path): out['share_down'] = True; return out           # the share is down: say so instead of hanging
+    out['path_exists'] = bool(path) and os.path.exists(path)
     if not out['path_exists']: return out
+    try: return _describe(book, path, out)
+    except OSError: out.update(path_exists=False, share_down=True, files=None, probe=None, audible=None); return out
+
+
+def _describe(book: dict, path: str, out: dict) -> dict:
     files = audio_files(path)
     out['files'] = dict(count=len(files), total_bytes=sum(os.path.getsize(f) for f in files), truncated=len(files) >= MAX_FILES, list=[dict(name=os.path.relpath(f, path if os.path.isdir(path) else os.path.dirname(path)), bytes=os.path.getsize(f)) for f in files[:200]])
     out['probe'] = cached_probe(path, files)

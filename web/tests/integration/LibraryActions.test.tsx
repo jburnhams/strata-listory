@@ -26,7 +26,7 @@ describe('scan, match and review', () => {
 
     await user.click(screen.getByRole('button', { name: 'Match new books' }))
     expect(await screen.findByText('Matched 1: 1 suggestions, 0 without a match, 0 still to try.')).toBeInTheDocument()
-    expect(await screen.findByText('70% match (check)')).toBeInTheDocument()
+    expect(await screen.findByText('70% match (check) · via audible + audiobookdb')).toBeInTheDocument()
     expect(screen.getByText('Dune Messiah')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'audiobookdb.org' })).toHaveAttribute('href', 'https://audiobookdb.org')
 

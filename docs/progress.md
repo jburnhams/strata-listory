@@ -1,5 +1,54 @@
 # Progress log
 
+## 2026-10-30: the processor
+
+- Metadata is now merged across sources instead of falling back down a list (user's direction: audiobooks have narrators and producers, the original book has its own metadata, match as many sources as possible and choose the best of each). Probes first: ISBN as the link from audiobook to book rarely works (Audnexus ISBN for 11 of 30 Audible books, Open Library found 0 of those 11, Hardcover recognised 0 of 30 ASINs), so the link is title + author with the audiobook sources agreeing first. New `merge.py` (weighted agreement per field, layers, locks, alternatives kept) and `sources.py` (normalised records, two-step gather, resolve, rows). Added a `locked` column: fields set by hand win; confirming a match locks nothing. Real result: Brave New World now resolves to Aldous Huxley / Michael York / Blackstone Audio / 1932, with "CBS Radio Workshop" shown as outvoted; Right to Kill gains its narrator (Dick Hill) and ASIN from the Audible catalogue search although the folder had none.
+
+- The folder year is now the original publication year (user's decision). Open Library was chosen over Goodreads: Goodreads' terms exclude robots and data extraction (and it has had no API since 2020), so nothing was scraped and the supplied login was not used (stored at `~/.config/strata-listory/goodreads.cred`, mode 600, offered for deletion). On 12 test titles Open Library gave the exact first-published year for 9; misses were a missing work, an off edition-year (The Secret Barrister 2020) and a bad record (Oliver Twist 1822). Hardcover's release date is a weaker second source (it said 1986 for Born a Crime, which is 2016), hence the disagreement note. On the confirmed books: Brave New World 1932 (via Hardcover; Open Library did not match because the catalogue has the author as "CBS Radio Workshop, Aldous Huxley"), Banking on It 2020, Right to Kill 2016, Secret Diary of Adrian Mole 1982, Adrian Mole and the Weapons of Mass Destruction 2004.
+
+- Output naming set by the user: `Author/[year] title/00n - author - title.mp3` (book title in every file name, chapter titles in the tags and playlist; no series folder). Added `year` and `year_source` to books (migration 6) with the priority described in the README, and a year tag (`date`). The Processing page now lists the metadata that will be written with each value's source and flags disagreements with the Audible metadata file; the first real example caught Brave New World's author as "CBS Radio Workshop, Aldous Huxley" (an AudiobookDB match) while the Audible file says "Aldous Huxley".
+
+- Chapter sizes set by the user: split only above 60 minutes (parts of about 45), combine only when one is under 10 minutes and the pair stays within 30. Added one exception, flagged to the user: credits-length pieces (under 2 minutes) join a neighbour up to an hour. Real books: a 150-file title went to 26 chapters (12 to 51 minutes), the others stayed at 16 to 30.
+
+- Limiter budget measured from the book's peaks instead of a fixed 3 dB: peak levels per short window are collected in the same pass as loudness; the lift is allowed until the 99th-percentile peak would lose more than 2 dB (loudest peak: 7 dB). On three real books this moved the end level from -20.9/-21.1/-20.6 to -18.7/-18.2/-18.0 LUFS; the one book re-encoded as a test kept its loudness range (6.6 to 6.1 LU) and came out at -1.2 dBTP.
+
+- Added the manual approval queue (`process/queue.py`, Processing page, `process_plan` table): proposals carry the exact plan, a person approves or rejects, only approved plans run; a plan is refused if the inbox files changed since it was proposed. The server runs proposals and approved plans on one background worker thread.
+- The first full copy to `~/audio-local` finished (428 GB, 29,086 files). rsync exit 23 came from two files whose names exceed ext4's 255 bytes (curly quotes in long titles); `audio-sync` now lists such files and still fails on any other error. The app's library was switched to the copy with `use-library` (5,128 paths moved, DB backed up first).
+
+- Decided with the user (later the same day): process only confirmed books with a title and author; loudness has a tolerance band (3 dB quiet / 2 dB loud around -18 LUFS) outside which a book is normalised even if it would otherwise be copied; quieter is better than clipping or compensating, so the earlier idea of ReplayGain tags for what gain could not do was dropped, and the limiter allowance was cut from 6 dB to 3 dB.
+
+- Built `./app process` after agreeing the design with the user: mono, LAME VBR tiers by content, -18 LUFS per book, copy-as-is for mono mp3 up to 96 kbps (lossless cut and `mp3gain`), chapters from embedded/Audible/file/pause sources.
+- Timings on beelink: LAME V5 about 550x realtime per core; `ebur128` about 1000x (the `loudnorm` filter is 16x slower, so it is not used for measuring); a whole book takes 1.5 to 2 minutes. Measuring the spectrum of whole chapters was the slow part, so it samples three 90 s stretches per chapter.
+- Calibration (30 speech and 30 music-heavy excerpts): silence fraction separates them (speech median 19%, music 0%); energy above 10 kHz does not (speech median -25 dB with p90 -21, music median -23, p90 -19). First guess thresholds on the HF ratio put every speech chapter in the top tier, which is why tiers are now chosen on pauses first.
+- Bugs caught by testing on real books: a short credits track gave the merged chapter the wrong name; the spectrum pause fraction was computed against a zero duration when a segment ran to the end of its file; after encoding, true peaks overshot the limiter by about 0.8 dB, hence LIMITER_MARGIN.
+
+## 2026-10-30: local copy of the audio share
+
+- beelink has ~850 GB free and the share is 428 GB, so `audio-sync` mirrors it to `~/audio-local` (rsync, one way, nightly) and the app is switched to that copy with `./app use-library`. First full copy ran in the background (about 30 MB/s observed at the start). The copy is excluded from restic (it can be rebuilt from the share, which has its own backup story).
+- Safeguards in the script after thinking about "sync" deleting things: never writes to the share; `--delete-delay` plus `--max-delete=300`; aborts if the share lists empty or below half of its previous top-level count; one run at a time (flock); failures raise the usual ntfy alert.
+
+## 2026-10-30: resilience to the share being down
+
+- Added `fs.py`: reachability probe with timeout, short memory and no pile-up, used before touching the audio share or a share-based backup folder; scans abort on a vanished share instead of storing half a library; the book page, covers, mirror and backups degrade as described in the README. The Linux mount table is read from `/proc/self/mountinfo` (`autofs` counts as a network mount because touching an unmounted automount mounts it, which can take a while); other systems skip the probe and rely on error handling.
+- Not changed: the data folder must stay on a local disk (SQLite). The systemd service has no dependency on the mounts.
+
+## 2026-10-30: Hardcover
+
+- Hardcover's GraphQL API (token in `~/.config/strata-listory/hardcover.key`, not tracked) works as a search provider (4 of 4 test titles right) and gives ratings, counts, genres, moods, content warnings, tags, series, audiobook editions and public reviews. Its documentation pages returned 403 to my fetch tool, so the exact rate limit and terms were not read; the client keeps to about one request a second.
+- First live run: 11 of 12 confirmed books enriched. Hardcover has several records for some classics, so a rating can come from a small duplicate record (Adrian Mole #1: 5.0 from 2 ratings); the book page shows the counts so this is visible.
+- Bug found while testing: the backup folder pointed at the SMB share and the `server` PC was down, so opening the database failed with "Host is down". Backups now fall back to `<data_dir>/backups` when the configured folder cannot be written, and a failing automatic backup only prints a warning.
+
+## 2026-10-30: mirror and provider covers
+
+- Covers can now come from any provider (suggestion cover, then each provider by ASIN, then AudiobookDB by id) and are saved with the book's final data in a mirror of the audio tree under `<data_dir>/library/` (the share is read-only). Covers cached earlier under `covers/` move into the mirror on first use; only the "no cover found" markers stay in `covers/`.
+- Rate limit and cache lifetime are properties of each provider class, not global constants.
+
+## 2026-10-30: modular providers
+
+- Audnexus (the project AudiobookDB succeeds) found 53 of 53 real ASINs from the `Audible/` folders (47 uk, 6 only in the us catalogue); AudiobookDB found 1 of 12. Only ~150 catalogue items (117 books) have an ASIN in the name, so title search matters more: Audible's own catalogue search returned the right book in the top 2 for 8 of 10 titles.
+- Matching is now provider based (`providers/`). Sample of 60 scanned books (`match-test`, 2026-10-30, after the scanner fix below): Audnexus 5% (it is ASIN only), Audible 30% good / 33% any, AudiobookDB 30% / 50%, all three 37% / 55%. Misses are mostly unclean titles, not provider gaps.
+- Scanner fix found through that test: chapter files whose names differ only in numbers (`AB_022`, `ch0`, `Part06`) were each becoming a "book". They now fold into one book, and a rescan removes untouched `new` fragments (1,104 on the live library; books 2,280 -> 1,681).
+
 ## 2026-10-30: book page and covers
 
 - Found that 118 of the `Audible/` books have a `<title> [ASIN].metadata.json` next to the audio (Audible's own product data: narrators, series, publisher, release date, runtime, ratings, categories, summary, chapters, cover URL). The book page reads it as the richest local source; no API terms involved.

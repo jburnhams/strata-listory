@@ -5,7 +5,7 @@ Policy: one per day when the database is opened (db.py), before a schema migrati
 import os, re, shutil, sqlite3
 from datetime import datetime, timedelta, timezone
 
-from app import settings
+from app import fs, settings
 
 KEEP_DAYS, KEEP_WEEKS, KEEP_SPECIAL_DAYS, INTERVAL = 7, 4, 30, timedelta(hours=24)
 NAME = re.compile(r'^catalogue-(\d{8}-\d{6})(?:-([a-z-]+))?\.db$')
@@ -19,12 +19,14 @@ def _db() -> str:
     return os.path.join(settings.data_dir(), 'catalogue.db')
 
 
-def list_backups() -> list[dict]:
-    """Backups newest first: path, taken (UTC datetime), reason ('' for routine ones)."""
+def list_backups(where: str | None = None) -> list[dict]:
+    """Backups newest first: path, taken (UTC datetime), reason ('' for routine ones). Looks in the configured folder and the local fallback folder (see `backup`), or only in `where`."""
     out = []
-    for n in os.listdir(folder()) if os.path.isdir(folder()) else []:
-        m = NAME.match(n)
-        if m: out.append(dict(path=os.path.join(folder(), n), taken=datetime.strptime(m[1], '%Y%m%d-%H%M%S').replace(tzinfo=timezone.utc), reason=m[2] or ''))
+    for d in dict.fromkeys([where] if where else [folder(), os.path.join(settings.data_dir(), 'backups')]):
+        try: names = os.listdir(d) if os.path.isdir(d) else []
+        except OSError: names = []                              # an unreachable share lists nothing
+        for n in names:
+            if m := NAME.match(n): out.append(dict(path=os.path.join(d, n), taken=datetime.strptime(m[1], '%Y%m%d-%H%M%S').replace(tzinfo=timezone.utc), reason=m[2] or ''))
     return sorted(out, key=lambda b: b['taken'], reverse=True)
 
 
@@ -42,12 +44,23 @@ def _scratch(name: str) -> str:
     return os.path.join(settings.data_dir(), name)
 
 
+def _usable_folder() -> str:
+    """The backup folder, or the local default one while the configured folder (a share, say) cannot be written, so a backup is never lost to an unreachable share."""
+    try:
+        if not fs.reachable(folder()): raise OSError('backup folder not reachable')
+        os.makedirs(folder(), exist_ok=True)
+        probe = os.path.join(folder(), '.write-test'); open(probe, 'w').close(); os.remove(probe)
+        return folder()
+    except OSError:
+        local = os.path.join(settings.data_dir(), 'backups'); os.makedirs(local, exist_ok=True); return local
+
+
 def backup(reason: str = '', conn: sqlite3.Connection | None = None) -> str | None:
-    """Copy the live database to a new verified backup file and prune old ones; returns its path, or None when there is no database yet."""
+    """Copy the live database to a new verified backup file and prune old ones; returns its path, or None when there is no database yet. While the configured backup folder is unreachable the backup goes to `<data_dir>/backups` instead."""
     if conn is None and not os.path.exists(_db()): return None
-    os.makedirs(folder(), exist_ok=True)
+    dest = _usable_folder()
     stamp = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')
-    final = os.path.join(folder(), f'catalogue-{stamp}' + (f'-{reason}' if reason else '') + '.db'); work = _scratch('backup-building.tmp')
+    final = os.path.join(dest, f'catalogue-{stamp}' + (f'-{reason}' if reason else '') + '.db'); work = _scratch('backup-building.tmp')
     src = conn or sqlite3.connect(_db()); dst = sqlite3.connect(work)
     try: src.backup(dst)
     finally:
@@ -59,7 +72,7 @@ def backup(reason: str = '', conn: sqlite3.Connection | None = None) -> str | No
     finally:
         for f in (work, work + '-journal', final + '.tmp'):
             if os.path.exists(f): os.remove(f)
-    prune(); return final
+    prune(dest); return final
 
 
 def maybe_backup() -> str | None:
@@ -69,15 +82,16 @@ def maybe_backup() -> str | None:
     return backup()
 
 
-def prune(now: datetime | None = None):
-    now = now or datetime.now(timezone.utc); keep = set(); days = {}; weeks = {}
-    for b in list_backups():                                   # newest first, so setdefault keeps the newest of each day / week
+def prune(where: str | None = None, now: datetime | None = None):
+    """Apply the retention policy to the backups in one folder (default: the configured one)."""
+    where = where or folder(); now = now or datetime.now(timezone.utc); keep = set(); days = {}; weeks = {}
+    for b in list_backups(where):                                   # newest first, so setdefault keeps the newest of each day / week
         age = now - b['taken']
         if b['reason'] and age < timedelta(days=KEEP_SPECIAL_DAYS): keep.add(b['path'])
         if age < timedelta(days=KEEP_DAYS): days.setdefault(b['taken'].date(), b['path'])
         if age < timedelta(weeks=KEEP_WEEKS): weeks.setdefault(b['taken'].isocalendar()[:2], b['path'])
     keep |= set(days.values()) | set(weeks.values())
-    for b in list_backups():
+    for b in list_backups(where):
         if b['path'] not in keep: os.remove(b['path'])
 
 
