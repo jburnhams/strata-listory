@@ -31,6 +31,13 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-test.txt
       - run: pip install -r requirements-test.txt
+      - name: Install ffmpeg (and mp3gain where available) for the audio processing tests
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ffmpeg && (sudo apt-get install -y mp3gain || true)
+          elif [ "$RUNNER_OS" = "macOS" ]; then brew install ffmpeg && (brew install mp3gain || true)
+          else choco install ffmpeg -y --no-progress && (choco install mp3gain -y --no-progress || true); fi
+          ffmpeg -version | head -1
       - name: Lint (syntax errors and undefined names)
         run: ruff check src tests
       - name: Unit tests with coverage (unit suite only)
