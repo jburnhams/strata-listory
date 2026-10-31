@@ -11,8 +11,8 @@ class ToolError(RuntimeError):
     """Raised when ffmpeg/ffprobe is missing or fails on a file."""
 
 
-def run(cmd: list[str], timeout: int = 3600) -> subprocess.CompletedProcess:
-    try: return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+def run(cmd: list[str], timeout: int = 3600, cwd: str | None = None) -> subprocess.CompletedProcess:
+    try: return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
     except (OSError, subprocess.TimeoutExpired) as e: raise ToolError(f'{cmd[0]} failed: {e}')
 
 
@@ -31,11 +31,6 @@ def probe_file(path: str) -> dict:
     return dict(path=path, duration=dur, codec=a.get('codec_name', ''), channels=int(a.get('channels') or 1), sample_rate=int(a.get('sample_rate') or 0), bit_rate=round(br, 1),
                 chapters=[dict(start=float(c['start_time']), end=float(c['end_time']), title=(c.get('tags') or {}).get('title', '')) for c in d.get('chapters') or []],
                 tags={k.lower(): v for k, v in (fmt.get('tags') or {}).items()})
-
-
-def _filter_path(path: str) -> str:
-    """A file path inside an ffmpeg filter argument: forward slashes, and a drive letter's colon escaped."""
-    return path.replace('\\', '/').replace(':', '\\:')
 
 
 def _q(path: str) -> str:
@@ -64,7 +59,7 @@ def measure_book(segments: list[tuple], channels: int = 1) -> dict:
     """Loudness (integrated LUFS, true peak dBFS, loudness range) and pauses of a whole book in one decoding pass. For stereo also the loudness after a plain mono downmix, to catch channels that cancel each other."""
     with tempfile.TemporaryDirectory() as td:
         args = input_args(segments, td); pk = os.path.join(td, 'peaks.txt')
-        r = run(FFMPEG + args + ['-af', f'ebur128=peak=true,silencedetect=noise={SILENCE_DB}dB:d=1.2,astats=metadata=1:reset=1:length=0.4,ametadata=print:key=lavfi.astats.Overall.Peak_level:file={_filter_path(pk)}', '-f', 'null', '-'])
+        r = run(FFMPEG + args + ['-af', f'ebur128=peak=true,silencedetect=noise={SILENCE_DB}dB:d=1.2,astats=metadata=1:reset=1:length=0.4,ametadata=print:key=lavfi.astats.Overall.Peak_level:file=peaks.txt', '-f', 'null', '-'], cwd=td)        # a relative name: a Windows drive letter's colon cannot be put inside a filter argument
         if r.returncode: raise ToolError('loudness analysis failed: ' + r.stderr.strip()[-200:])
         out = dict(zip(('I', 'LRA', 'TP'), parse_ebur(r.stderr)))
         out['silences'] = parse_silences(r.stderr)
