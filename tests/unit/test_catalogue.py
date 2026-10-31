@@ -1,3 +1,4 @@
+import sys
 import os
 import pytest
 from hypothesis import given, strategies as st
@@ -79,6 +80,7 @@ def test_clean_keeps_explicit_none_numbers_and_ignores_unknown_fields():
     assert catalogue.clean(dict(), partial=True) == {}
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX-style absolute paths')
 def test_rebase_paths_moves_only_books_under_the_old_folder():
     for p in ('/share/audio/A', '/share/audio/B/01.mp3', '/share/audio', '/share/audio2/C', '/other/D', ''): catalogue.add_book(title=p or 'hand', path=p)
     assert sorted(catalogue.paths_under('/share/audio/')) == ['/share/audio', '/share/audio/A', '/share/audio/B/01.mp3']

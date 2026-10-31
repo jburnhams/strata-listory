@@ -15,6 +15,7 @@ SPLIT_ABOVE, SPLIT_TARGET = 60 * 60.0, 45 * 60.0   # a chapter is split only abo
 TINY = 2 * 60.0                             # credits and jingles: joined to a neighbour even beyond COMBINE_MAX (up to SPLIT_ABOVE), because a file of seconds is no use as a chapter
 PAUSE_MIN, CUT_WINDOW = 1.2, 6 * 60.0       # a cut goes at a pause of at least this many seconds within this many seconds of the ideal point
 LIMITER_MARGIN = 0.8                        # dB below TP_LIMIT for the limiter, because the mp3 encoder overshoots a little (measured: -0.7 dBFS true peak after encoding with a -1.5 limiter)
+SLIVER = 0.05                               # seconds: less than this of a file is rounding, not content
 GAIN_STEP = 1.5                             # dB: the resolution of lossless mp3 gain
 TIERS = {'V5': dict(q=5, rate=24000, kbps=49), 'V4': dict(q=4, rate=32000, kbps=70), 'V3': dict(q=3, rate=44100, kbps=100)}
 SAMPLE = (90.0, 3)                          # the spectrum is measured on up to 3 stretches of 90 s per chapter, not all of it
@@ -86,9 +87,9 @@ def segments(tl, start: float, end: float) -> list[tuple]:
     """The (file, in, out) pieces of the book timeline between `start` and `end`."""
     out = []
     for a, b, f in tl:
-        if b <= start or a >= end: continue
+        if min(b, end) - max(a, start) < SLIVER: continue                    # rounding can leave a few milliseconds of the previous file
         s, e = max(start, a) - a, min(end, b) - a
-        out.append((f['path'], round(s, 3), None if e >= f['duration'] - 0.01 else round(e, 3)))
+        out.append((f['path'], round(s, 3), None if e >= f['duration'] - SLIVER else round(e, 3)))
     return out
 
 

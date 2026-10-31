@@ -1,3 +1,4 @@
+import sys
 import sqlite3
 import pytest
 from app import backup, catalogue, db, matcher
@@ -106,6 +107,7 @@ def test_add_scanned_is_idempotent_refreshes_file_counts_and_replaces_fragments(
     assert b['file_count'] == 5 and b['title'] == 'a' and b['review'] == 'new'         # falls back to the file name when nothing could be parsed
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX-style absolute paths')
 def test_rescan_replaces_untouched_chapter_fragments_with_the_folder(tmp_path):
     folder = tmp_path / 'My_Book'; folder.mkdir()
     k = dict(title='', author='', narrator='', series_position=None, asin='', kind='book', file_count=1)

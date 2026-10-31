@@ -33,6 +33,11 @@ def probe_file(path: str) -> dict:
                 tags={k.lower(): v for k, v in (fmt.get('tags') or {}).items()})
 
 
+def _filter_path(path: str) -> str:
+    """A file path inside an ffmpeg filter argument: forward slashes, and a drive letter's colon escaped."""
+    return path.replace('\\', '/').replace(':', '\\:')
+
+
 def _q(path: str) -> str:
     return path.replace("'", "'\\''")
 
@@ -59,7 +64,7 @@ def measure_book(segments: list[tuple], channels: int = 1) -> dict:
     """Loudness (integrated LUFS, true peak dBFS, loudness range) and pauses of a whole book in one decoding pass. For stereo also the loudness after a plain mono downmix, to catch channels that cancel each other."""
     with tempfile.TemporaryDirectory() as td:
         args = input_args(segments, td); pk = os.path.join(td, 'peaks.txt')
-        r = run(FFMPEG + args + ['-af', f'ebur128=peak=true,silencedetect=noise={SILENCE_DB}dB:d=1.2,astats=metadata=1:reset=1:length=0.4,ametadata=print:key=lavfi.astats.Overall.Peak_level:file={pk}', '-f', 'null', '-'])
+        r = run(FFMPEG + args + ['-af', f'ebur128=peak=true,silencedetect=noise={SILENCE_DB}dB:d=1.2,astats=metadata=1:reset=1:length=0.4,ametadata=print:key=lavfi.astats.Overall.Peak_level:file={_filter_path(pk)}', '-f', 'null', '-'])
         if r.returncode: raise ToolError('loudness analysis failed: ' + r.stderr.strip()[-200:])
         out = dict(zip(('I', 'LRA', 'TP'), parse_ebur(r.stderr)))
         out['silences'] = parse_silences(r.stderr)

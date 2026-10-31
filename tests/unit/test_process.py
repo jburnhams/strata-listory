@@ -40,7 +40,8 @@ def test_input_args_single_and_concat(tmp_path):
     assert probe.input_args([('/a.mp3', 5.0, 15.0)], str(tmp_path)) == ['-ss', '5.000', '-t', '10.000', '-i', '/a.mp3']
     a = probe.input_args([("/it's/a.mp3", 2.0, None), ('/b.mp3', 0.0, 7.5)], str(tmp_path))
     assert a[:5] == ['-f', 'concat', '-safe', '0', '-i']
-    assert open(a[5]).read() == "file '/it'\\''s/a.mp3'\ninpoint 2.000\nfile '/b.mp3'\noutpoint 7.500\n"
+    ab = lambda x: os.path.abspath(x).replace("'", "'\\''")
+    assert open(a[5]).read() == f"file '{ab(chr(47) + 'it' + chr(39) + 's/a.mp3')}'\ninpoint 2.000\nfile '{ab('/b.mp3')}'\noutpoint 7.500\n"
 
 
 def test_names_and_titles():
@@ -52,10 +53,10 @@ def test_names_and_titles():
 
 
 def test_out_dir_for_and_years():
-    f = '/final'
-    assert P.out_dir_for(dict(title='Dune', author='Frank Herbert'), f, 1965) == '/final/Frank Herbert/[1965] Dune'
-    assert P.out_dir_for(dict(title='Dune', author='', series='Dune Chronicles', series_position=1.0), f) == '/final/Unknown author/Dune'          # no year: no brackets; no series level
-    assert P.out_dir_for(dict(title='A/B: C', author='X?'), f, 2001) == '/final/X_/[2001] A_B_ C'
+    f = '/final'; j = lambda *a: os.path.join(f, *a)
+    assert P.out_dir_for(dict(title='Dune', author='Frank Herbert'), f, 1965) == j('Frank Herbert', '[1965] Dune')
+    assert P.out_dir_for(dict(title='Dune', author='', series='Dune Chronicles', series_position=1.0), f) == j('Unknown author', 'Dune')          # no year: no brackets; no series level
+    assert P.out_dir_for(dict(title='A/B: C', author='X?'), f, 2001) == j('X_', '[2001] A_B_ C')
 
 
 def test_tiers_gain_and_copy_rules():
@@ -411,3 +412,9 @@ def test_a_book_of_unpadded_files_is_planned_in_the_right_order(tmp_path):
     b = catalogue.add_book(title='Unpadded', author='A', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
     got = [(c['title'], os.path.basename(c['segments'][0][0]), round(c['duration'])) for c in p['chapters']]
     assert got == [(f'Title {i}', f'{i}.mp3', 700) for i in (1, 2, 3, 9, 10, 11, 12)], got
+
+
+def test_a_chapter_does_not_pick_up_a_sliver_of_the_previous_file():
+    files = [dict(path='a', duration=700.0123), dict(path='b', duration=700.0)]; tl = P.timeline(files)
+    assert P.segments(tl, 700.01, 1400.0) == [('b', 0.0, None)]                                                  # 2 ms of rounding is not content
+    assert P.segments(tl, 700.0, 1400.0123) == [('b', 0.0, None)] and P.segments(tl, 699.0, 701.0) == [('a', 699.0, None), ('b', 0.0, 0.988)]

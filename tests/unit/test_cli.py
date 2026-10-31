@@ -1,3 +1,4 @@
+import sys
 import importlib, json, os
 import pytest
 from app import cli
@@ -172,6 +173,7 @@ def test_scan_reports_a_down_share_and_an_interrupted_scan(capsys, tmp_path, mon
     with pytest.raises(SystemExit, match='interrupted .Host is down.; nothing was changed'): cli.main(['scan', str(lib)])
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX-style absolute paths')
 def test_use_library_checks_the_copy_then_moves_paths_and_setting(capsys, tmp_path):
     from app import catalogue, settings
     old, new = tmp_path / 'share', tmp_path / 'local'

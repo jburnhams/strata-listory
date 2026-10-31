@@ -1,3 +1,5 @@
+import sys
+import pytest
 import json, os
 from app import catalogue, mirror, settings
 
@@ -9,6 +11,7 @@ def lib(tmp_path):
     root = tmp_path / 'audio'; root.mkdir(); settings.save(dict(library_dir=str(root))); return root
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX-style absolute paths')
 def test_folder_layout_mirrors_the_library(tmp_path):
     root = lib(tmp_path); (root / 'Ian Rankin' / '01 Witch Hunt').mkdir(parents=True); (root / 'Books').mkdir(); (root / 'Books' / 'Loose.mp3').write_bytes(b'x')
     rel = lambda b: os.path.relpath(mirror.dir_for(b), mirror.root()).replace(os.sep, '/')
