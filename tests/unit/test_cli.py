@@ -218,3 +218,14 @@ def test_process_approval_commands(capsys, monkeypatch, tmp_path):
     catalogue.set_plan(2, 'approved', plan, keep_plan=False)
     monkeypatch.setattr(R, 'execute', lambda *a, **k: (_ for _ in ()).throw(pq.probe.ToolError('boom')))
     assert cli.main(['process-run']) == 1 and 'failed 1' in capsys.readouterr().out
+
+
+def test_doctor_audio_checks_optional_modules_and_native_tools(monkeypatch,capsys):
+    from app import cli
+    monkeypatch.setattr(cli.shutil,'which',lambda name:'/tools/'+name)
+    monkeypatch.setattr(cli.importlib,'import_module',lambda name:type('Module',(),{'__version__':'test'})())
+    assert cli.main(['doctor','--audio'])==0
+    assert 'numpy test' in capsys.readouterr().out
+    monkeypatch.setattr(cli.shutil,'which',lambda name:None)
+    assert cli.main(['doctor','--audio'])==1
+    assert 'MISSING' in capsys.readouterr().out

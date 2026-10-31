@@ -1,5 +1,64 @@
 # Progress log
 
+## 2026-10-31: books-only ingest-to-output pilot
+
+- Deferred non-books at the user's request. Processed three reviewed book matches with direct Audible product checks and explicit manual review events, retaining unknown corroboration and unchanged global automation settings.
+- Private Equity: 12 chapters, -18.1 LUFS/-1.6 dBTP; Is This Anything?: 9 chapters, -18.9/-1.1; Outliers: 16 chapters, -19.2/-1.6. Durations, original source hashes and portable evidence verified. Previous Seinfeld pilot output preserved separately.
+- Fixed selected-source handoff validation to include preserved alternatives and fixed the stereo-to-mono gain decision to use measured mono loudness. Existing encoding, loudness tolerance and peak thresholds retained. 296 unit tests passed, 95.52% coverage; targeted real-audio integration, lint and diff checks passed.
+- Full outcomes and review limitations: [book-output-pilot-2026-10-31.md](book-output-pilot-2026-10-31.md).
+
+## 2026-10-31: optional audio analysis dependencies installed
+
+- Installed signed Arch Chromaprint 1.6.2 user-locally and NumPy 2.5.4/SciPy 1.18.1 in the project virtual environment. Added optional requirements and `./app doctor --audio` checks, with unit coverage.
+- Verified real local fingerprints and waveform alignment against matching Hitch-22 excerpts and an unrelated recording. Dependency consistency passed. These smoke tests do not change ingest thresholds or its current alignment implementation. Setup and evidence: [audio-tools.md](audio-tools.md).
+
+## 2026-10-31: integrated staged ingest and metric policies
+
+- Built the nine-stage ingest pipeline with append-only stage attempts, timings, raw response archives, immutable source manifests and policy snapshots. Added CLI/API and Ingest UI for background jobs, saved metric evaluation, resumable failures and manual proposal. SQLite migration 8 uses existing pre-migration backups.
+- Integrated work/recording evidence, selected candidate details/reviews, numeric Audible IDs, Apple public page details, optional keyed Google Books, per-file alignment, quality and source selection. Verified partials remain alternatives; differing/unresolved performances require review. Existing processor consumes only selected files and reused measurements. Final metadata carries selected values/provenance, rejected alternatives and copies of raw source evidence.
+- Added atomic group proposals/plan claims, full-hash/sidecar/catalogue/evidence revalidation, auto-job isolation, downstream processing metrics and content-hash quality reuse. Automation defaults off. Metrics/thresholds are predicates, not confidence percentages; unknowns fail closed.
+- Live run `19e1dc09b3d04882a86fb1420567bf45` selected Hitch-22 MP3s: 99.9849% coverage, zero unmatched windows, -1.1 dBTP. All stages completed; 21/25 initial gates passed and four reasons kept it in review. No live processing. Per-part matching was corrected during validation so encoder timing differences do not suppress full-source coverage. Earlier run retained.
+- Validation: 293 backend unit tests, 11 integration tests and 42 web tests passed; backend coverage 95.48%, web coverage gate/typecheck/build and lint passed.
+- Usage, stages, thresholds, preservation model, calibration limits and validation: [ingest-pipeline.md](ingest-pipeline.md).
+
+
+## 2026-10-31: Hitch-22 audio alignment and quality pilot
+
+- Added an offline experimental comparison module (`python -m app.audio_compare`): local 100 ms energy fingerprints, whole-window correlation, conservative anchored refinement, unresolved/ambiguous states, source hashes, per-file timing maps, coverage and sampled quality diagnostics. No external audio service or new dependency.
+- All 15 MP3 parts align to the whole M4B; 2108/2108 windows matched, covering 99.9849% of the reference by correlated intervals. Small boundary differences remain below the feature resolution; neither source has embedded chapter markers. This identifies the same performance, not bit-identical audio or semantic chapters.
+- Additional whole-book quality scans and matched spectral samples support preferring the MP3 set: mono 80 kbps/22.05 kHz vs AAC 16 kbps/12 kHz, more high-frequency energy, -1.1 vs +0.8 dBTP. Both decode successfully. All 16 originals rehashed unchanged; no processing approved.
+- Full report and provenance: [hitch22-audio-comparison-2026-10-31.md](hitch22-audio-comparison-2026-10-31.md). Unit/adversarial and real FFmpeg tests cover excerpts, reordered parts, gain/encoding changes, edits, repeated content and negative controls.
+
+
+## 2026-10-31: approved seven-source comparison completed
+
+- User explicitly approved all listed services; ran fresh Audible UK/US, Audnexus, Hardcover, AudiobookDB, Open Library, Apple Books and five Google Books attempts against the original sample. Saved 179 response/page snapshots without credentials or audio. Google returned 429 throughout and contributed no corroboration.
+- Investigator outcome: 18/20 identities externally supported; 14 book-related entries represent 13 original works, plus stand-up, one short story and two Audible episodes. The two radio episodes remain externally unresolved. Four entries have embedded IDs corroborated by fresh Audible; another 12 have recording candidates, not automatic approvals.
+- Apple product pages supplied narrator/language/duration missing from search results. Collected 45 selected Hardcover review excerpts and 41 Audible product review excerpts. Rejected Thai Outliers and Spanish Hitch-22 false positives; preserved regional/reissue conflicts. Full Sherlock collection measures 3484.5 minutes vs Audible 3484.
+- Findings, source assessment and per-entry judgements: [sample20-multisource-review-2026-10-31.md](sample20-multisource-review-2026-10-31.md). Raw and structured evidence under `data/sample20-investigation-20261031T100258/`. No product-code, catalogue or queue changes.
+
+
+## 2026-10-31: investigator review of all 20 samples
+
+- Fresh Open Library on original catalogue fields: 2 unique links. Recovering titles/authors from tags and parent groups: 9 unique links, 4 duplicate-work ambiguities, plus a convincing Skunk Works candidate rejected by literal author comparison. Investigator assessment: 13 strong book-work identifications, 1 probable, 6 other audio items; 6 of the book entries are fragments, including two from the same book.
+- Found duplicated complete M4B + MP3 parts for Hitch-22, explicit unabridged sidecar values ignored by the assessor, and a suspicious publication year for Private Equity. Full per-entry judgements, evidence paths and additional-source assessment: [sample20-review-2026-10-31.md](sample20-review-2026-10-31.md).
+- Expanded provider investigation was blocked by automatic approval review pending explicit user approval of the destinations/account-backed API calls. Fresh external findings here are Open Library only; no catalogue or queue changes.
+
+
+## 2026-10-31: fresh Open Library evidence
+
+- `evidence-report --fresh-openlibrary` searches the candidate title and authors, fetches a uniquely matching work and its ratings, and includes the work description, subjects, original publication year and attributed rating/count. Conflicting recording identities, ambiguous works and contradictory work details are not linked. Work metadata cannot establish recording identity.
+- Every search, details or ratings response (including failed requests) is archived before use in a unique, exclusively created JSON file under `data/evidence/openlibrary/`, with book ID, query, URL and retrieval timestamp. Raw unknown fields are retained. Refreshes never overwrite earlier responses or catalogue metadata; default reports remain offline. API reference: https://openlibrary.org/dev/docs/api/books and https://openlibrary.org/dev/docs/api/search.
+
+
+## 2026-10-31: read-only identity evidence baseline
+
+- Added `evidence-report [IDS] --limit N --stride N`: SQLite read-only snapshot, no normal DB connection/migrations/backups, provider requests, cache writes or queue changes. Every audio file is probed without the book page's 60-file cap. The JSON retains original catalogue/suggestion/extras, all root Audible sidecars, full ffprobe JSON, filename parsing, timestamps and file signatures. Selection retains field provenance, alternatives and manual locks.
+- Separate work and recording checks: full title/author agreement, book-catalogue linkage, narrator/identifier, explicit abridgement, measured duration (2% or 120 seconds), album tags and conflicting source fields. Audible/Audnexus/sidecar count as one family. Assessment is deliberately conservative and not a probability. Even candidates cannot automatically process.
+- Live stored-evidence sample: 20 books, every 25th eligible item by ID; all 20 require review. All lack a qualifying independent source family, linked work metadata and explicit abridgement; 18 lack recording identity/runtime evidence. One catalogue/filename title conflicts with recording metadata. Artifact: `data/evidence-report-2026-10-31.json` (local, gitignored). No conclusion about fresh provider hit rate follows from this stored-only sample.
+- Next: fresh multi-source evidence collection with append-only history, edition-aware candidate association and explicit abridgement/recording fields before calibrating automatic approvals. Existing expiring provider caches are not an archive. File signatures are size/mtime, not content hashes; file completeness beyond what is present cannot yet be proven.
+
+
 ## 2026-10-30: the processor
 
 - Metadata is now merged across sources instead of falling back down a list (user's direction: audiobooks have narrators and producers, the original book has its own metadata, match as many sources as possible and choose the best of each). Probes first: ISBN as the link from audiobook to book rarely works (Audnexus ISBN for 11 of 30 Audible books, Open Library found 0 of those 11, Hardcover recognised 0 of 30 ASINs), so the link is title + author with the audiobook sources agreeing first. New `merge.py` (weighted agreement per field, layers, locks, alternatives kept) and `sources.py` (normalised records, two-step gather, resolve, rows). Added a `locked` column: fields set by hand win; confirming a match locks nothing. Real result: Brave New World now resolves to Aldous Huxley / Michael York / Blackstone Audio / 1932, with "CBS Radio Workshop" shown as outvoted; Right to Kill gains its narrator (Dick Hill) and ASIN from the Audible catalogue search although the folder had none.

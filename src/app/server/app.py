@@ -11,13 +11,19 @@ import os
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app import __version__, catalogue, db, details, enrich, fs, matcher, providers, scan, settings
 from app.process import queue as pq
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 LANDING = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'landing.html')
+
+
+class IngestIn(BaseModel):
+    ids: list[int] | None = None
+    limit: int = Field(default=5,ge=1,le=200)
+    online: bool = True
 
 
 class SettingsIn(BaseModel):
@@ -149,6 +155,41 @@ def create_app():
     def post_run():
         if not catalogue.list_plans(('approved',)): raise HTTPException(400, 'nothing is approved yet')
         worker.submit('run'); return queue_view()
+
+    from app.ingest import pipeline as ingest, policy as ingest_policy, store as ingest_store
+    from app.ingest.worker import Worker as IngestWorker
+    ingest_worker=IngestWorker()
+
+    def ingest_guard(fn,*args,**kwargs):
+        try:return guard(fn,*args,**kwargs)
+        except (ValueError,OSError) as e:raise HTTPException(400,str(e))
+
+    @app.get('/api/ingest')
+    def get_ingest():return dict(ingest.dashboard(),worker=ingest_worker.status())
+
+    @app.post('/api/ingest/run')
+    def run_ingest(b:IngestIn):
+        if b.ids is not None:
+            if not b.ids or len(b.ids)>200:raise HTTPException(400,'select 1..200 book IDs')
+            for bid in b.ids:guard(catalogue.get_book,bid)
+        ingest_worker.submit('run',ids=b.ids,limit=b.limit,online=b.online)
+        return dict(queued=True,worker=ingest_worker.status())
+
+    @app.get('/api/ingest/runs/{run_id}')
+    def get_ingest_run(run_id:str):return ingest_guard(ingest_store.get,run_id)
+
+    @app.post('/api/ingest/runs/{run_id}/resume')
+    def resume_ingest(run_id:str):
+        ingest_guard(ingest_store.get,run_id);ingest_worker.submit('resume',run_id=run_id);return dict(queued=True)
+
+    @app.post('/api/ingest/runs/{run_id}/evaluate')
+    def evaluate_ingest(run_id:str):return ingest_guard(ingest.evaluate,run_id)
+
+    @app.post('/api/ingest/runs/{run_id}/enqueue')
+    def enqueue_ingest(run_id:str):return ingest_guard(ingest.enqueue,run_id)
+
+    @app.put('/api/ingest/policy')
+    def put_ingest_policy(b:dict):return ingest_guard(ingest_policy.save,b)
 
     @app.get('/api/providers')
     def get_providers(): return providers.status()

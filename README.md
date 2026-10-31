@@ -1,6 +1,6 @@
 # Strata Listory
 
-A local-first app to catalogue and process my audiobooks. This is the first step: a catalogue of books (CLI, HTTP API and web UI) on top of a Python + React stack. Processing (scanning a folder of audio files, reading tags, chapters, conversion) comes next.
+A local-first app to catalogue and process my audiobooks. The CLI, HTTP API and web UI now support a staged ingest pipeline: source inventory and grouping, metadata evidence, recording alignment, quality checks, source selection and a processing approval queue. Every stage retains metrics and evidence for threshold calibration.
 
 The stack comes from the `python-app-template`: a FastAPI backend and CLI (`src/app/`), a React 19 + TypeScript + Tailwind CSS v4 frontend (`web/`) that builds into the Python package, hermetic unit and integration test suites (pytest + hypothesis, Vitest + Testing Library + MSW), ratcheting coverage gates, and multi-OS GitHub Actions CI.
 
@@ -9,13 +9,18 @@ The stack comes from the `python-app-template`: a FastAPI backend and CLI (`src/
 ```bash
 scripts/setup_env.sh                          # macOS / Linux (or scripts\setup_env.ps1 on Windows)
 ./app doctor                                  # check the environment
+./app doctor --audio                          # also check optional audio analysis tools
 ./app add "Dune" --author "Frank Herbert" --series Dune --series-position 1
 ./app list                                    # the catalogue (search with ./app list herbert --status unlistened)
 ./app backup                                  # back up the database now (also automatic daily)
 ./app set library_dir ~/audio                 # where the audiobooks live
 ./app scan                                    # find books (read-only), add them as `new`; --dry-run just counts
+./app ingest-run --limit 5                    # staged evidence, audio comparison, quality and plan
+./app ingest-status                           # metrics, review reasons and threshold policy
 ./app providers                               # which metadata providers can run
 ./app match                                   # look new books up with them and record suggestions
+./app evidence-report --limit 20 --stride 25  # JSON snapshot using stored sources
+./app evidence-report 151 --fresh-openlibrary # fetch work details + ratings, archive every response
 ./app match-test --limit 60 --stride 25       # compare providers on a sample, records nothing
 ./app list --review suggested                 # check them; ./app confirm ID applies a suggestion, ./app ignore ID drops one
 ./app serve                                   # web UI + API on http://127.0.0.1:8360/
@@ -78,3 +83,11 @@ cd web && npm run test:coverage:gate    # web unit + jsdom integration tests aga
 ```
 
 See [tests/README.md](tests/README.md) and [web/tests/README.md](web/tests/README.md) for the test layout, hermetic fixtures, and file-ownership conventions.
+
+## Experimental source comparison
+
+The offline audio-comparison prototype locates parts within a complete recording, reports correlated coverage and preserves source hashes and sampled quality diagnostics. Run `PYTHONPATH=src .venv/bin/python -m app.audio_compare REFERENCE PART1 PART2 --out data/new-comparison` with a new output directory. It never approves processing. See the [Hitch-22 pilot](docs/hitch22-audio-comparison-2026-10-31.md) for measured results, source-selection reasoning and limits.
+
+## Staged ingest
+
+Use the **Ingest** page to analyse entries, inspect per-stage metrics and evidence, edit versioned thresholds and evaluate saved runs without rescanning audio. Automatic approval and processing are off by default. See [the pipeline guide](docs/ingest-pipeline.md) for stages, policy calibration, source preservation and CLI commands.

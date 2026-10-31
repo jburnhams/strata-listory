@@ -205,17 +205,17 @@ def out_dir_for(book: dict, final_dir: str, year: int | None = None) -> str:
     return os.path.join(final_dir, author, f'[{year}] {title}' if year else title)
 
 
-def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: dict | None = None, records: dict | None = None) -> dict:
+def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: dict | None = None, records: dict | None = None, *, input_paths: list[str] | None = None, measurements: dict | None = None) -> dict:
     """Everything needed to process the book, as plain data (JSON-serialisable)."""
     r = sources.resolve(book, records if records is not None else sources.local_records(book, audible, extras)); year, year_src, year_note = r['year'], r['year_source'], r['year_note']
     title, author = r['title'], ', '.join(r['authors']); naming = dict(book, title=title, author=author)
     warnings_pre = ['no year found: the folder will have no [year]; set one with `./app edit ID --year YYYY`'] if not year else ([f'year: {year_note}'] if year_note else [])
-    paths = sorted(details.audio_files(book['path']), key=probe.natural_key)
+    paths = list(input_paths) if input_paths is not None else sorted(details.audio_files(book['path']), key=probe.natural_key)
     if not paths: raise probe.ToolError(f"no audio files in {book['path']}")
     files = [probe.probe_file(p) for p in paths]; by_path = {f['path']: f for f in files}; tl = timeline(files)
     warnings = list(warnings_pre)
     if (w := order_warning(files)): warnings.append(w)
-    m = probe.measure_book([(f['path'], 0.0, None) for f in files], max(f['channels'] for f in files))
+    m = measurements if measurements is not None else probe.measure_book([(f['path'], 0.0, None) for f in files], max(f['channels'] for f in files))
     downmix = 'average'
     if m.get('mono_I') is not None and m['mono_I'] < m['I'] - 3:
         downmix = 'left'; warnings.append(f"stereo channels partly cancel in a mono mix ({m['mono_I']:.1f} vs {m['I']:.1f} LUFS): using the left channel only")
@@ -226,7 +226,11 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: d
         if copyable(segs, by_path): c.update(mode='copy', tier='copy', kbps=round(max(by_path[p]['bit_rate'] for p, _, _ in segs), 1))
         else:
             sp = probe.spectrum([sg for a, b in sample_ranges(c['start'], c['end']) for sg in segments(tl, a, b)]); t = pick_tier(sp['hf_db'], sp['pause_frac']); c.update(mode='encode', tier=t, kbps=TIERS[t]['kbps'], hf_db=sp['hf_db'], pause_frac=sp['pause_frac'])
-    g = decide_gain(m['I'], m['TP'], any(c['mode'] == 'copy' for c in chapters), m.get('peak_p99'))
+    # The mono output can measure 3 dB quieter than dual-channel speech. Apply
+    # the existing tolerance to that measured signal, not its stereo input.
+    normalisation_i = m.get('mono_I') if downmix == 'average' and max(f['channels'] for f in files) > 1 else None
+    if normalisation_i is None: normalisation_i = m['I']
+    g = decide_gain(normalisation_i, m['TP'], any(c['mode'] == 'copy' for c in chapters), m.get('peak_p99'))
     if g['reencode']:                                       # lossless gain could not make the book loud enough: re-encode all of it
         for c in chapters:
             if c['mode'] == 'copy':
@@ -238,5 +242,5 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: d
     if g['db'] > QUIET_TOL and short > 0.5: warnings.append(f"ends {short:.1f} dB below the target because its peaks leave no more room")
     in_bytes = sum(os.path.getsize(f['path']) for f in files); est = sum(c['duration'] * c['kbps'] * 1000 / 8 for c in chapters)
     return dict(book_id=book['id'], title=title, author=author, out_dir=out_dir_for(naming, final_dir, year), year=year, year_source=year_src, metadata=sources.rows(book, r), narrator=', '.join(r['narrators']), series=r['series'], series_position=r['series_position'], publisher=r['publisher'], genres=r['genres'][:6], chapter_source=source, downmix=downmix, duration=round(sum(f['duration'] for f in files), 1),
-                loudness=dict(I=m['I'], TP=m['TP'], LRA=m['LRA'], target=TARGET_LUFS, gain_db=g['db'], apply_db=g['apply_db'], gain_steps=g['steps'], decision=g['why'], reencoded=g['reencode'], peak_p99=m.get('peak_p99')), chapters=chapters, warnings=warnings,
+                loudness=dict(I=m['I'], normalisation_I=normalisation_i, TP=m['TP'], LRA=m['LRA'], target=TARGET_LUFS, gain_db=g['db'], apply_db=g['apply_db'], gain_steps=g['steps'], decision=g['why'], reencoded=g['reencode'], peak_p99=m.get('peak_p99')), chapters=chapters, warnings=warnings,
                 in_bytes=in_bytes, est_bytes=int(est), in_files=len(files), channels=max(f['channels'] for f in files))

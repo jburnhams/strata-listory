@@ -11,7 +11,10 @@ from app.providers.base import MatchError, Provider
 from app.providers.hardcover import Hardcover
 from app.providers.openlibrary import OpenLibrary
 
-ALL = (Audnexus, AudibleSearch, Hardcover, AudiobookDB, OpenLibrary)
+from app.providers.applebooks import AppleBooks
+from app.providers.googlebooks import GoogleBooks
+
+ALL = (Audnexus, AudibleSearch, Hardcover, AudiobookDB, OpenLibrary, AppleBooks, GoogleBooks)
 _instances: dict = {}
 
 

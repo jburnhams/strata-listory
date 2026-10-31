@@ -98,7 +98,15 @@ def execute(book: dict, plan: dict, force: bool = False) -> dict:
                        loudness_before=plan['loudness']['I'], loudness_after=after['I'], true_peak_after=after['TP'], gain_db=plan['loudness']['apply_db'], decision=plan['loudness']['decision'], reencoded=plan['loudness']['reencoded'], retries=retries, downmix=plan['downmix'], warnings=plan['warnings'], seconds=round(time.time() - t0, 1),
                        finished=datetime.now(timezone.utc).isoformat())
         if after['I'] is not None and abs(after['I'] - P.TARGET_LUFS) > 2.5: summary['warnings'] = summary['warnings'] + [f"final loudness {after['I']:.1f} LUFS is {after['I'] - P.TARGET_LUFS:+.1f} dB from the target"]
-        with open(os.path.join(partial, 'metadata.json'), 'w', encoding='utf8') as f: json.dump(dict(book={k: v for k, v in book.items() if k != 'suggestion'}, result=summary, chapters=[{k: c[k] for k in ('file', 'title', 'start', 'end', 'duration', 'mode', 'tier')} for c in plan['chapters']]), f, indent=1, ensure_ascii=False)
+        final_book={k:v for k,v in book.items() if k!='suggestion'}
+        for key in ('title','author','narrator','series','series_position','year'):
+            if key in plan:final_book[key]=plan[key]
+        evidence_files=[]
+        for n,e in enumerate(plan.get('ingest',{}).get('evidence_manifest',[])):
+            folder=os.path.join(partial,'evidence');os.makedirs(folder,exist_ok=True);name=f'{n:04d}-'+os.path.basename(e['path'])
+            shutil.copyfile(e['path'],os.path.join(folder,name));evidence_files.append(dict(file='evidence/'+name,sha256=e['sha256']))
+        with open(os.path.join(partial,'metadata.json'),'w',encoding='utf8') as f:
+            json.dump(dict(book=final_book,result=summary,metadata=plan.get('metadata_evidence'),ingest=plan.get('ingest'),evidence_files=evidence_files,chapters=[{k:c[k] for k in ('file','title','start','end','duration','mode','tier')} for c in plan['chapters']]),f,indent=1,ensure_ascii=False)
         if os.path.exists(out_dir):
             old = out_dir + '.old'; shutil.rmtree(old, ignore_errors=True); os.replace(out_dir, old); os.replace(partial, out_dir); shutil.rmtree(old, ignore_errors=True)
         else: os.makedirs(os.path.dirname(out_dir), exist_ok=True); os.replace(partial, out_dir)

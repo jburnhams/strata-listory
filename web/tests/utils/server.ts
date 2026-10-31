@@ -13,6 +13,13 @@ export const hardcover = {
   reviews: [{ user: 'reader1', rating: 5, text: 'A masterpiece.', spoilers: false, likes: 12, date: '2020-01-02' }, { user: 'reader2', rating: 3, text: 'x'.repeat(800), spoilers: false, likes: 3, date: '' }, { user: 'reader3', rating: null, text: 'The twist is big.', spoilers: true, likes: 1, date: '2021-05-06' }],
 }
 
+export const ingestFixture = () => ({
+  policy: { revision: 0, auto_approve: false, auto_process: false, providers: ['audible'], allowed_kinds: ['book'], gates: { 'recording.score': { min: .9 } } },
+  stages: ['inventory', 'identity'], worker: { busy: null as string | null, queued: 0, last: {} },
+  runs: [{ id: 'run1', book_id: 1, title: 'Dune', state: 'review', created: '2026-10-31', stage: 'eligibility', members: [1, 2], metrics: { 'recording.score': null }, stages: [{ stage: 'inventory', status: 'done', elapsed: 1.25, error: '', metrics: {} }], eligibility: null,
+    current_evaluation: { eligible: false, kind_allowed: true, checks: [{ metric: 'recording.score', value: null as number | null, threshold: { min: .9 }, passed: false, reason: 'missing measurement' }], policy: {} } }],
+})
+
 const planSummary = (over: object = {}) => ({ year: 2007, metadata: [{ field: 'Title', value: 'Dune', source: 'audible + audiobookdb match (confirmed)', note: '' }, { field: 'Author', value: 'CBS Radio Workshop, Frank Herbert', source: 'audiobookdb match (confirmed)', note: 'the Audible metadata file says: Frank Herbert' }, { field: 'Year', value: '2007', source: 'Audible metadata file', note: '' }], hours: 8.2, files: 18, chapters: 18, chapter_source: 'Audible chapter list', tiers: { V5: 17, V3: 1 }, in_bytes: 382_000_000, est_bytes: 177_000_000, out_dir: '/home/u/audiobooks/A/Dune', loudness_before: -23.4, loudness_after_est: -20.9, decision: 'too quiet: lifted with a limiter', reencoded: false, warnings: ['ends 2.9 dB below the target because its peaks leave no more room'], downmix: 'average',
   chapter_list: [{ file: '01 - One.mp3', title: 'One', minutes: 29.4, mode: 'encode', tier: 'V5' }, { file: '02 - Two.mp3', title: 'Two', minutes: 21.4, mode: 'copy', tier: 'copy' }], ...over })
 
@@ -141,4 +148,12 @@ export const handlers = [
   }),
 ]
 
-export const server = setupServer(...handlers)
+export const server = setupServer(
+  http.get('/api/ingest', () => HttpResponse.json(ingestFixture())),
+  http.post('/api/ingest/run', () => HttpResponse.json({ queued: true })),
+  http.get('/api/ingest/runs/:id', () => HttpResponse.json({ evidence: 'preserved' })),
+  http.post('/api/ingest/runs/:id/resume', () => HttpResponse.json({ queued: true })),
+  http.post('/api/ingest/runs/:id/evaluate', () => HttpResponse.json({ eligible: false })),
+  http.post('/api/ingest/runs/:id/enqueue', () => HttpResponse.json({ book_id: 1, approved: false })),
+  http.put('/api/ingest/policy', async ({ request }) => HttpResponse.json(await request.json())),
+...handlers)
