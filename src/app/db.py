@@ -23,6 +23,12 @@ SCHEMA = (
     """ALTER TABLE books ADD COLUMN year INTEGER;
        ALTER TABLE books ADD COLUMN year_source TEXT NOT NULL DEFAULT ''""",
     "ALTER TABLE books ADD COLUMN locked TEXT NOT NULL DEFAULT ''",
+    """CREATE TABLE ingest_runs(id TEXT PRIMARY KEY, book_id INTEGER NOT NULL, created TEXT NOT NULL, state TEXT NOT NULL, options TEXT NOT NULL, version INTEGER NOT NULL);
+       CREATE TABLE ingest_events(id INTEGER PRIMARY KEY AUTOINCREMENT,run_id TEXT NOT NULL,stage TEXT NOT NULL,status TEXT NOT NULL,created TEXT NOT NULL,elapsed REAL NOT NULL,metrics TEXT NOT NULL,data TEXT NOT NULL,error TEXT NOT NULL);
+       CREATE INDEX ingest_events_run ON ingest_events(run_id,id);
+       CREATE TABLE ingest_members(run_id TEXT NOT NULL,book_id INTEGER NOT NULL,PRIMARY KEY(run_id,book_id));
+       CREATE INDEX ingest_members_book ON ingest_members(book_id);
+       CREATE TABLE ingest_policy(id INTEGER PRIMARY KEY AUTOINCREMENT,created TEXT NOT NULL,data TEXT NOT NULL)""",
 )       # schema version n is SCHEMA[n-1]; append new migrations, never edit old ones (PRAGMA user_version tracks the applied count)
 
 

@@ -98,7 +98,7 @@ def test_cache_expires_after_a_week(fake_urlopen):
 
 def test_each_provider_declares_its_own_rate_limit_and_cache_lifetime(fake_urlopen):
     limits = {c.name: (c.min_interval, c.cache_days) for c in providers.ALL}
-    assert limits == {'audnexus': (0.3, 14), 'audible': (0.3, 14), 'hardcover': (1.1, 14), 'audiobookdb': (0.15, 7), 'openlibrary': (0.5, 30)}
+    assert limits == {'audnexus': (0.3, 14), 'audible': (0.3, 14), 'hardcover': (1.1, 14), 'audiobookdb': (0.15, 7), 'openlibrary': (0.5, 30), 'applebooks': (3.1, 7), 'googlebooks': (1.1, 7)}
     assert all(c().http.min_interval == c.min_interval for c in providers.ALL)                 # the HTTP client throttles at the provider's own rate
     assert {s['name']: (s['min_interval'], s['cache_days']) for s in providers.status()} == limits
     p = audnexus.Audnexus(); p.cache_days = 0                                                      # a lifetime of zero: always refetched

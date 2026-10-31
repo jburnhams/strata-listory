@@ -304,3 +304,25 @@ def plan_counts() -> dict:
     c = db.connect()
     try: return {r['state']: r['n'] for r in c.execute('SELECT state, COUNT(*) n FROM process_plan GROUP BY state')}
     finally: c.close()
+
+
+def claim_plan(book_id):
+    """Atomically claim an approved plan so concurrent workers cannot both run it."""
+    c=db.connect()
+    try:
+        with c:return c.execute("UPDATE process_plan SET state='running' WHERE book_id=? AND state='approved'",(book_id,)).rowcount==1
+    finally:c.close()
+
+
+def enqueue_ingest_plan(book_id,members,plan):
+    """Reserve a whole group's proposal atomically, without replacing human decisions."""
+    c=db.connect()
+    try:
+        c.execute('BEGIN IMMEDIATE');_one(c,book_id)
+        for bid in members:
+            if c.execute('SELECT 1 FROM process_plan WHERE book_id=?',(bid,)).fetchone():raise CatalogueError('group already has a processing plan')
+            if c.execute("SELECT 1 FROM processed WHERE book_id=? AND status='done'",(bid,)).fetchone():raise CatalogueError('group already processed')
+        now=datetime.now(timezone.utc).isoformat()
+        c.execute('INSERT INTO process_plan(book_id,state,plan,error,created,updated) VALUES (?,?,?,?,?,?)',(book_id,'proposed',json.dumps(plan),'',now,now))
+        c.commit()
+    finally:c.close()

@@ -96,7 +96,7 @@ def test_scan_match_confirm_endpoints(client, tmp_path, monkeypatch):
     r = client.post('/api/match'); assert r.status_code == 502 and 'API key' in r.json()['detail']
     monkeypatch.undo()
     assert client.post('/api/match', params=dict(providers='nope')).status_code == 400
-    assert [p['name'] for p in client.get('/api/providers').json()] == ['audnexus', 'audible', 'hardcover', 'audiobookdb', 'openlibrary']
+    assert [p['name'] for p in client.get('/api/providers').json()] == ['audnexus', 'audible', 'hardcover', 'audiobookdb', 'openlibrary', 'applebooks', 'googlebooks']
 
 
 def test_book_details_and_cover_endpoints(client, tmp_path, monkeypatch):

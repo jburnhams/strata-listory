@@ -418,3 +418,17 @@ def test_a_chapter_does_not_pick_up_a_sliver_of_the_previous_file():
     files = [dict(path='a', duration=700.0123), dict(path='b', duration=700.0)]; tl = P.timeline(files)
     assert P.segments(tl, 700.01, 1400.0) == [('b', 0.0, None)]                                                  # 2 ms of rounding is not content
     assert P.segments(tl, 700.0, 1400.0123) == [('b', 0.0, None)] and P.segments(tl, 699.0, 701.0) == [('a', 699.0, None), ('b', 0.0, 0.988)]
+
+
+def test_gain_uses_measured_mono_output_loudness(tmp_path, monkeypatch):
+    src=tmp_path/'stereo.mp3';src.write_bytes(b'source')
+    b=catalogue.add_book(title='Stereo speech',author='Author',path=str(src))
+    monkeypatch.setattr(probe,'probe_file',lambda path:dict(path=path,duration=60,codec='mp3',channels=2,sample_rate=44100,bit_rate=128,chapters=[],tags={}))
+    monkeypatch.setattr(probe,'spectrum',lambda *a:dict(hf_db=-40,pause_frac=.2))
+    m=dict(I=-20.5,mono_I=-23.5,TP=-2.6,LRA=5,silences=[],peak_p99=-5)
+    p=P.make_plan(b,str(tmp_path/'final'),measurements=m)
+    assert p['loudness']['I']==-20.5 and p['loudness']['normalisation_I']==-23.5
+    assert p['loudness']['gain_db']==5.5 and p['loudness']['apply_db']==4.7
+    assert p['chapters'][0]['mode']=='encode'
+    m['mono_I']=-20.5
+    assert P.make_plan(b,str(tmp_path/'final'),measurements=m)['loudness']['apply_db']==0

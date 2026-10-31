@@ -5,11 +5,13 @@ export type Route =
   | { page: 'library' }
   | { page: 'book'; id: number }
   | { page: 'process' }
+  | { page: 'ingest' }
   | { page: 'settings' }
 
 export function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent)
   if (parts[0] === 'settings') return { page: 'settings' }
+  if (parts[0] === 'ingest') return { page: 'ingest' }
   if (parts[0] === 'process') return { page: 'process' }
   if (parts[0] === 'book' && /^\d+$/.test(parts[1] || '')) return { page: 'book', id: Number(parts[1]) }
   return { page: 'library' }
@@ -19,6 +21,7 @@ export const href = {
   library: () => '#/',
   book: (id: number) => `#/book/${id}`,
   process: () => '#/process',
+  ingest: () => '#/ingest',
   settings: () => '#/settings',
 }
 

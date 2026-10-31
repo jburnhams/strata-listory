@@ -20,6 +20,16 @@ def summary(plan: dict) -> dict:
 
 
 def _plan_one(book: dict, final_dir: str) -> dict:
+    from app.ingest import pipeline, store
+    ingest=store.latest(book['id'])
+    if ingest:
+        inv=pipeline.stage_data(ingest,'inventory');planned=pipeline.stage_data(ingest,'planning')
+        if ingest['state'] not in ('review','eligible') or not planned or not planned.get('plan'):raise probe.ToolError('ingest has no completed plan')
+        if inv['primary_id']!=book['id']:raise probe.ToolError(f"this entry belongs to ingest group for book {inv['primary_id']}")
+        plan=planned['plan']
+        if not _unchanged(book,plan):raise probe.ToolError('ingest inputs changed: run ingest again')
+        evaluation=pipeline.evaluate(ingest['id'],save=False)
+        return dict(plan,warnings=list(plan['warnings'])+[f"ingest: {c['metric']} {c['reason']}" for c in evaluation['checks'] if not c['passed']])
     side = details.sidecar(book['path']) if os.path.exists(book['path']) else None
     audible = details.audible_summary(side) if side else None
     return P.make_plan(book, final_dir, audible, None, sources.gather(book, audible))        # asks every source that can be asked (Audnexus, Audible, AudiobookDB, Open Library, Hardcover), then merges
@@ -58,24 +68,41 @@ def repropose(ids: list[int]) -> list[int]:
 
 
 def _unchanged(book: dict, plan: dict) -> bool:
+    if plan.get('ingest'):
+        from app.ingest import inventory, policy
+        meta=plan['ingest']
+        if not inventory.snapshot_unchanged(dict(root=meta['root'],files=meta.get('inventory_manifest',meta['manifest']),sidecars=meta.get('sidecars',[]))):return False
+        if not inventory.unchanged(meta.get('evidence_manifest',[])):return False
+        for bid,sig in meta['member_signatures'].items():
+            if inventory.signature(catalogue.get_book(int(bid)))!=sig:return False
+        if meta.get('auto_policy_revision') is not None and meta['auto_policy_revision']!=policy.current()['revision']:return False
+        return True
     files = details.audio_files(book['path'])
     return len(files) == plan['in_files'] and sum(os.path.getsize(f) for f in files) == plan['in_bytes']
 
 
-def run_approved(jobs: int = 2) -> dict:
+def run_approved(jobs: int = 2, ids: list[int] | None = None) -> dict:
     """Process every approved plan; returns {done, failed}."""
-    rows = [r for r in catalogue.list_plans(('approved',)) if r['plan']]
-    for r in rows: catalogue.set_plan(r['book_id'], 'running', keep_plan=True)
+    rows = [r for r in catalogue.list_plans(('approved',)) if r['plan'] and (ids is None or r['book_id'] in ids)]
+    rows = [r for r in rows if catalogue.claim_plan(r['book_id'])]
+    def record_ingest(r,status,data=None,error='',elapsed=0):
+        if r['plan'].get('ingest'):
+            from app.ingest import store
+            rid=r['plan']['ingest']['run_id'];res=data or {}
+            store.event(rid,'processing',status,metrics={f'processing.{k}':v for k,v in res.items() if type(v) in (int,float)},data=res,error=error,elapsed=elapsed)
+            store.finish(rid,'processed' if status=='done' else 'processing_failed' if status=='failed' else 'processing')
     def one(r):
+        import time
+        started=time.monotonic();record_ingest(r,'running')
         book = catalogue.get_book(r['book_id'])
         try:
             if not fs.reachable(book['path']) or not os.path.exists(book['path']): raise probe.ToolError(f"its files are not available at {book['path']}")
             if not _unchanged(book, r['plan']): raise probe.ToolError('the files changed since this plan was proposed: propose it again')
             res = R.execute(book, r['plan'], force=os.path.exists(r['plan']['out_dir']) and (catalogue.get_processed(book['id']) or {}).get('status') == 'failed')
-            catalogue.set_processed(book['id'], res); catalogue.set_plan(book['id'], 'done', keep_plan=True); return True
+            catalogue.set_processed(book['id'], res); catalogue.set_plan(book['id'], 'done', keep_plan=True); record_ingest(r,'done',res,elapsed=time.monotonic()-started); return True
         except (probe.ToolError, OSError, KeyError) as e:
             from datetime import datetime, timezone
-            catalogue.set_processed(book['id'], dict(status='failed', error=str(e), finished=datetime.now(timezone.utc).isoformat())); catalogue.set_plan(book['id'], 'failed', error=str(e), keep_plan=True); return False
+            catalogue.set_processed(book['id'], dict(status='failed', error=str(e), finished=datetime.now(timezone.utc).isoformat())); catalogue.set_plan(book['id'], 'failed', error=str(e), keep_plan=True); record_ingest(r,'failed',error=str(e),elapsed=time.monotonic()-started); return False
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex: ok = list(ex.map(one, rows))
     return dict(done=sum(ok), failed=len(ok) - sum(ok))
 

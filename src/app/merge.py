@@ -8,9 +8,9 @@ import unicodedata
 
 # how much a source's word counts; the same for every field except where FIELD_SOURCES limits who may speak
 WEIGHT = dict(manual=100.0, audible_file=3.0, audnexus=2.5, openlibrary=2.5, audible=2.0, hardcover=2.0, audiobookdb=1.0, suggestion=1.0, catalogue=1.0)
-AUDIOBOOK = ('audible_file', 'audnexus', 'audible', 'audiobookdb')
+AUDIOBOOK = ('audible_file', 'audnexus', 'audible', 'audiobookdb', 'applebooks')
 WORK = ('openlibrary', 'hardcover')
-FIELD_SOURCES = dict(narrators=AUDIOBOOK, publisher=AUDIOBOOK, runtime_minutes=AUDIOBOOK, release_year=AUDIOBOOK, original_year=WORK)
+FIELD_SOURCES = dict(narrators=AUDIOBOOK, publisher=AUDIOBOOK, runtime_minutes=AUDIOBOOK, release_year=AUDIOBOOK, release_date=AUDIOBOOK, abridged=AUDIOBOOK, original_year=WORK)
 LOCKABLE = ('title', 'author', 'narrator', 'series', 'series_position', 'asin', 'year')
 
 
@@ -100,6 +100,12 @@ def merge(records: dict[str, dict], locked: dict | None = None) -> dict:
     def put(field, v):
         if v: out[field] = v
     put('title', vote_title(cands('title'))); put('authors', vote_people(cands('authors'))); put('narrators', vote_people(cands('narrators')))
+    put('release_date', vote(cands('release_date')));
+    ab = [(str(v), s, w) for v, s, w in cands('abridged')]; av = vote(ab)
+    if av:
+        av['value'] = av['value'] == 'True'
+        for a in av['alternatives']: a['value'] = a['value'] == 'True'
+        put('abridged', av)
     put('publisher', vote(cands('publisher'))); put('language', vote(cands('language'))); put('asin', vote(cands('asin')))
     put('runtime_minutes', vote([(round(v / 5) * 5, s, w) for v, s, w in cands('runtime_minutes')], key=lambda x: x, pick=lambda vs: vs[0]))      # within a few minutes is the same recording
     put('series', vote(cands('series'))); put('series_position', vote(cands('series_position'), key=lambda x: float(x)))

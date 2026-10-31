@@ -1,5 +1,5 @@
 """Command line: `doctor` checks the environment, `add`/`list`/`show`/`edit`/`remove` manage the audiobook catalogue, `set` changes settings, `serve` starts the web server."""
-import argparse, importlib, json, os, sys
+import argparse, importlib, json, os, sys, shutil
 
 from app import __version__, backup, catalogue, db, details, enrich, fs, matcher, mirror, providers, scan, settings
 
@@ -8,9 +8,13 @@ CHECKS = (('fastapi', 'fastapi'), ('uvicorn', 'uvicorn'), ('pydantic', 'pydantic
 
 def doctor(args):
     ok = True; print(f'app {__version__}, python {sys.version.split()[0]}')
-    for label, mod in CHECKS:
+    checks = CHECKS + (('numpy','numpy'),('scipy','scipy')) if getattr(args,'audio',False) else CHECKS
+    for label, mod in checks:
         try: m = importlib.import_module(mod); print(f'  ok       {label} {getattr(m, "__version__", "")}'.rstrip())
         except ImportError: ok = False; print(f'  MISSING  {label}: pip install -r requirements.txt')
+    if getattr(args,'audio',False):
+        for tool in ('ffmpeg','ffprobe','mp3gain','fpcalc'):
+            path=shutil.which(tool);print(f"  {'ok' if path else 'MISSING':9} {tool} {path or ''}");ok=bool(path) and ok
     return 0 if ok else 1
 
 
@@ -45,6 +49,13 @@ def cmd_list(args):
     if not books: print('  (no books yet: ./app add "Title" --author "Name")'); return 0
     for b in books: print(_line(b))
     return 0
+
+
+def cmd_evidence_report(args):
+    from app import evidence
+    try: result = evidence.report(args.ids, args.limit, args.stride, **({'fresh_openlibrary': True} if args.fresh_openlibrary else {}))
+    except (ValueError, OSError) as e: sys.exit(str(e))
+    print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False)); return 0
 
 
 def cmd_show(args):
@@ -254,6 +265,20 @@ def cmd_set(args):
     print(f'{args.key} = {settings.all_settings()[args.key]}'); return 0
 
 
+def cmd_ingest(args):
+    from app.ingest import pipeline, policy, store
+    try:
+        if args.cmd=='ingest-run':result=[r['id'] for r in pipeline.run(args.ids or None,args.limit,not args.offline)]
+        elif args.cmd=='ingest-resume':result=[r['id'] for r in pipeline.run(resume=args.run_id)]
+        elif args.cmd=='ingest-show':result=store.get(args.run_id)
+        elif args.cmd=='ingest-evaluate':result=pipeline.evaluate(args.run_id,policy.validate(json.load(open(args.policy))) if args.policy else None)
+        elif args.cmd=='ingest-enqueue':result=pipeline.enqueue(args.run_id)
+        elif args.cmd=='ingest-policy':result=policy.save(json.load(open(args.file))) if args.file else policy.current()
+        else:result=pipeline.dashboard()
+    except (ValueError,OSError) as e:sys.exit(str(e))
+    print(json.dumps(result,indent=2,allow_nan=False));return 0
+
+
 def cmd_serve(args):
     from app.server import app as server_app
     server_app.main(['--host', args.host, '--port', str(args.port)]); return 0
@@ -261,12 +286,19 @@ def cmd_serve(args):
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog='app'); sub = p.add_subparsers(dest='cmd', required=True)
-    sub.add_parser('doctor', help='check the environment').set_defaults(fn=doctor)
+    ir=sub.add_parser('ingest-run',help='run staged ingest and persist metrics/evidence (automation follows policy; off by default)');ir.add_argument('ids',nargs='*',type=int);ir.add_argument('--limit',type=int,default=5);ir.add_argument('--offline',action='store_true');ir.set_defaults(fn=cmd_ingest)
+    for command in ('ingest-show','ingest-resume','ingest-enqueue','ingest-evaluate'):
+        ip=sub.add_parser(command);ip.add_argument('run_id');ip.set_defaults(fn=cmd_ingest)
+        if command=='ingest-evaluate':ip.add_argument('--policy',help='evaluate a policy JSON file against saved metrics')
+    ip=sub.add_parser('ingest-policy',help='show or save versioned thresholds');ip.add_argument('file',nargs='?');ip.set_defaults(fn=cmd_ingest)
+    sub.add_parser('ingest-status',help='stage metrics, runs and current thresholds').set_defaults(fn=cmd_ingest)
+    check=sub.add_parser('doctor', help='check the environment');check.add_argument('--audio',action='store_true',help='also check NumPy, SciPy and native audio tools');check.set_defaults(fn=doctor)
     def book_fields(sp, edit=False):
         sp.add_argument('--title' if edit else 'title', **(dict(help='new title') if edit else {})); sp.add_argument('--author'); sp.add_argument('--narrator'); sp.add_argument('--series'); sp.add_argument('--series-position', dest='series_position', type=float)
         sp.add_argument('--duration-seconds', dest='duration_seconds', type=int); sp.add_argument('--year', type=int, help='the year of this audiobook release (used in the final library folder name)'); sp.add_argument('--path', help='where the audio files live'); sp.add_argument('--status', choices=catalogue.STATUSES); sp.add_argument('--json', action='store_true')
     ad = sub.add_parser('add', help='add a book to the catalogue'); book_fields(ad); ad.set_defaults(fn=cmd_add)
     ls = sub.add_parser('list', help='list the catalogue'); ls.add_argument('query', nargs='?', help='match title, author, narrator or series'); ls.add_argument('--status', choices=catalogue.STATUSES); ls.add_argument('--review', choices=catalogue.REVIEWS); ls.add_argument('--kind', choices=catalogue.KINDS); ls.add_argument('--json', action='store_true'); ls.set_defaults(fn=cmd_list)
+    er = sub.add_parser('evidence-report', help='read-only JSON identity report using stored metadata and every audio file; never approves processing'); er.add_argument('ids', nargs='*', type=int); er.add_argument('--limit', type=int, default=20); er.add_argument('--stride', type=int, default=1); er.add_argument('--fresh-openlibrary', action='store_true', help='fetch and archive fresh Open Library search, work details and ratings; catalogue stays read-only'); er.set_defaults(fn=cmd_evidence_report)
     sh = sub.add_parser('show', help='show one book as JSON'); sh.add_argument('id', type=int); sh.set_defaults(fn=cmd_show)
     ed = sub.add_parser('edit', help='change fields of a book'); ed.add_argument('id', type=int); book_fields(ed, edit=True); ed.set_defaults(fn=cmd_edit)
     rm = sub.add_parser('remove', help='remove a book from the catalogue (audio files are never touched)'); rm.add_argument('id', type=int); rm.set_defaults(fn=cmd_remove)

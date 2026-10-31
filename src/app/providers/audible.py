@@ -5,7 +5,7 @@ from app.providers.base import Http, Provider, candidate
 from app import settings
 
 HOSTS = dict(uk='api.audible.co.uk', us='api.audible.com', de='api.audible.de', fr='api.audible.fr', ca='api.audible.ca', au='api.audible.com.au')
-GROUPS = 'contributors,series,media,product_attrs'
+GROUPS = 'contributors,series,media,product_attrs,rating,product_desc,product_extended_attrs,reviews,review_attrs'
 
 
 def to_candidate(p: dict) -> dict:
@@ -14,7 +14,7 @@ def to_candidate(p: dict) -> dict:
     except ValueError: pos = None
     imgs = p.get('product_images') or {}
     return candidate('audible', id=p.get('asin', ''), asin=p.get('asin', ''), title=p.get('title', ''), subtitle=p.get('subtitle') or '', authors=[a['name'] for a in p.get('authors') or []], narrators=[n['name'] for n in p.get('narrators') or []],
-                     series=s.get('title', ''), series_position=pos, runtime_minutes=p.get('runtime_length_min'), cover_url=imgs.get('500') or next(iter(imgs.values()), ''), language=p.get('language', ''), release_date=p.get('release_date', ''), publisher=p.get('publisher_name') or '', description=re.sub(r'<[^>]+>', ' ', p.get('publisher_summary') or p.get('merchandising_summary') or '').strip())
+                     rating=(p.get('rating') or {}).get('overall_distribution', {}).get('average_rating'), ratings_count=(p.get('rating') or {}).get('overall_distribution', {}).get('num_ratings'), rating_details=p.get('rating') or {}, reviews=p.get('customer_reviews') or [], abridged={'abridged': True, 'unabridged': False}.get(p.get('format_type')), series=s.get('title', ''), series_position=pos, runtime_minutes=p.get('runtime_length_min'), cover_url=imgs.get('500') or next(iter(imgs.values()), ''), language=p.get('language', ''), release_date=p.get('release_date', ''), publisher=p.get('publisher_name') or '', description=re.sub(r'<[^>]+>', ' ', p.get('publisher_summary') or p.get('merchandising_summary') or '').strip())
 
 
 class AudibleSearch(Provider):

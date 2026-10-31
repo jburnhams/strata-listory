@@ -5,6 +5,7 @@ import json, time, urllib.error, urllib.request
 from datetime import datetime, timedelta, timezone
 
 from app import db
+from app.ingest.observe import emit, observer
 
 USER_AGENT = 'strata-listory/0.1 (personal audiobook catalogue)'
 
@@ -14,7 +15,7 @@ class MatchError(RuntimeError):
 
 
 def candidate(source: str, **f) -> dict:
-    out = dict(source=source, id='', asin='', title='', subtitle='', author='', authors=[], narrators=[], series='', series_position=None, runtime_minutes=None, cover_url='', language='', release_date='', rating=None, ratings_count=None, genres=[], pages=None, url='', original_year=None, publisher='', isbns=[], description='')
+    out = dict(source=source, id='', asin='', title='', subtitle='', author='', authors=[], narrators=[], series='', series_position=None, runtime_minutes=None, cover_url='', language='', release_date='', rating=None, ratings_count=None, genres=[], pages=None, url='', original_year=None, publisher='', isbns=[], description='', abridged=None, reviews=[], rating_details={})
     out.update({k: v for k, v in f.items() if k in out})
     out['author'] = out['author'] or ', '.join(out['authors'])
     return out
@@ -25,18 +26,23 @@ class Http:
     def __init__(self, label: str, min_interval: float = 0.1, headers: dict | None = None):
         self.label, self.min_interval, self.headers, self._last = label, min_interval, headers or {}, 0.0
 
-    def request(self, url: str, body: dict | None = None, headers: dict | None = None):
+    def request(self, url: str, body: dict | None = None, headers: dict | None = None, *, text: bool = False):
         for attempt in (1, 2, 3):       # a 429 is retried once after Retry-After, a 502/503/504 twice (these services are betas and go down now and then)
             time.sleep(max(0, self._last + self.min_interval - time.monotonic())); self._last = time.monotonic()
             req = urllib.request.Request(url, json.dumps(body).encode() if body is not None else None, {'User-Agent': USER_AGENT, 'Content-Type': 'application/json', **self.headers, **(headers or {})})
             try:
-                with urllib.request.urlopen(req, timeout=30) as r: return json.load(r)
+                with urllib.request.urlopen(req, timeout=30) as r: result = r.read().decode('utf8') if text else json.load(r)
+                emit(source=self.label, url=url, query=body, fetched=datetime.now(timezone.utc).isoformat(), attempt=attempt, raw=result)
+                return result
             except urllib.error.HTTPError as e:
+                emit(source=self.label, url=url, query=body, fetched=datetime.now(timezone.utc).isoformat(), attempt=attempt, error=str(e), status=e.code, raw=e.read().decode('utf8', errors='replace') if observer.get() else None)
                 if e.code == 404: return None
                 if e.code == 429 and attempt == 1: time.sleep(min(30, int(e.headers.get('Retry-After') or 5))); continue
                 if e.code in (502, 503, 504) and attempt < 3: time.sleep(3 * attempt); continue
                 raise MatchError(f'{self.label} answered {e.code}')
-            except (urllib.error.URLError, OSError, ValueError) as e: raise MatchError(f'{self.label} unreachable: {e}')
+            except (urllib.error.URLError, OSError, ValueError) as e:
+                emit(source=self.label, url=url, query=body, fetched=datetime.now(timezone.utc).isoformat(), attempt=attempt, error=str(e))
+                raise MatchError(f'{self.label} unreachable: {e}')
 
 
 def cached(key: str, fetch, days: float = 7):
@@ -44,7 +50,8 @@ def cached(key: str, fetch, days: float = 7):
     c = db.connect()
     try:
         r = c.execute('SELECT fetched, body FROM match_cache WHERE key=?', (key,)).fetchone()
-        if r and datetime.now(timezone.utc) - datetime.fromisoformat(r['fetched']) < timedelta(days=days): return json.loads(r['body'])
+        if r and datetime.now(timezone.utc) - datetime.fromisoformat(r['fetched']) < timedelta(days=days):
+            result = json.loads(r['body']); emit(source=key, fetched=r['fetched'], cached=True, raw=result); return result
         body = fetch()
         with c: c.execute('INSERT OR REPLACE INTO match_cache (key, fetched, body) VALUES (?, ?, ?)', (key, datetime.now(timezone.utc).isoformat(), json.dumps(body)))
         return body

@@ -6,7 +6,7 @@ import re
 from app import catalogue, enrich, matcher, merge, providers
 from app.providers.base import MatchError
 
-ASIN = re.compile(r'^B[0-9A-Z]{9}$')
+ASIN = re.compile(r'^[0-9A-Z]{10}$')
 
 
 def _year(x):
@@ -18,9 +18,9 @@ def _names(s: str) -> list[str]:
 
 
 def from_candidate(c: dict) -> dict:
-    return dict(title=c.get('title'), authors=c.get('authors') or _names(c.get('author', '')), narrators=c.get('narrators') or [], publisher=c.get('publisher'), series=c.get('series'), series_position=c.get('series_position'), release_year=_year(c.get('release_date')) if c.get('source') in ('audible', 'audnexus', 'audiobookdb') else None,
+    return dict(title=c.get('title'), authors=c.get('authors') or _names(c.get('author', '')), narrators=c.get('narrators') or [], publisher=c.get('publisher'), series=c.get('series'), series_position=c.get('series_position'), release_year=_year(c.get('release_date')) if c.get('source') in ('audible', 'audnexus', 'audiobookdb', 'applebooks') else None,
                 original_year=_year(c.get('original_year')), runtime_minutes=c.get('runtime_minutes'), isbns=c.get('isbns') or [], asin=c.get('asin') if ASIN.match(c.get('asin') or '') else '', language=c.get('language'), genres=c.get('genres') or [], description=c.get('description'),
-                rating=c.get('rating'), ratings_count=c.get('ratings_count'), url=c.get('url'))
+                abridged=c.get('abridged'), release_date=c.get('release_date'), rating=c.get('rating'), ratings_count=c.get('ratings_count'), url=c.get('url'))
 
 
 def from_audible_file(a: dict) -> dict:
@@ -28,7 +28,7 @@ def from_audible_file(a: dict) -> dict:
     try: pos = float(s['sequence']) if s.get('sequence') else None
     except ValueError: pos = None
     return dict(title=a.get('title'), authors=a.get('authors') or [], narrators=a.get('narrators') or [], publisher=a.get('publisher'), series=s.get('title'), series_position=pos, release_year=_year(a.get('release_date')), runtime_minutes=a.get('runtime_minutes'), asin=a.get('asin'), language=a.get('language'),
-                genres=a.get('categories') or [], description=a.get('summary'), rating=float(a['rating']) if a.get('rating') else None, ratings_count=a.get('rating_count'))
+                abridged={'abridged': True, 'unabridged': False}.get(a.get('format')), release_date=a.get('release_date'), genres=a.get('categories') or [], description=a.get('summary'), rating=float(a['rating']) if a.get('rating') else None, ratings_count=a.get('rating_count'))
 
 
 def from_openlibrary(d: dict) -> dict:
