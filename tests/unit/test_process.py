@@ -409,4 +409,5 @@ def test_a_book_of_unpadded_files_is_planned_in_the_right_order(tmp_path):
     for i in (1, 2, 3, 9, 10, 11, 12):
         synth(str(d / f'{i}.mp3'), 700, 'tone', kbps=16, rate=8000, title=f'Title {i}')
     b = catalogue.add_book(title='Unpadded', author='A', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
-    assert [c['title'] for c in p['chapters']] == [f'Title {i}' for i in (1, 2, 3, 9, 10, 11, 12)] and [os.path.basename(c['segments'][0][0]) for c in p['chapters']] == [f'{i}.mp3' for i in (1, 2, 3, 9, 10, 11, 12)]
+    got = [(c['title'], os.path.basename(c['segments'][0][0]), round(c['duration'])) for c in p['chapters']]
+    assert got == [(f'Title {i}', f'{i}.mp3', 700) for i in (1, 2, 3, 9, 10, 11, 12)], got

@@ -27,8 +27,8 @@ def network_mounts() -> list[str]:
 
 def mount_of(path: str) -> str | None:
     """The network mount that holds `path`, or None for a local path."""
-    p = os.path.abspath(path)
-    return next((m for m in network_mounts() if p == m or p.startswith(m.rstrip('/') + '/')), None)
+    p = os.path.normcase(os.path.abspath(path))
+    return next((m for m in network_mounts() if p == os.path.normcase(m) or p.startswith(os.path.normcase(m).rstrip(os.sep) + os.sep)), None)
 
 
 def _probe(mount: str) -> bool:
