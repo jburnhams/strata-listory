@@ -47,6 +47,8 @@ export const resetMock = () => {
 
 // Every endpoint the app calls has a handler here; one without a handler fails the test (setup.ts: onUnhandledFrame 'error').
 export const handlers = [
+  http.get('/api/finished', () => HttpResponse.json([])),
+  http.get('/api/books/:id/output', () => HttpResponse.json({ book: {}, metadata: null, chapters: [] })),
   http.get('/api/health', () => HttpResponse.json({ ok: true, version: '0.1.0' })),
   http.get('/api/settings', () => HttpResponse.json(mock.settings)),
   http.put('/api/settings', async ({ request }) => {
@@ -154,6 +156,7 @@ export const server = setupServer(
   http.get('/api/ingest/runs/:id', () => HttpResponse.json({ evidence: 'preserved' })),
   http.post('/api/ingest/runs/:id/resume', () => HttpResponse.json({ queued: true })),
   http.post('/api/ingest/runs/:id/evaluate', () => HttpResponse.json({ eligible: false })),
+  http.put('/api/ingest/runs/:id/quality', () => HttpResponse.json({ rating: 'medium' })),
   http.post('/api/ingest/runs/:id/enqueue', () => HttpResponse.json({ book_id: 1, approved: false })),
   http.put('/api/ingest/policy', async ({ request }) => HttpResponse.json(await request.json())),
 ...handlers)

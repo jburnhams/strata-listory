@@ -15,7 +15,7 @@ def summary(plan: dict) -> dict:
     l = plan['loudness']
     return dict(hours=round(plan['duration'] / 3600, 2), files=plan['in_files'], chapters=len(plan['chapters']), chapter_source=plan['chapter_source'], tiers=tiers, in_bytes=plan['in_bytes'], est_bytes=plan['est_bytes'], out_dir=plan['out_dir'],
                 loudness_before=l['I'], loudness_after_est=round(l['I'] + l['apply_db'], 1), decision=l['decision'], reencoded=l['reencoded'], warnings=plan['warnings'], downmix=plan['downmix'],
-                metadata=plan.get('metadata', []), year=plan.get('year'),
+                metadata=plan.get('metadata', []), year=plan.get('year'), enhancement=plan.get('enhancement'),
                 chapter_list=[dict(file=c['file'], title=c['title'], minutes=round(c['duration'] / 60, 1), mode=c['mode'], tier=c['tier']) for c in plan['chapters']])
 
 
@@ -26,7 +26,7 @@ def _plan_one(book: dict, final_dir: str) -> dict:
         inv=pipeline.stage_data(ingest,'inventory');planned=pipeline.stage_data(ingest,'planning')
         if ingest['state'] not in ('review','eligible') or not planned or not planned.get('plan'):raise probe.ToolError('ingest has no completed plan')
         if inv['primary_id']!=book['id']:raise probe.ToolError(f"this entry belongs to ingest group for book {inv['primary_id']}")
-        plan=planned['plan']
+        plan=pipeline.apply_quality_rating(planned['plan'],ingest)
         if not _unchanged(book,plan):raise probe.ToolError('ingest inputs changed: run ingest again')
         evaluation=pipeline.evaluate(ingest['id'],save=False)
         return dict(plan,warnings=list(plan['warnings'])+[f"ingest: {c['metric']} {c['reason']}" for c in evaluation['checks'] if not c['passed']])

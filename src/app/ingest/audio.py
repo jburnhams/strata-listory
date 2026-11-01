@@ -3,9 +3,12 @@ from array import array
 import math
 from pathlib import Path
 import re
+import statistics
 from app import audio_compare as A
-from app.ingest import inventory
+from app.ingest import acoustics, inventory
 from app.process import plan as P, probe
+
+QUALITY_VERSION = 3
 
 
 def alignment(inv,output):
@@ -48,6 +51,32 @@ def band_sample(segments):
         return levels[1]-levels[0] if all(math.isfinite(v) for v in levels) else None
 
 
+def quiet_passages(timeline, silences, duration):
+    """Measure quiet intervals, not a validated noise floor or speech-to-noise ratio."""
+    candidates = [(max(0, a), min(duration, b)) for a, b in silences if min(duration, b)-max(0, a) >= 1.2]
+    samples = []
+    for fraction in (.1, .5, .9):
+        if not candidates: break
+        a, b = min(candidates, key=lambda x: abs((x[0]+x[1])/2 - duration*fraction))
+        candidates.remove((a, b))
+        start = (a+b)/2 - .25
+        entry = dict(start_seconds=round(start, 3), duration_seconds=.5, rms_dbfs=None, status='unavailable')
+        try:
+            with __import__('tempfile').TemporaryDirectory() as td:
+                args = probe.input_args(P.segments(timeline, start, start+.5), td)
+                result = probe.run(['ffmpeg', '-nostdin', '-hide_banner', '-nostats', '-v', 'info'] + args + ['-map', '0:a:0', '-af', 'astats=metadata=0:reset=0', '-f', 'null', '-'], 120)
+            values = re.findall(r'RMS level dB:\s*(-?inf|-?[\d.]+)', result.stderr)
+            if not result.returncode and values:
+                value = float(values[-1])
+                if math.isfinite(value): entry.update(rms_dbfs=round(value, 1), status='measured')
+                elif value == -math.inf: entry['status'] = 'digital_silence'
+        except (probe.ToolError, OSError, ValueError): pass
+        samples.append(entry)
+    values = [s['rms_dbfs'] for s in samples if s['rms_dbfs'] is not None]
+    return dict(method='quiet-passage-rms-v1', threshold_dbfs=probe.SILENCE_DB, samples=samples, median_dbfs=round(statistics.median(values), 1) if values else None,
+                note='Quiet passages can contain speech tails, music or digital silence; this is not a calibrated noise floor or a denoising recommendation.')
+
+
 def quality(inv,aligned):
     by_path={f['path']:f['probe'] for f in inv['files']};results=[]
     for rep in aligned['representations']:
@@ -58,8 +87,11 @@ def quality(inv,aligned):
         for fraction in (.1,.5,.9):
             at=max(0,rep['duration']*fraction-15);sample.append(band_sample(P.segments(tl,at,min(at+30,rep['duration']))))
         valid=[v for v in sample if v is not None];phase=max(0,m['I']-m['mono_I']) if m.get('mono_I') is not None and m.get('I') is not None else 0
-        results.append(dict(id=rep['id'],measurements=m,band4k_samples=sample,band4k_relative_db=sum(valid)/len(valid) if valid else None,phase_loss_db=phase,decode_errors=len(rep['decode_messages'])))
-    return dict(version=1,representations=results),{'quality.complete':int(all(r['band4k_relative_db'] is not None and all(r['measurements'].get(k) is not None and math.isfinite(r['measurements'][k]) for k in ('I','TP','LRA')) for r in results)),'quality.decode_errors':sum(r['decode_errors'] for r in results),'quality.true_peak':max((r['measurements']['TP'] for r in results if r['measurements']['TP'] is not None),default=None),'quality.phase_loss_db':max(r['phase_loss_db'] for r in results)}
+        quiet = quiet_passages(tl, m.get('silences', []), rep['duration'])
+        source_rate = min((f.get('sample_rate') or 0 for f in infos), default=0)
+        acoustic = acoustics.assess(tl, rep['duration'], source_rate)
+        results.append(dict(id=rep['id'],measurements=m,quiet_passages=quiet,acoustics=acoustic,band4k_samples=sample,band4k_relative_db=sum(valid)/len(valid) if valid else None,phase_loss_db=phase,decode_errors=len(rep['decode_messages'])))
+    return dict(version=QUALITY_VERSION,representations=results),{'quality.complete':int(all(r['band4k_relative_db'] is not None and all(r['measurements'].get(k) is not None and math.isfinite(r['measurements'][k]) for k in ('I','TP','LRA')) for r in results)),'quality.decode_errors':sum(r['decode_errors'] for r in results),'quality.true_peak':max((r['measurements']['TP'] for r in results if r['measurements']['TP'] is not None),default=None),'quality.phase_loss_db':max(r['phase_loss_db'] for r in results)}
 
 
 def select(inv,aligned,quality_data):
@@ -73,4 +105,4 @@ def select(inv,aligned,quality_data):
         other=ranked[1]
         if score[:3]==other[0][:3] and abs(score[3]-other[0][3])<3:ambiguous=True
     paths=chosen['files'];manifest=[{k:f[k] for k in ('path','sha256','size','mtime_ns')} for f in inv['files']]
-    return dict(selected_id=chosen['id'],paths=paths,manifest=manifest,measurements=q['measurements'],ranking=[dict(id=r['id'],score=list(s),reasons=dict(coverage=r['coverage'],matched_fraction=r['matched_fraction'],true_peak=v['measurements']['TP'],band4k_relative_db=v['band4k_relative_db'],decode_errors=v['decode_errors'])) for s,r,v in ranked],reason='Completeness, decode success, peak safety, then sampled spectral retention; spectral energy is not a perceptual/noise score.'),{'alignment.coverage':chosen['coverage'],'alignment.max_gap_seconds':chosen['max_gap_seconds'],'alignment.unmatched_fraction':1-chosen['matched_fraction'],'alignment.missing_tracks':(chosen['missing_tracks'] or 0)+chosen['duplicate_tracks'],'selection.ambiguous':int(ambiguous),'quality.complete':int(q['band4k_relative_db'] is not None and all(q['measurements'].get(k) is not None and math.isfinite(q['measurements'][k]) for k in ('I','TP','LRA'))),'quality.decode_errors':q['decode_errors'],'quality.true_peak':q['measurements']['TP'],'quality.phase_loss_db':q['phase_loss_db']}
+    return dict(selected_id=chosen['id'],paths=paths,manifest=manifest,measurements=q['measurements'],quiet_passages=q.get('quiet_passages'),acoustics=q.get('acoustics'),ranking=[dict(id=r['id'],score=list(s),reasons=dict(coverage=r['coverage'],matched_fraction=r['matched_fraction'],true_peak=v['measurements']['TP'],band4k_relative_db=v['band4k_relative_db'],decode_errors=v['decode_errors'])) for s,r,v in ranked],reason='Completeness, decode success, peak safety, then sampled spectral retention; spectral energy is not a perceptual/noise score.'),{'alignment.coverage':chosen['coverage'],'alignment.max_gap_seconds':chosen['max_gap_seconds'],'alignment.unmatched_fraction':1-chosen['matched_fraction'],'alignment.missing_tracks':(chosen['missing_tracks'] or 0)+chosen['duplicate_tracks'],'selection.ambiguous':int(ambiguous),'quality.complete':int(q['band4k_relative_db'] is not None and all(q['measurements'].get(k) is not None and math.isfinite(q['measurements'][k]) for k in ('I','TP','LRA'))),'quality.decode_errors':q['decode_errors'],'quality.true_peak':q['measurements']['TP'],'quality.phase_loss_db':q['phase_loss_db']}

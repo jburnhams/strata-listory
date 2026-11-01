@@ -7,6 +7,7 @@ GET /api/books?q=&status=&review=&kind=; POST /api/scan {folder?}; POST /api/mat
 GET|PATCH|DELETE /api/books/{id}; GET /api/books/{id}/details (files, embedded tags, Audible metadata file); GET /api/books/{id}/cover (image).
 The page at / serves `src/app/server/static/index.html` when built (`cd web && npm run build`), else the plain stand-in `landing.html`."""
 import os
+import json
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
@@ -138,6 +139,34 @@ def create_app():
     @app.get('/api/process')
     def get_process(): return queue_view()
 
+    @app.get('/api/finished')
+    def finished(): return catalogue.list_processed()
+
+    def output_metadata(book_id):
+        guard(catalogue.get_book, book_id)
+        result = catalogue.get_processed(book_id)
+        if not result or result.get('status') != 'done' or not result.get('out_dir'): raise HTTPException(404, 'no finished output')
+        folder = os.path.realpath(result['out_dir'])
+        try:
+            with open(os.path.join(folder, 'metadata.json'), encoding='utf8') as f: metadata = json.load(f)
+        except (OSError, ValueError): raise HTTPException(404, 'finished metadata unavailable')
+        return folder, metadata
+
+    @app.get('/api/books/{book_id}/output')
+    def book_output(book_id: int):
+        _, metadata = output_metadata(book_id)
+        return metadata
+
+    @app.get('/api/books/{book_id}/audio/{chapter}')
+    def book_audio(book_id: int, chapter: int):
+        folder, metadata = output_metadata(book_id)
+        chapters = metadata.get('chapters', [])
+        if chapter < 0 or chapter >= len(chapters): raise HTTPException(404, 'no such chapter')
+        name = chapters[chapter].get('file', '')
+        path = os.path.realpath(os.path.join(folder, name))
+        if not name or os.path.dirname(path) != folder or not name.lower().endswith('.mp3') or not os.path.isfile(path): raise HTTPException(404, 'chapter unavailable')
+        return FileResponse(path, media_type='audio/mpeg')
+
     @app.post('/api/process/propose')
     def post_propose(limit: int = 5):
         worker.submit('propose', limit=max(1, min(limit, 50))); return queue_view()
@@ -184,6 +213,9 @@ def create_app():
 
     @app.post('/api/ingest/runs/{run_id}/evaluate')
     def evaluate_ingest(run_id:str):return ingest_guard(ingest.evaluate,run_id)
+
+    @app.put('/api/ingest/runs/{run_id}/quality')
+    def rate_ingest_quality(run_id:str, b:dict):return ingest_guard(ingest.rate_quality,run_id,b.get('rating'))
 
     @app.post('/api/ingest/runs/{run_id}/enqueue')
     def enqueue_ingest(run_id:str):return ingest_guard(ingest.enqueue,run_id)
