@@ -1,6 +1,7 @@
 """One durable run per group; every stage has elapsed time, metrics and evidence."""
 from datetime import datetime, timezone
 import json
+import copy
 import math
 from pathlib import Path
 import time
@@ -120,6 +121,43 @@ def run(ids=None,limit=5,online=True,resume=None):
         return results
 
 
+def quality_suggestion(selection, inv, metadata):
+    """Weak listening-review hints; no claim that a bitrate proves perceived quality."""
+    if not selection: return []
+    clues = provenance.describe(inv or {}, selection, metadata or {})
+    reasons = []
+    rates = clues['bitrates_kbps']
+    if rates and max(rates) <= 48: reasons.append('Low encoded bitrate (48 kbps or less)')
+    median = ((selection.get('acoustics') or {}).get('medians') or {}).get('quiet_to_active_db')
+    if isinstance(median, (float, int)) and -12 <= median < 0: reasons.append('Limited sampled level variation')
+    return reasons
+
+
+def rate_quality(run_id, rating):
+    if rating not in ('good','medium','poor','unrated'): raise ValueError('quality must be good, medium, poor or unrated')
+    run=store.get(run_id); inv=stage_data(run,'inventory') or {}
+    if run['state'] not in ('review','eligible'): raise ValueError('quality can only be rated for a completed ingest awaiting processing')
+    if any(catalogue.get_plan(m['id']) for m in inv.get('members', [])): raise ValueError('remove the existing processing plan before changing quality')
+    if rating == 'medium' and (stage_data(run,'identity') or {}).get('kind') != 'book': raise ValueError('Diamond is only available for standard audiobooks')
+    store.event(run_id,'quality_rating','done',data=dict(rating=rating))
+    return dict(rating=rating)
+
+
+def apply_quality_rating(plan, run):
+    rating=(stage_data(run,'quality_rating') or {}).get('rating','unrated')
+    plan=dict(plan,warnings=list(plan['warnings']))
+    if rating == 'medium':
+        selection=stage_data(run,'selection') or {}
+        plan=copy.deepcopy(plan)
+        for chapter in plan['chapters']:
+            chapter['mode']='encode'; chapter['tier']='V3'
+        plan['est_bytes']=int(sum(chapter['duration'] * P.TIERS['V3']['kbps'] * 1000 / 8 for chapter in plan['chapters']))
+        plan['enhancement']=dict(method='diamond-pause-level-v1',quality_rating='medium',seed=0,device='configured',level='gated rolling RMS ±3 dB')
+        plan['warnings'].append('Diamond generates speech and may alter words; listen to the output. Processing can take a long time.')
+        if acoustics.continuous_sound_cue(selection.get('acoustics'))['flagged']: plan['warnings'].append('Continuous background detected: music or effects may be removed by Diamond.')
+    return plan
+
+
 def enqueue(run_id,automatic=False):
     run=store.get(run_id);inv=stage_data(run,'inventory');planned=stage_data(run,'planning');selection=stage_data(run,'selection')
     if run['state'] not in ('review','eligible') or not inv or not planned or not planned.get('plan'):raise ValueError('ingest has no completed processing plan')
@@ -138,6 +176,7 @@ def enqueue(run_id,automatic=False):
         if (catalogue.get_processed(member['id']) or {}).get('status')=='done':raise ValueError('group already processed')
     checks=evaluate(run_id,save=False)
     plan=dict(plan,warnings=list(plan['warnings'])+[f"ingest: {c['metric']} {c['reason']}" for c in checks['checks'] if not c['passed']])
+    plan=apply_quality_rating(plan,run)
     if automatic:plan['ingest']['auto_policy_revision']=policy.current()['revision']
     catalogue.enqueue_ingest_plan(bid,[m['id'] for m in inv['members']],plan)
     if automatic:Q.decide([bid],True)
@@ -149,5 +188,5 @@ def dashboard():
     rows=store.runs();output=[]
     for r in rows:
         inv=stage_data(r,'inventory') or {};identity=stage_data(r,'identity') or {};ev=stage_data(r,'eligibility');sel=stage_data(r,'selection');latest=r['events'][-1] if r['events'] else {}
-        output.append(dict(id=r['id'],book_id=r['book_id'],title=identity.get('book',{}).get('title',''),state=r['state'],created=r['created'],stage=latest.get('stage'),metrics=metrics(r),stages=[dict(stage=s,**dict({k:e[k] for k in ('status','elapsed','error','metrics')},elapsed=(datetime.now(timezone.utc)-datetime.fromisoformat(e['created'])).total_seconds() if e['status']=='running' else e['elapsed'])) for s in STAGES+('queue','processing') for e in [next((e for e in reversed(r['events']) if e['stage']==s),None)] if e],selection=dict(files=[Path(p).name for p in sel['paths']],reason=sel['reason'],ranking=sel['ranking'],quiet_passages=sel.get('quiet_passages'),acoustics=sel.get('acoustics'),continuous_sound=acoustics.continuous_sound_cue(sel.get('acoustics')),loudness_range=sel.get('measurements',{}).get('LRA'),provenance=provenance.describe(inv,sel,stage_data(r,'metadata') or {})) if sel else None,eligibility=ev,current_evaluation=policy.evaluate(metrics(r),identity.get('kind','unknown')),members=[b['id'] for b in inv.get('members',[])]))
+        output.append(dict(id=r['id'],book_id=r['book_id'],title=identity.get('book',{}).get('title',''),quality_rating=(stage_data(r,'quality_rating') or {}).get('rating','unrated'),quality_suggestions=quality_suggestion(sel,inv,stage_data(r,'metadata')),state=r['state'],created=r['created'],stage=latest.get('stage'),metrics=metrics(r),stages=[dict(stage=s,**dict({k:e[k] for k in ('status','elapsed','error','metrics')},elapsed=(datetime.now(timezone.utc)-datetime.fromisoformat(e['created'])).total_seconds() if e['status']=='running' else e['elapsed'])) for s in STAGES+('queue','processing') for e in [next((e for e in reversed(r['events']) if e['stage']==s),None)] if e],selection=dict(files=[Path(p).name for p in sel['paths']],reason=sel['reason'],ranking=sel['ranking'],quiet_passages=sel.get('quiet_passages'),acoustics=sel.get('acoustics'),continuous_sound=acoustics.continuous_sound_cue(sel.get('acoustics')),loudness_range=sel.get('measurements',{}).get('LRA'),provenance=provenance.describe(inv,sel,stage_data(r,'metadata') or {})) if sel else None,eligibility=ev,current_evaluation=policy.evaluate(metrics(r),identity.get('kind','unknown')),members=[b['id'] for b in inv.get('members',[])]))
     return dict(runs=output,policy=policy.current(),stages=list(STAGES))

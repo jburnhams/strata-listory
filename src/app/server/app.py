@@ -214,6 +214,9 @@ def create_app():
     @app.post('/api/ingest/runs/{run_id}/evaluate')
     def evaluate_ingest(run_id:str):return ingest_guard(ingest.evaluate,run_id)
 
+    @app.put('/api/ingest/runs/{run_id}/quality')
+    def rate_ingest_quality(run_id:str, b:dict):return ingest_guard(ingest.rate_quality,run_id,b.get('rating'))
+
     @app.post('/api/ingest/runs/{run_id}/enqueue')
     def enqueue_ingest(run_id:str):return ingest_guard(ingest.enqueue,run_id)
 

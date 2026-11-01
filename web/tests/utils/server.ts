@@ -156,6 +156,7 @@ export const server = setupServer(
   http.get('/api/ingest/runs/:id', () => HttpResponse.json({ evidence: 'preserved' })),
   http.post('/api/ingest/runs/:id/resume', () => HttpResponse.json({ queued: true })),
   http.post('/api/ingest/runs/:id/evaluate', () => HttpResponse.json({ eligible: false })),
+  http.put('/api/ingest/runs/:id/quality', () => HttpResponse.json({ rating: 'medium' })),
   http.post('/api/ingest/runs/:id/enqueue', () => HttpResponse.json({ book_id: 1, approved: false })),
   http.put('/api/ingest/policy', async ({ request }) => HttpResponse.json(await request.json())),
 ...handlers)

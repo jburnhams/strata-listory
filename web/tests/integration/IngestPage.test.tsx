@@ -17,6 +17,15 @@ describe('staged ingest', () => {
     expect(await screen.findByText(/2 of 3 sampled passages/)).toHaveTextContent('radio play')
     expect(screen.getByText(/Listen before treating it as noise/)).toBeInTheDocument()
   })
+  it('lets the user confirm a suggested medium recording', async () => {
+    const f = ingestFixture()
+    Object.assign(f.runs[0], { quality_rating: 'unrated', quality_suggestions: ['Low encoded bitrate (48 kbps or less)'], selection: { files: ['one.mp3'], reason: 'complete', ranking: [] } })
+    server.use(http.get('/api/ingest', () => HttpResponse.json(f)))
+    const { user } = setup(<IngestPage />)
+    expect(await screen.findByText(/Medium candidates to review/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Mark medium' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('Quality set to medium')
+  })
   it('shows source format and attributed provenance clues', async () => {
     const f = ingestFixture()
     Object.assign(f.runs[0], { selection: { files: ['one.mp3'], reason: 'complete', ranking: [], provenance: { file_count: 1, codecs: ['mp3'], extensions: ['.mp3'], bitrates_kbps: [64], sample_rates_hz: [22050], recording_release_dates: [{ source: 'audible', release_date: '2010' }], embedded_dates: ['1990'], medium_clues: [{ source: 'file name', value: 'CD 01.mp3' }], medium_clues_truncated: false } } })

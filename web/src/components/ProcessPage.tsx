@@ -26,6 +26,7 @@ function Row({ r, selected, onToggle, result }: { r: QueueRow; selected: boolean
       {s && (
         <div className="mt-1 text-stone-600 dark:text-stone-300">
           {s.hours.toFixed(1)} h · {s.chapters} chapters (from {s.chapter_source}) · {tiers} · {formatBytes(s.in_bytes)} → about {formatBytes(s.est_bytes)} · loudness {s.loudness_before.toFixed(1)} → {s.loudness_after_est.toFixed(1)} LUFS
+          {s.enhancement && <p>Enhancement: Diamond restoration and gradual levelling (confirmed medium quality)</p>}
           <dl className="my-1 grid grid-cols-[6rem_1fr] gap-x-3 gap-y-0.5" aria-label={`Metadata for ${r.title}`}>
             {s.metadata.map(m => (
               <div key={m.field} className="contents">

@@ -28,3 +28,40 @@ def test_continuous_sound_is_a_review_cue_and_requires_two_samples():
     repeated = {'samples': [{'start_seconds': 0, 'result': {'quiet_to_active_db': -3}}] * 3}
     assert not acoustics.continuous_sound_cue(repeated)['flagged']
     assert acoustics.continuous_sound_cue(None)['valid_samples'] == 0
+
+
+def test_quality_suggestions_are_hints_from_measurements():
+    from app.ingest.pipeline import quality_suggestion
+    selection={'paths':['a'], 'acoustics':{'medians':{'quiet_to_active_db':-9}}}
+    inv={'files':[{'path':'a','probe':{'bit_rate':32}}]}
+    reasons=quality_suggestion(selection,inv,{})
+    assert len(reasons)==2
+    assert quality_suggestion(None,inv,{})==[]
+
+
+def test_confirmed_medium_adds_diamond_to_the_plan():
+    from app.ingest.pipeline import apply_quality_rating
+    plan={'warnings':[],'chapters':[{'duration':60,'mode':'copy','tier':'V5'}]}
+    run={'events':[{'stage':'quality_rating','status':'done','data':{'rating':'medium'}}, {'stage':'selection','status':'done','data':{'acoustics':None}}]}
+    enhanced=apply_quality_rating(plan,run)
+    assert enhanced['enhancement']['method']=='diamond-pause-level-v1'
+    assert 'alter words' in enhanced['warnings'][0]
+    assert 'enhancement' not in apply_quality_rating(plan,{'events':[]})
+    assert plan['chapters'][0]['mode']=='copy'
+    assert enhanced['chapters'][0]['tier']=='V3'
+
+
+def test_rating_requires_completed_ingest_and_a_book(monkeypatch):
+    import pytest
+    from app.ingest import pipeline
+    saved=[]
+    run={'state':'review','events':[{'stage':'identity','status':'done','data':{'kind':'book'}}, {'stage':'inventory','status':'done','data':{'members':[{'id':4}]}}]}
+    monkeypatch.setattr(pipeline.store,'get',lambda _:run)
+    monkeypatch.setattr(pipeline.catalogue,'get_plan',lambda _:None)
+    monkeypatch.setattr(pipeline.store,'event',lambda *args,**kw:saved.append(kw['data']))
+    assert pipeline.rate_quality('r','medium')=={'rating':'medium'}
+    assert saved==[{'rating':'medium'}]
+    run['events'][0]['data']['kind']='radio'
+    with pytest.raises(ValueError,match='standard audiobooks'): pipeline.rate_quality('r','medium')
+    run['state']='processed'
+    with pytest.raises(ValueError,match='awaiting processing'): pipeline.rate_quality('r','good')

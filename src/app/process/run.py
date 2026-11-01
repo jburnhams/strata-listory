@@ -7,7 +7,7 @@ import json, math, os, shutil, tempfile, time
 from datetime import datetime, timezone
 
 from app import details
-from app.process import plan as P, probe
+from app.process import enhance, plan as P, probe
 
 COVER_PX = 400
 CLIP_CEILING = -1.0          # dBTP: a finished book whose true peak is above this is rebuilt with less gain (the mp3 encoder overshoots a little, and players and phones add their own processing)
@@ -80,6 +80,9 @@ def execute(book: dict, plan: dict, force: bool = False) -> dict:
     shutil.rmtree(partial, ignore_errors=True); os.makedirs(partial)
     try:
         cover_src = details.cover(book); small = _cover_small(cover_src, partial); retries = 0
+        if plan.get('enhancement', {}).get('method') == 'diamond-pause-level-v1':
+            work = os.path.join(partial, '.diamond-work'); os.makedirs(work)
+            plan = enhance.prepare(plan, work)
         while True:
             names = []
             for i, ch in enumerate(plan['chapters'], 1):
@@ -89,6 +92,8 @@ def execute(book: dict, plan: dict, force: bool = False) -> dict:
             if after['TP'] is None or after['TP'] <= CLIP_CEILING: break
             if retries >= MAX_RETRIES: raise probe.ToolError(f"clipping risk: true peak {after['TP']:.1f} dBFS after {retries} gain reductions (ceiling {CLIP_CEILING:.1f}); nothing was written")
             retries += 1; lessen(plan, after['TP'] - P.TP_LIMIT + 0.2)
+        if plan.get('enhancement'):
+            shutil.rmtree(os.path.join(partial, '.diamond-work'), ignore_errors=True)
         if small: os.remove(small)
         if cover_src: shutil.copyfile(cover_src, os.path.join(partial, 'cover' + os.path.splitext(cover_src)[1]))
         with open(os.path.join(partial, 'playlist.m3u8'), 'w', encoding='utf8') as f: f.write('#EXTM3U\n' + ''.join(f"#EXTINF:{round(c['duration'])},{c['title']}\n{c['file']}\n" for c in plan['chapters']))
@@ -96,7 +101,7 @@ def execute(book: dict, plan: dict, force: bool = False) -> dict:
         for c in plan['chapters']: tiers[c['tier']] = tiers.get(c['tier'], 0) + 1
         summary = dict(status='done', out_dir=out_dir, chapters=len(names), chapter_source=plan['chapter_source'], tiers=tiers, in_bytes=plan['in_bytes'], out_bytes=v['bytes'], in_seconds=plan['duration'], out_seconds=v['seconds'],
                        loudness_before=plan['loudness']['I'], loudness_after=after['I'], true_peak_after=after['TP'], gain_db=plan['loudness']['apply_db'], decision=plan['loudness']['decision'], reencoded=plan['loudness']['reencoded'], retries=retries, downmix=plan['downmix'], warnings=plan['warnings'], seconds=round(time.time() - t0, 1),
-                       finished=datetime.now(timezone.utc).isoformat())
+                       finished=datetime.now(timezone.utc).isoformat(), enhancement=plan.get('enhancement'))
         if after['I'] is not None and abs(after['I'] - P.TARGET_LUFS) > 2.5: summary['warnings'] = summary['warnings'] + [f"final loudness {after['I']:.1f} LUFS is {after['I'] - P.TARGET_LUFS:+.1f} dB from the target"]
         final_book={k:v for k,v in book.items() if k!='suggestion'}
         for key in ('title','author','narrator','series','series_position','year'):
