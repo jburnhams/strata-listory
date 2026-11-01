@@ -3,6 +3,7 @@ import { api, coverUrl, type AudibleInfo, type BookDetails, type Extras, type Ha
 import { href, useLoad } from '../route'
 import { Card, Crumbs, Err } from './ui'
 import { formatDuration, matchLabel } from './LibraryPage'
+import Player from './Player'
 
 export function formatBytes(n: number) {
   if (n < 1024) return `${n} B`
@@ -122,6 +123,7 @@ export function Details({ d, onExtras }: { d: BookDetails; onExtras?: (e: Extras
           ['Status', b.status], ['Review', b.review], ['Kind', b.kind], ['ASIN', b.asin], ['Path', b.path && <span className="font-mono text-xs">{b.path}</span>], ['Added', b.added]]} />
       </Section>
 
+      {d.processed?.status === 'done' && <Player id={b.id} />}
       {d.processed && <ProcessedSection p={d.processed} />}
       {d.audible && <AudibleSection a={d.audible} />}
       {d.extras.openlibrary && <OpenLibrarySection o={d.extras.openlibrary.data} />}

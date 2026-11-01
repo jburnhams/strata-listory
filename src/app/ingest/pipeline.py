@@ -6,7 +6,7 @@ from pathlib import Path
 import time
 
 from app import catalogue, oslib, settings, sources
-from app.ingest import audio, inventory, metadata, policy, store
+from app.ingest import acoustics, audio, inventory, metadata, policy, provenance, store
 from app.process import plan as P, queue as Q
 
 STAGES=('inventory','identity','providers','metadata','alignment','quality','selection','planning','eligibility')
@@ -50,7 +50,7 @@ def quality_with_cache(inv,aligned,run_id):
     for old in store.runs(200):
         if old['id']==run_id:continue
         prior=stage_data(old,'inventory');data=stage_data(old,'quality')
-        if prior and data and data.get('version',1)==1 and key(prior)==key(inv) and prior['representations']==inv['representations'] and all(not r['decode_messages'] for r in aligned['representations']):
+        if prior and data and data.get('version',1)==audio.QUALITY_VERSION and key(prior)==key(inv) and prior['representations']==inv['representations'] and all(not r['decode_messages'] for r in aligned['representations']) and all(len((r.get('acoustics') or {}).get('samples', [])) == 3 and all(s.get('result') is not None for s in r['acoustics']['samples']) for r in data['representations']):
             completed=[e for e in old['events'] if e['stage']=='quality' and e['status']=='done']
             if completed and completed[-1]['metrics'].get('quality.complete')==1:
                 return dict(data,reused_from=old['id']),dict(completed[-1]['metrics'],**{'quality.cache_hit':1})
@@ -149,5 +149,5 @@ def dashboard():
     rows=store.runs();output=[]
     for r in rows:
         inv=stage_data(r,'inventory') or {};identity=stage_data(r,'identity') or {};ev=stage_data(r,'eligibility');sel=stage_data(r,'selection');latest=r['events'][-1] if r['events'] else {}
-        output.append(dict(id=r['id'],book_id=r['book_id'],title=identity.get('book',{}).get('title',''),state=r['state'],created=r['created'],stage=latest.get('stage'),metrics=metrics(r),stages=[dict(stage=s,**dict({k:e[k] for k in ('status','elapsed','error','metrics')},elapsed=(datetime.now(timezone.utc)-datetime.fromisoformat(e['created'])).total_seconds() if e['status']=='running' else e['elapsed'])) for s in STAGES+('queue','processing') for e in [next((e for e in reversed(r['events']) if e['stage']==s),None)] if e],selection=dict(files=[Path(p).name for p in sel['paths']],reason=sel['reason'],ranking=sel['ranking']) if sel else None,eligibility=ev,current_evaluation=policy.evaluate(metrics(r),identity.get('kind','unknown')),members=[b['id'] for b in inv.get('members',[])]))
+        output.append(dict(id=r['id'],book_id=r['book_id'],title=identity.get('book',{}).get('title',''),state=r['state'],created=r['created'],stage=latest.get('stage'),metrics=metrics(r),stages=[dict(stage=s,**dict({k:e[k] for k in ('status','elapsed','error','metrics')},elapsed=(datetime.now(timezone.utc)-datetime.fromisoformat(e['created'])).total_seconds() if e['status']=='running' else e['elapsed'])) for s in STAGES+('queue','processing') for e in [next((e for e in reversed(r['events']) if e['stage']==s),None)] if e],selection=dict(files=[Path(p).name for p in sel['paths']],reason=sel['reason'],ranking=sel['ranking'],quiet_passages=sel.get('quiet_passages'),acoustics=sel.get('acoustics'),continuous_sound=acoustics.continuous_sound_cue(sel.get('acoustics')),loudness_range=sel.get('measurements',{}).get('LRA'),provenance=provenance.describe(inv,sel,stage_data(r,'metadata') or {})) if sel else None,eligibility=ev,current_evaluation=policy.evaluate(metrics(r),identity.get('kind','unknown')),members=[b['id'] for b in inv.get('members',[])]))
     return dict(runs=output,policy=policy.current(),stages=list(STAGES))

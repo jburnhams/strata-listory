@@ -40,6 +40,7 @@ def pipeline_fakes(book,monkeypatch):
     monkeypatch.setattr(audio,'alignment',alignment)
     monkeypatch.setattr(audio.probe,'measure_book',lambda *a:dict(I=-20,TP=-2,LRA=5,silences=[],peak_p99=-4))
     monkeypatch.setattr(audio,'band_sample',lambda *a:-20)
+    monkeypatch.setattr(audio.acoustics,'assess',lambda *a: {'medians': {}, 'samples': [{'result': {}}] * 3})
     def plan(book,final,*args,**kw):
         assert kw['input_paths']==[book['path']]
         return dict(book_id=book['id'],title='Dune',author='Frank Herbert',out_dir=final+'/Dune',warnings=[],in_files=1,in_bytes=15,chapters=[],duration=3600)
@@ -207,6 +208,7 @@ def test_audio_aligns_copies_and_selects_safe_complete_representation(book,monke
     aligned,metrics=audio.alignment(inv,tmp_path/'fingerprints');assert metrics['alignment.coverage']==1
     monkeypatch.setattr(audio.probe,'measure_book',lambda *a:dict(I=-20,TP=-1,LRA=5,silences=[]))
     monkeypatch.setattr(audio,'band_sample',lambda *a:-20)
+    monkeypatch.setattr(audio.acoustics,'assess',lambda *a: {'medians': {}, 'samples': []})
     quality,metrics=audio.quality(inv,aligned);assert metrics['quality.complete']==1
     quality['representations'][0]['measurements']['TP']=1
     selected,metrics=audio.select(inv,aligned,quality)
@@ -457,3 +459,18 @@ def test_complete_copy_discovers_related_format_and_parts_from_either_entry(book
     folder=Path(book['path']).parent/'Hitchens-Hitch 22';folder.mkdir();whole=folder/'Christopher Hitchens-Hitch-22.m4b';part=folder/'Hitch-22-Part05.mp3';whole.write_bytes(b'whole');part.write_bytes(b'part')
     b=catalogue.add_book(title='Hitch22',path=str(whole));inv,_=I.discover(b)
     assert inv['root']==str(folder) and len(inv['representations'])==2
+
+
+def test_quiet_passages_report_levels_and_missing_values(monkeypatch):
+    responses = iter(['RMS level dB: -52.3', 'RMS level dB: -inf', 'RMS level dB: -46.1'])
+    monkeypatch.setattr(audio.probe, 'run', lambda *a, **kw: SimpleNamespace(returncode=0, stderr=next(responses)))
+    timeline = P.P.timeline([dict(path='file', duration=100)])
+    result = audio.quiet_passages(timeline, [(9, 11), (49, 51), (89, 91)], 100)
+    assert result['median_dbfs'] == -49.2
+    assert [s['status'] for s in result['samples']] == ['measured', 'digital_silence', 'measured']
+    assert [s['start_seconds'] for s in result['samples']] == [9.75, 49.75, 89.75]
+    assert audio.quiet_passages(timeline, [], 100)['median_dbfs'] is None
+    monkeypatch.setattr(audio.probe, 'run', lambda *a, **kw: SimpleNamespace(returncode=1, stderr='failed'))
+    failed = audio.quiet_passages(timeline, [(0, 2)], 100)
+    assert failed['median_dbfs'] is None and failed['samples'][0]['status'] == 'unavailable'
+    json.dumps(result, allow_nan=False)

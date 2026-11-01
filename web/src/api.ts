@@ -48,6 +48,8 @@ export const api = {
   enrichBook: (id: number) => req<{ found: boolean; extras: Extras }>(`/api/books/${id}/enrich`, { method: 'POST' }),
   enrich: (limit = 25) => req<{ tried: number; enriched: number; not_found: number; remaining: number }>(`/api/enrich?limit=${limit}`, { method: 'POST' }),
   queue: () => req<QueueView>('/api/process'),
+  finished: () => req<{ book_id: number; title: string; author: string; result: Processed }[]>('/api/finished'),
+  output: (id: number) => req<Output>(`/api/books/${id}/output`),
   propose: (limit = 5) => req<QueueView>(`/api/process/propose?limit=${limit}`, { method: 'POST' }),
   approve: (ids: number[]) => req<{ changed: number[] }>('/api/process/approve', send('POST', { ids })),
   reject: (ids: number[]) => req<{ changed: number[] }>('/api/process/reject', send('POST', { ids })),
@@ -64,6 +66,8 @@ export interface HardcoverInfo { not_found?: boolean; id?: string; url?: string;
 export interface OpenLibraryInfo { not_found?: boolean; id?: string; url?: string; title?: string; first_publish_year?: number | null; rating?: number | null; ratings_count?: number | null; subjects?: string[]; edition_count?: number | null }
 export type Extras = { hardcover?: { fetched: string; data: HardcoverInfo }; openlibrary?: { fetched: string; data: OpenLibraryInfo } } & Record<string, { fetched: string; data: object } | undefined>
 export interface Processed { status: string; error?: string; out_dir?: string; chapters?: number; chapter_source?: string; tiers?: Record<string, number>; in_bytes?: number; out_bytes?: number; loudness_before?: number; loudness_after?: number; true_peak_after?: number; retries?: number; warnings?: string[]; finished?: string }
+export interface Output { book: Record<string, unknown>; metadata: unknown; chapters: { title: string; duration: number; file: string }[] }
+export const audioUrl = (id: number, chapter: number) => withBase(`/api/books/${id}/audio/${chapter}`)
 export interface BookDetails { processed: Processed | null; extras: Extras; book: Book; path_exists: boolean; share_down?: boolean; files: { count: number; total_bytes: number; truncated: boolean; list: { name: string; bytes: number }[] } | null; probe: ProbeInfo | null; audible: AudibleInfo | null }
 export const coverUrl = (id: number) => withBase(`/api/books/${id}/cover`)
 
@@ -77,7 +81,7 @@ export interface IngestCheck { metric: string; value: number | null; threshold: 
 export interface IngestPolicy { revision?: number; auto_approve: boolean; auto_process: boolean; providers: string[]; allowed_kinds: string[]; gates: Record<string, { min?: number; max?: number }> }
 export interface IngestEvaluation { eligible: boolean; kind_allowed: boolean; checks: IngestCheck[]; policy: IngestPolicy }
 export interface IngestStage { stage: string; status: string; elapsed: number; error: string; metrics: Record<string, number | null> }
-export interface IngestRun { selection?: { files: string[]; reason: string; ranking: { id: string; reasons: { coverage: number; true_peak: number | null; band4k_relative_db: number | null } }[] } | null; id: string; book_id: number; title: string; state: string; created: string; stage: string | null; metrics: Record<string, number | null>; stages: IngestStage[]; eligibility: IngestEvaluation | null; current_evaluation: IngestEvaluation; members: number[] }
+export interface IngestRun { selection?: { files: string[]; reason: string; provenance?: { file_count: number; codecs: string[]; extensions: string[]; bitrates_kbps: number[]; sample_rates_hz: number[]; medium_clues: { source: string; value: string }[]; medium_clues_truncated: boolean; recording_release_dates: { source: string; release_date: string }[]; embedded_dates: string[] }; loudness_range?: number | null; continuous_sound?: { flagged: boolean; valid_samples: number; sustained_samples: number; threshold_db: number; method: string }; acoustics?: { medians: { quiet_rms_dbfs: number | null; quiet_high_dbfs: number | null; quiet_to_active_db: number | null; active_low_to_presence_db: number | null }; samples: { start_seconds: number; duration_seconds: number; result: object | null }[] } | null; quiet_passages?: { median_dbfs: number | null; samples: { start_seconds: number; duration_seconds: number; rms_dbfs: number | null; status: string }[] } | null; ranking: { id: string; reasons: { coverage: number; true_peak: number | null; band4k_relative_db: number | null } }[] } | null; id: string; book_id: number; title: string; state: string; created: string; stage: string | null; metrics: Record<string, number | null>; stages: IngestStage[]; eligibility: IngestEvaluation | null; current_evaluation: IngestEvaluation; members: number[] }
 export interface IngestDashboard { runs: IngestRun[]; policy: IngestPolicy; stages: string[]; worker: { busy: string | null; queued: number; last: Record<string, unknown> } }
 export const ingestApi = {
   dashboard: () => req<IngestDashboard>('/api/ingest'),

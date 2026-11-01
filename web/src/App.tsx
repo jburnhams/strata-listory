@@ -6,6 +6,7 @@ import BookPage from './components/BookPage'
 import ProcessPage from './components/ProcessPage'
 import IngestPage from './components/IngestPage'
 import SettingsPage from './components/SettingsPage'
+import FinishedPage from './components/FinishedPage'
 
 export default function App() {
   const r = useRoute()
@@ -18,6 +19,7 @@ export default function App() {
         {version && <span className="text-xs text-stone-500 font-mono">v{version}</span>}
         <nav className="ml-auto flex gap-4 text-sm">
           <a href={href.library()} className="text-blue-600 dark:text-blue-400 hover:underline">Library</a>
+          <a href={href.finished()} className="text-blue-600 dark:text-blue-400 hover:underline">Finished</a>
           <a href={href.ingest()} className="text-blue-600 dark:text-blue-400 hover:underline">Ingest</a>
           <a href={href.process()} className="text-blue-600 dark:text-blue-400 hover:underline">Processing</a>
           <a href={href.settings()} className="text-blue-600 dark:text-blue-400 hover:underline">Settings</a>
@@ -27,6 +29,7 @@ export default function App() {
       {r.page === 'book' && <BookPage id={r.id} />}
       {r.page === 'ingest' && <IngestPage />}
       {r.page === 'process' && <ProcessPage />}
+      {r.page === 'finished' && <FinishedPage />}
       {r.page === 'settings' && <SettingsPage />}
     </div>
   )

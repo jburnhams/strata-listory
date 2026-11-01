@@ -230,6 +230,12 @@ def get_processed(book_id: int) -> dict | None:
     finally: c.close()
 
 
+def list_processed() -> list[dict]:
+    c = db.connect()
+    try: return [dict(book_id=r['book_id'], title=r['title'], author=r['author'], result=json.loads(r['summary'])) for r in c.execute("SELECT p.book_id, b.title, b.author, p.summary FROM processed p JOIN books b ON b.id=p.book_id WHERE p.status='done' ORDER BY b.title COLLATE NOCASE")]
+    finally: c.close()
+
+
 def pending_process(limit: int) -> list[dict]:
     """Books worth processing and not done yet: confirmed by the user, a book (not radio), with a path, a title and an author. Nothing else is processed unless asked for by id."""
     c = db.connect()
