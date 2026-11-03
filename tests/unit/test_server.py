@@ -172,3 +172,53 @@ def test_processing_queue_endpoints(client, monkeypatch, tmp_path):
     assert v['rows'][0]['state'] == 'done' and v['result'][str(b['id'])]['out_bytes'] == 50 and v['worker']['counts'] == {'done': 1}
     assert client.get(f"/api/books/{b['id']}/details").json()['processed']['status'] == 'done'
     assert client.post('/api/process/repropose', json=dict(ids=[b['id']])).json() == dict(changed=[]) and client.post('/api/process/propose').json()['rows'][0]['state'] == 'done'      # done work is kept and not proposed again
+
+
+def test_finished_metadata_and_audio_are_served_from_the_verified_output(client,tmp_path):
+    import json
+    from app import catalogue
+    book=catalogue.add_book(title='Verified book',author='Writer')
+    folder=tmp_path/'output';folder.mkdir();(folder/'01.mp3').write_bytes(b'chapter audio')
+    metadata=dict(book=dict(title='Verified book',author='Writer',year=2017),chapters=[dict(file='01.mp3',title='One',duration=60)])
+    (folder/'metadata.json').write_text(json.dumps(metadata))
+    catalogue.set_processed(book['id'],dict(status='done',finished='now',out_dir=str(folder),chapters=1))
+    assert client.get('/api/finished').json()[0]['title']=='Verified book'
+    assert client.get(f"/api/books/{book['id']}/output").json()==metadata
+    response=client.get(f"/api/books/{book['id']}/audio/0")
+    assert response.content==b'chapter audio' and response.headers['content-type']=='audio/mpeg'
+    assert client.get(f"/api/books/{book['id']}/audio/-1").status_code==404
+    assert client.get(f"/api/books/{book['id']}/audio/1").status_code==404
+
+
+def test_finished_metadata_requires_a_completed_and_readable_output(client,tmp_path):
+    from app import catalogue
+    book=catalogue.add_book(title='Pending')
+    assert client.get('/api/finished').json()==[]
+    assert client.get(f"/api/books/{book['id']}/output").status_code==404
+    catalogue.set_processed(book['id'],dict(status='failed',finished='now',out_dir=str(tmp_path)))
+    assert client.get(f"/api/books/{book['id']}/output").status_code==404
+    catalogue.set_processed(book['id'],dict(status='done',finished='now',out_dir=str(tmp_path)))
+    assert client.get(f"/api/books/{book['id']}/output").status_code==404
+    (tmp_path/'metadata.json').write_text('invalid JSON')
+    assert client.get(f"/api/books/{book['id']}/output").status_code==404
+    assert client.get('/api/books/999/output').status_code==404
+
+
+def test_finished_audio_rejects_paths_outside_the_output_and_missing_files(client,tmp_path):
+    import json
+    from app import catalogue
+    book=catalogue.add_book(title='Output')
+    folder=tmp_path/'output';folder.mkdir();(tmp_path/'private.mp3').write_bytes(b'private')
+    catalogue.set_processed(book['id'],dict(status='done',finished='now',out_dir=str(folder)))
+    for name in ('../private.mp3','missing.mp3','other.wav',''):
+        (folder/'metadata.json').write_text(json.dumps(dict(chapters=[dict(file=name)])))
+        assert client.get(f"/api/books/{book['id']}/audio/0").status_code==404
+
+
+def test_finished_list_uses_resolved_output_identity(client):
+    from app import catalogue
+    b=catalogue.add_book(title='Folder title')
+    catalogue.set_processed(b['id'],dict(status='done',finished='2026-11-01',title='Resolved title',author='Resolved Author'))
+    row=client.get('/api/finished').json()[0]
+    assert row['title']=='Resolved title' and row['author']=='Resolved Author'
+    assert catalogue.get_book(b['id'])['author']==''

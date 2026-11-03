@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import App from '../../src/App'
 import { Card } from '../../src/components/ui'
-import { setup, screen } from '../utils/render'
+import { setup, screen, within } from '../utils/render'
 import { server } from '../utils/server'
 
 const open = (hash: string) => { window.location.hash = hash; return setup(<App />) }
@@ -27,4 +27,20 @@ describe('App navigation and header', () => {
     setup(<Card to="#/settings">Go settings</Card>)
     expect(screen.getByRole('link', { name: 'Go settings' })).toHaveAttribute('href', '#/settings')
   })
+})
+
+
+it('orders the workflow navigation and gives final proposals their own page', async () => {
+  const { user } = open('#/process')
+  const nav = screen.getByRole('navigation', { name: 'Main navigation' })
+  expect(within(nav).getAllByRole('link').map(a => a.textContent)).toEqual(['Library','Processing','Book identification','Audiobook identification','Quality','Proposed','Finished','Settings'])
+  await screen.findByRole('heading', { name: 'Processing' })
+  expect(screen.queryByLabelText('Select Dune')).toBeNull()
+  await user.click(within(nav).getByRole('link', { name: 'Proposed' }))
+  expect(await screen.findByRole('heading', { name: 'Proposed' })).toBeInTheDocument()
+  expect(await screen.findByLabelText('Select Dune')).toBeEnabled()
+  expect(screen.queryByRole('checkbox', { name: 'Show completed' })).toBeNull()
+  await user.click(within(nav).getByRole('link', { name: 'Processing' }))
+  expect(await screen.findByRole('heading', { name: 'Processing' })).toBeInTheDocument()
+  expect(screen.queryByLabelText('Select Dune')).toBeNull()
 })

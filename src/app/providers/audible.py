@@ -34,5 +34,8 @@ class AudibleSearch(Provider):
         return [to_candidate(p) for p in (raw or {}).get('products', [])]
 
     def by_asin(self, asin: str) -> dict | None:
-        raw = self.cache(f'{settings.audible_region()}:asin:{asin}', lambda: self.http.request(self._url(f'products/{asin}')))
-        return to_candidate(raw['product']) if raw and raw.get('product') else None
+        for region in dict.fromkeys([settings.audible_region(),'us']):
+            url=f"https://{HOSTS.get(region,HOSTS['uk'])}/1.0/catalog/products/{asin}?"+urllib.parse.urlencode(dict(response_groups=GROUPS))
+            raw = self.cache(f'{region}:asin:{asin}', lambda: self.http.request(url))
+            if raw and (raw.get('product') or {}).get('title'):return to_candidate(raw['product'])
+        return None

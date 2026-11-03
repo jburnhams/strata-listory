@@ -151,6 +151,11 @@ def catalogue_extras(book: dict) -> dict:
 def _provider_cover(book: dict) -> tuple[bytes, str] | None:
     """A cover from the providers for a book's match: the suggestion's own cover URL, then each enabled provider by ASIN, then AudiobookDB by its id; last, Open Library's. Raises MatchError only when nothing was found and a provider was unreachable (so it is retried later)."""
     sug = book.get('suggestion') or {}; tried: list[tuple[str, str]] = []; failure = None
+    from app.ingest import pipeline, store
+    ingest=store.latest(book['id'])
+    if ingest and pipeline.approval_valid(ingest,'metadata'):
+        recording=(pipeline.stage_data(ingest,'metadata') or {}).get('recording') or {}
+        if recording.get('cover_url'):tried.append((recording['source'],recording['cover_url']))
     if sug.get('id') and (book.get('review') == 'confirmed' or (book.get('match_score') or 0) >= 0.85):
         tried.append((sug.get('source') or '?', sug.get('cover_url') or '')); asin = sug.get('asin') or book.get('asin') or ''
         for p in providers.enabled():
@@ -222,3 +227,12 @@ def _describe(book: dict, path: str, out: dict) -> dict:
     out['probe'] = cached_probe(path, files)
     side = sidecar(path); out['audible'] = audible_summary(side) if side else None
     return out
+
+
+def available_cover_ids(books):
+    """Known local covers only: no source-share traversal, probing or provider requests."""
+    from pathlib import Path
+    legacy=Path(settings.data_dir())/'covers';root=Path(mirror.root())
+    cached={int(p.stem) for p in legacy.glob('*') if p.stem.isdigit() and p.suffix.lower() in IMAGES and p.is_file()}
+    folders={str(p.parent) for p in root.rglob('cover.*') if p.suffix.lower() in IMAGES and p.is_file()}
+    return [book['id'] for book in books if book['id'] in cached or mirror.dir_for(book,probe_source=False) in folders]

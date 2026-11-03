@@ -12,7 +12,9 @@ class ToolError(RuntimeError):
 
 
 def run(cmd: list[str], timeout: int = 3600, cwd: str | None = None) -> subprocess.CompletedProcess:
-    try: return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+    # FFmpeg echoes arbitrary legacy tag bytes into diagnostics. A bad credit
+    # must not discard an otherwise successful loudness/quality measurement.
+    try: return subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout, cwd=cwd)
     except (OSError, subprocess.TimeoutExpired) as e: raise ToolError(f'{cmd[0]} failed: {e}')
 
 

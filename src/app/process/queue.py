@@ -13,9 +13,11 @@ def summary(plan: dict) -> dict:
     tiers: dict[str, int] = {}
     for c in plan['chapters']: tiers[c['tier']] = tiers.get(c['tier'], 0) + 1
     l = plan['loudness']
+    from app.ingest.metadata import plan_sections
+    book_metadata,audiobook_metadata=plan_sections(plan)
     return dict(hours=round(plan['duration'] / 3600, 2), files=plan['in_files'], chapters=len(plan['chapters']), chapter_source=plan['chapter_source'], tiers=tiers, in_bytes=plan['in_bytes'], est_bytes=plan['est_bytes'], out_dir=plan['out_dir'],
                 loudness_before=l['I'], loudness_after_est=round(l['I'] + l['apply_db'], 1), decision=l['decision'], reencoded=l['reencoded'], warnings=plan['warnings'], downmix=plan['downmix'],
-                metadata=plan.get('metadata', []), year=plan.get('year'), enhancement=plan.get('enhancement'),
+                metadata=plan.get('metadata', []), book_metadata=book_metadata,audiobook_metadata=audiobook_metadata,year=plan.get('year'), enhancement=plan.get('enhancement'), advisories=plan.get('advisories',[]),
                 chapter_list=[dict(file=c['file'], title=c['title'], minutes=round(c['duration'] / 60, 1), mode=c['mode'], tier=c['tier']) for c in plan['chapters']])
 
 
@@ -26,6 +28,8 @@ def _plan_one(book: dict, final_dir: str) -> dict:
         inv=pipeline.stage_data(ingest,'inventory');planned=pipeline.stage_data(ingest,'planning')
         if ingest['state'] not in ('review','eligible') or not planned or not planned.get('plan'):raise probe.ToolError('ingest has no completed plan')
         if inv['primary_id']!=book['id']:raise probe.ToolError(f"this entry belongs to ingest group for book {inv['primary_id']}")
+        try:pipeline.require_approvals(ingest)
+        except ValueError as e:raise probe.ToolError(str(e)) from e
         plan=pipeline.apply_quality_rating(planned['plan'],ingest)
         if not _unchanged(book,plan):raise probe.ToolError('ingest inputs changed: run ingest again')
         evaluation=pipeline.evaluate(ingest['id'],save=False)
@@ -54,7 +58,12 @@ def decide(ids: list[int], approve: bool) -> list[int]:
     allowed = ('proposed', 'rejected') if approve else ('proposed', 'approved'); changed = []
     for i in ids:
         row = catalogue.get_plan(i)
-        if row and row['state'] in allowed and row['plan']: catalogue.set_plan(i, 'approved' if approve else 'rejected', keep_plan=True); changed.append(i)
+        if row and row['state'] in allowed and row['plan']:
+            if approve and row['plan'].get('ingest'):
+                from app.ingest import pipeline,store
+                try:pipeline.require_approvals(store.get(row['plan']['ingest']['run_id']))
+                except ValueError as e:raise catalogue.CatalogueError(str(e)) from e
+            catalogue.set_plan(i, 'approved' if approve else 'rejected', keep_plan=True); changed.append(i)
     return changed
 
 
@@ -69,13 +78,18 @@ def repropose(ids: list[int]) -> list[int]:
 
 def _unchanged(book: dict, plan: dict) -> bool:
     if plan.get('ingest'):
-        from app.ingest import inventory, policy
+        from app.ingest import grouping, inventory, pipeline, policy, store
         meta=plan['ingest']
-        if not inventory.snapshot_unchanged(dict(root=meta['root'],files=meta.get('inventory_manifest',meta['manifest']),sidecars=meta.get('sidecars',[]))):return False
+        recorded=meta.get('inventory_manifest',[])
+        if recorded and all('probe' in f for f in recorded) and len(grouping.partition(recorded,meta['root']))>1:return False
+        if not inventory.snapshot_unchanged(dict(root=meta['root'],files=meta.get('inventory_manifest',meta['manifest']),sidecars=meta.get('sidecars',[]),**meta.get('source_scope',{}))):return False
         if not inventory.unchanged(meta.get('evidence_manifest',[])):return False
         for bid,sig in meta['member_signatures'].items():
             if inventory.signature(catalogue.get_book(int(bid)))!=sig:return False
         if meta.get('auto_policy_revision') is not None and meta['auto_policy_revision']!=policy.current()['revision']:return False
+        if 'stage_approvals' in meta:
+            run=store.get(meta['run_id'])
+            if any(not pipeline.approval_valid(run,p) or meta['stage_approvals'].get(p)!=pipeline.stage_data(run,p+'_approval') for p in pipeline.REVIEW_STAGES):return False
         return True
     files = details.audio_files(book['path'])
     return len(files) == plan['in_files'] and sum(os.path.getsize(f) for f in files) == plan['in_bytes']
@@ -112,7 +126,7 @@ class Worker:
     inline = False
 
     def __init__(self):
-        self.q: _queue.Queue = _queue.Queue(); self.busy: str | None = None; self.last: dict = {}; self._thread: threading.Thread | None = None; self._lock = threading.Lock()
+        self.q: _queue.Queue = _queue.Queue(); self.busy: str | None = None; self.active=None; self.last: dict = {}; self._thread: threading.Thread | None = None; self._lock = threading.Lock()
 
     def submit(self, kind: str, **kw):
         if self.inline: self._do(kind, kw); return
@@ -121,10 +135,16 @@ class Worker:
             if not self._thread or not self._thread.is_alive(): self._thread = threading.Thread(target=self._loop, daemon=True, name='process-worker'); self._thread.start()
 
     def _do(self, kind: str, kw: dict):
-        self.busy = kind
+        from datetime import datetime, timezone
+        self.busy = kind; self.active=dict(kind=kind,options=kw,state='running',started=datetime.now(timezone.utc).isoformat())
         try: self.last = {kind: (propose if kind == 'propose' else run_approved)(**kw)}
         except Exception as e: self.last = {kind: dict(error=str(e))}      # a task must never kill the worker
-        finally: self.busy = None
+        finally: self.busy = None; self.active=None
+
+    def tasks(self):
+        with self.q.mutex:pending=[dict(kind=kind,options=kw,state='queued',started='') for kind,kw in self.q.queue]
+        active=self.active
+        return ([active] if active else [])+pending
 
     def _loop(self):
         while True:

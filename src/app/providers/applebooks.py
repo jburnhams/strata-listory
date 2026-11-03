@@ -1,4 +1,5 @@
 """Apple's public search API and public product-page recording details."""
+import json
 import re
 import urllib.parse
 from html.parser import HTMLParser
@@ -32,6 +33,17 @@ class AppleBooks(Provider):
             return lines[i:lines.index(end,i)] if end in lines[i:] else []
         narr=section('NARRATOR','LANGUAGE'); dur=section('LENGTH','RELEASED'); lang=section('LANGUAGE','LENGTH')
         if narr: out['narrators']=[narr[-1]]
+        # The visible card names only one performer in some full-cast releases.
+        # Read the complete cast for this product, never a recommendation's cast.
+        for body in re.findall(r'<script[^>]*id=["\']shoebox-media-api-cache-amp-books["\'][^>]*>(.*?)</script>',raw or '',re.S):
+            try:
+                for response in json.loads(body).values():
+                    payload=json.loads(response) if isinstance(response,str) else response
+                    for product in payload.get('d',[]):
+                        if str(product.get('id'))!=c['id']:continue
+                        cast=(product.get('attributes') or {}).get('narratorNames')
+                        if isinstance(cast,str) and cast.strip():out['narrators']=[n.strip() for n in re.split(r',|;|&|\band\b',cast) if n.strip()]
+            except (ValueError,TypeError,AttributeError):continue
         if lang: out['language']=lang[-1].lower()
         m=re.search(r'(\d+):(\d+)', ' '.join(dur))
         if m: out['runtime_minutes']=int(m[1])*60+int(m[2])

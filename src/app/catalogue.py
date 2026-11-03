@@ -4,7 +4,7 @@ A book is a dict: id, title, author, narrator, series, series_position, duration
 import json, os
 from datetime import datetime, timedelta, timezone
 
-from app import db, mirror
+from app import db, mirror, scan
 
 STATUSES = ('unlistened', 'listening', 'finished')
 KINDS = ('book', 'radio')                                   # radio: broadcast episodes and the like that scanning found next to the books
@@ -43,6 +43,7 @@ def clean(fields: dict, partial: bool = False) -> dict:
         if not out.get('title'): raise CatalogueError('a title is required')
         out = dict(dict(author='', narrator='', series='', path='', asin='', series_position=None, duration_seconds=None, file_count=None, year=None, status='unlistened', kind='book', review='confirmed'), **out)
     elif 'title' in out and not out['title']: raise CatalogueError('a title is required')
+    if scan.BBC_RADIO.search(' '.join(str(out.get(k) or '') for k in TEXT_FIELDS)):out['kind']='radio'
     return out
 
 
@@ -232,7 +233,7 @@ def get_processed(book_id: int) -> dict | None:
 
 def list_processed() -> list[dict]:
     c = db.connect()
-    try: return [dict(book_id=r['book_id'], title=r['title'], author=r['author'], result=json.loads(r['summary'])) for r in c.execute("SELECT p.book_id, b.title, b.author, p.summary FROM processed p JOIN books b ON b.id=p.book_id WHERE p.status='done' ORDER BY b.title COLLATE NOCASE")]
+    try: return [dict(book_id=r['book_id'], title=json.loads(r['summary']).get('title') or r['title'], author=json.loads(r['summary']).get('author') or r['author'], result=json.loads(r['summary'])) for r in c.execute("SELECT p.book_id, b.title, b.author, p.summary FROM processed p JOIN books b ON b.id=p.book_id WHERE p.status='done' ORDER BY b.title COLLATE NOCASE")]
     finally: c.close()
 
 

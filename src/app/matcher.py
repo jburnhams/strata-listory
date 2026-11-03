@@ -6,7 +6,7 @@ How a book is matched (`match_book`):
 The suggestion keeps the providers that agreed (`sources`) and the next best alternatives for review."""
 import difflib, re
 
-from app import catalogue, providers
+from app import catalogue, contributors, providers
 from app.providers.base import MatchError
 
 MIN_SCORE = 0.6          # below this a candidate is not worth showing
@@ -20,6 +20,9 @@ __all__ = ['MatchError', 'MIN_SCORE', 'GOOD_SCORE', 'norm', 'title_score', 'auth
 
 def norm(s: str) -> str:
     s = re.sub(r'\b(unabridged|abridged|the|a|an)\b', ' ', (s or '').lower())
+    # Edition ordinals vary between tags and storefronts; retain their number.
+    for word, number in (('first','1st'),('second','2nd'),('third','3rd'),('fourth','4th'),('fifth','5th'),('sixth','6th'),('seventh','7th'),('eighth','8th'),('ninth','9th'),('tenth','10th')):
+        s = re.sub(r'\b'+word+r'\b',number,s)
     return re.sub(r'\s+', ' ', re.sub(r'[^a-z0-9 ]+', ' ', s.replace('&', ' and '))).strip()
 
 
@@ -36,9 +39,13 @@ def title_score(wanted: str, cand: dict) -> float:
 
 def author_score(wanted: str, cand: dict) -> float:
     """1 when the surname of every wanted author part appears among the candidate's authors, 0.5 when we do not know the author, else 0.3 for a similar name and 0."""
-    w = norm(wanted)
+    roles = contributors.parse(wanted)
+    w = norm(', '.join(contributors.authors(wanted)))
     if not w: return 0.5
-    have = ' '.join(norm(a) for a in cand['authors'])
+    wanted_authors=contributors.authors(wanted);candidate_authors=contributors.authors(cand['authors'],roles)
+    shared=[(a,b) for a in wanted_authors for b in candidate_authors if contributors.same_person(a,b)]
+    if shared:return 1.0 if any(contributors.name_key(a)==contributors.name_key(b) for a,b in shared) else .95
+    have = ' '.join(norm(a) for a in contributors.authors(cand['authors'], roles))
     parts = [p for p in re.split(r'\band\b|;|,', w) if p.strip()] or [w]
     if all(p.split()[-1] in have.split() for p in parts if p.split()): return 1.0
     return 0.3 if difflib.SequenceMatcher(None, w, have).ratio() > 0.6 else 0.0

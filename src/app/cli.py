@@ -269,7 +269,11 @@ def cmd_ingest(args):
     from app.ingest import pipeline, policy, store
     try:
         if args.cmd=='ingest-run':result=[r['id'] for r in pipeline.run(args.ids or None,args.limit,not args.offline)]
-        elif args.cmd=='ingest-resume':result=[r['id'] for r in pipeline.run(resume=args.run_id)]
+        elif args.cmd=='ingest-resume':result=[pipeline.continue_review(args.run_id)['id']]
+        elif args.cmd=='ingest-refresh':result=pipeline.refresh_metadata(args.run_id)['id']
+        elif args.cmd=='ingest-approve':
+            result=pipeline.approve_review(args.run_id,args.phase)
+            if result['changed']:result=dict(result,state=pipeline.continue_review(args.run_id)['state'])
         elif args.cmd=='ingest-show':result=store.get(args.run_id)
         elif args.cmd=='ingest-evaluate':result=pipeline.evaluate(args.run_id,policy.validate(json.load(open(args.policy))) if args.policy else None)
         elif args.cmd=='ingest-enqueue':result=pipeline.enqueue(args.run_id)
@@ -279,6 +283,13 @@ def cmd_ingest(args):
     print(json.dumps(result,indent=2,allow_nan=False));return 0
 
 
+def cmd_openlibrary(args):
+    from app.providers import openlibrary_local
+    try:result=openlibrary_local.build(args.directory,wait=args.wait) if args.cmd=='openlibrary-import' else openlibrary_local.status()
+    except (ValueError,OSError) as error:sys.exit(str(error))
+    print(json.dumps(result,indent=2));return 0
+
+
 def cmd_serve(args):
     from app.server import app as server_app
     server_app.main(['--host', args.host, '--port', str(args.port)]); return 0
@@ -286,11 +297,14 @@ def cmd_serve(args):
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog='app'); sub = p.add_subparsers(dest='cmd', required=True)
+    oi=sub.add_parser('openlibrary-import',help='index downloaded works/authors/ratings gzip dumps for offline lookup');oi.add_argument('--directory');oi.add_argument('--wait',action='store_true',help='wait for in-progress dump downloads');oi.set_defaults(fn=cmd_openlibrary)
+    sub.add_parser('openlibrary-status',help='show offline Open Library import progress').set_defaults(fn=cmd_openlibrary)
     ir=sub.add_parser('ingest-run',help='run staged ingest and persist metrics/evidence (automation follows policy; off by default)');ir.add_argument('ids',nargs='*',type=int);ir.add_argument('--limit',type=int,default=5);ir.add_argument('--offline',action='store_true');ir.set_defaults(fn=cmd_ingest)
-    for command in ('ingest-show','ingest-resume','ingest-enqueue','ingest-evaluate'):
+    for command in ('ingest-show','ingest-resume','ingest-refresh','ingest-enqueue','ingest-evaluate'):
         ip=sub.add_parser(command);ip.add_argument('run_id');ip.set_defaults(fn=cmd_ingest)
         if command=='ingest-evaluate':ip.add_argument('--policy',help='evaluate a policy JSON file against saved metrics')
     ip=sub.add_parser('ingest-policy',help='show or save versioned thresholds');ip.add_argument('file',nargs='?');ip.set_defaults(fn=cmd_ingest)
+    ip=sub.add_parser('ingest-approve',help='approve metadata or quality and advance to the next review');ip.add_argument('run_id');ip.add_argument('phase',choices=('metadata','audiobook','quality'));ip.set_defaults(fn=cmd_ingest)
     sub.add_parser('ingest-status',help='stage metrics, runs and current thresholds').set_defaults(fn=cmd_ingest)
     check=sub.add_parser('doctor', help='check the environment');check.add_argument('--audio',action='store_true',help='also check NumPy, SciPy and native audio tools');check.set_defaults(fn=doctor)
     def book_fields(sp, edit=False):

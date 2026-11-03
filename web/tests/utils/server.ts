@@ -14,9 +14,12 @@ export const hardcover = {
 }
 
 export const ingestFixture = () => ({
-  policy: { revision: 0, auto_approve: false, auto_process: false, providers: ['audible'], allowed_kinds: ['book'], gates: { 'recording.score': { min: .9 } } },
+  policy: { revision: 0, auto_approve_metadata: false, auto_approve_audiobook: false, auto_approve_quality: false, auto_approve: false, auto_process: false, providers: ['audible'], allowed_kinds: ['book'], gates: { 'recording.score': { min: .9 } } },
   stages: ['inventory', 'identity'], worker: { busy: null as string | null, queued: 0, last: {} },
   runs: [{ id: 'run1', book_id: 1, title: 'Dune', state: 'review', created: '2026-10-31', stage: 'eligibility', members: [1, 2], metrics: { 'recording.score': null }, stages: [{ stage: 'inventory', status: 'done', elapsed: 1.25, error: '', metrics: {} }], eligibility: null,
+    review_phase: 'metadata', superseded: false, processing_proposed: false,
+    reviews: { metadata: { approved: false, eligible: false, complete: true, kind_allowed: true, checks: [{ metric: 'recording.score', value: null as number | null, threshold: { min: .9 }, passed: false, reason: 'missing measurement' }] }, audiobook: { approved: false, eligible: false, complete: true, kind_allowed: true, checks: [] }, quality: { approved: false, eligible: true, complete: true, kind_allowed: true, checks: [] } },
+    metadata: { rows: [{ field: 'Title', value: 'Dune', source: 'Audible', note: '' }, { field: 'Year', value: '1965', source: 'Open Library (first published)', note: '' }], recording: { asin: 'B000000001', language: 'english', runtime_minutes: 1260, abridged: false }, source_families: 3, match_score: 1 },
     current_evaluation: { eligible: false, kind_allowed: true, checks: [{ metric: 'recording.score', value: null as number | null, threshold: { min: .9 }, passed: false, reason: 'missing measurement' }], policy: {} } }],
 })
 
@@ -47,6 +50,7 @@ export const resetMock = () => {
 
 // Every endpoint the app calls has a handler here; one without a handler fails the test (setup.ts: onUnhandledFrame 'error').
 export const handlers = [
+  http.get('/api/operations', () => HttpResponse.json({ rows: [], busy: false })),
   http.get('/api/finished', () => HttpResponse.json([])),
   http.get('/api/books/:id/output', () => HttpResponse.json({ book: {}, metadata: null, chapters: [] })),
   http.get('/api/health', () => HttpResponse.json({ ok: true, version: '0.1.0' })),
@@ -60,6 +64,12 @@ export const handlers = [
   http.get('/api/books', ({ request }) => {
     const u = new URL(request.url), q = (u.searchParams.get('q') || '').toLowerCase(), status = u.searchParams.get('status'), review = u.searchParams.get('review'), kind = u.searchParams.get('kind')
     return HttpResponse.json(mock.books.filter(b => (!status || b.status === status) && (!review || b.review === review) && (!kind || b.kind === kind) && (!q || `${b.title} ${b.author}`.toLowerCase().includes(q))))
+  }),
+  http.get('/api/library/covers', () => HttpResponse.json({ ids: [] })),
+  http.get('/api/library/workflow', () => HttpResponse.json({ books: {} })),
+  http.get('/api/books/:id/source', ({ params }) => {
+    const book = mock.books.find(b => b.id === Number(params.id))
+    return HttpResponse.json(book?.path ? { folder: '/inbox', files: [book.path.split('/').pop()], count: book.file_count ?? 1, available: true } : { folder: '', files: [], count: 0, available: false })
   }),
   http.post('/api/books', async ({ request }) => {
     const b = (await request.json()) as Partial<Book>
@@ -154,8 +164,12 @@ export const server = setupServer(
   http.get('/api/ingest', () => HttpResponse.json(ingestFixture())),
   http.post('/api/ingest/run', () => HttpResponse.json({ queued: true })),
   http.get('/api/ingest/runs/:id', () => HttpResponse.json({ evidence: 'preserved' })),
+  http.get('/api/ingest/runs/:id/samples', ({ params }) => HttpResponse.json({ samples: Array.from({ length: 5 }, (_, index) => ({ index, start_seconds: 60 + index * 600, duration_seconds: 30, status: 'ready', url: `/api/ingest/runs/${params.id}/samples/${index}` })) })),
+  http.post('/api/ingest/runs/:id/samples', ({ params }) => HttpResponse.json({ samples: Array.from({ length: 5 }, (_, index) => ({ index, start_seconds: 60 + index * 600, duration_seconds: 30, status: 'ready', url: `/api/ingest/runs/${params.id}/samples/${index}` })) })),
   http.post('/api/ingest/runs/:id/resume', () => HttpResponse.json({ queued: true })),
+  http.post('/api/ingest/runs/:id/approve/:phase', () => HttpResponse.json({ queued: true, changed: true })),
   http.post('/api/ingest/runs/:id/evaluate', () => HttpResponse.json({ eligible: false })),
+  http.put('/api/ingest/runs/:id/recording', async ({ request }) => HttpResponse.json(await request.json())),
   http.put('/api/ingest/runs/:id/quality', () => HttpResponse.json({ rating: 'medium' })),
   http.post('/api/ingest/runs/:id/enqueue', () => HttpResponse.json({ book_id: 1, approved: false })),
   http.put('/api/ingest/policy', async ({ request }) => HttpResponse.json(await request.json())),

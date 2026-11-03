@@ -103,3 +103,10 @@ def test_fields_you_set_are_locked_but_internal_updates_and_matches_are_not():
     done = catalogue.confirm(scanned['id']); assert done['title'] == 'Suggested' and done['locked'] == ['author', 'title']       # confirming applies the match without locking
     fresh = catalogue.add_scanned([dict(path='/x/t', title='T', author='A', narrator='', series_position=None, asin='', kind='book', file_count=1)]) and [b for b in catalogue.list_books(review='new')][0]
     catalogue.set_suggestion(fresh['id'], dict(title='T2', author='A2'), 0.9); assert catalogue.confirm(fresh['id'])['locked'] == [] and catalogue.ignore(fresh['id'])['locked'] == []
+
+
+def test_bbc_r4_source_paths_and_title_updates_are_classified_as_radio():
+    book=catalogue.add_book(title='Novel',path='/library/BBC_R4/Novel')
+    assert book['kind']=='radio'
+    other=catalogue.add_book(title='Another novel')
+    assert catalogue.update_book(other['id'],title='Another novel (BBC R4)')['kind']=='radio'

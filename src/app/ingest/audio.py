@@ -1,3 +1,4 @@
+from app.ingest.observe import report
 """Representation alignment and quality metrics; no automatic performer inference."""
 from array import array
 import math
@@ -16,6 +17,7 @@ def alignment(inv,output):
     for rep in inv['representations']:
         stream=array('f');messages=[];parts[rep['id']]=[]
         for n,path in enumerate(rep['files']):
+            report(f'Comparing audio: {Path(path).name}',stage='alignment',current=n+1,total=len(rep['files']))
             values,info=A.extract(path,output/(rep['id']+f'-{n}.f32'))
             if info['sha256']!=by_path[path]['sha256']:raise ValueError('audio changed since inventory')
             parts[rep['id']].append((path,values));stream.extend(values)
@@ -79,7 +81,8 @@ def quiet_passages(timeline, silences, duration):
 
 def quality(inv,aligned):
     by_path={f['path']:f['probe'] for f in inv['files']};results=[]
-    for rep in aligned['representations']:
+    for position,rep in enumerate(aligned['representations'],1):
+        report(f'Measuring audio version {position} of {len(aligned["representations"])}',stage='quality',current=position,total=len(aligned['representations']))
         infos=[by_path[p] for p in rep['files']];segments=[(p,0,None) for p in rep['files']];m=probe.measure_book(segments,max(f['channels'] for f in infos));tl=P.timeline(infos)
         m={k:(None if isinstance(v,float) and not math.isfinite(v) else v) for k,v in m.items()}
         sample=[]

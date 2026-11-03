@@ -34,7 +34,7 @@ describe('scan, match and review', () => {
     expect(await screen.findByRole('button', { name: 'Remove Dune Messiah' })).toBeInTheDocument()
 
     await user.selectOptions(screen.getByLabelText('Filter by review'), 'new')
-    expect(await screen.findByText('No books in the catalogue yet.')).toBeInTheDocument()
+    expect(await screen.findByText('No books match the current filters.')).toBeInTheDocument()
     await user.click(screen.getByLabelText('Show radio'))
     await user.click(await screen.findByRole('button', { name: 'Ignore Show S01E01' }))
     await user.selectOptions(screen.getByLabelText('Filter by review'), 'ignored')

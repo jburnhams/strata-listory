@@ -1,6 +1,8 @@
 """What every metadata provider shares: the candidate shape, a polite HTTP client (throttle, retries, 429 handling), and the response cache.
 
 A *candidate* is a dict: source (provider name), id, asin, title, subtitle, author, authors, narrators, series, series_position, runtime_minutes, cover_url, language, release_date. Providers fill what they know and leave the rest empty (rating, ratings_count, genres, pages and url only come from community sites)."""
+import errno
+from http.client import IncompleteRead
 import json, time, urllib.error, urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -40,8 +42,12 @@ class Http:
                 if e.code == 429 and attempt == 1: time.sleep(min(30, int(e.headers.get('Retry-After') or 5))); continue
                 if e.code in (502, 503, 504) and attempt < 3: time.sleep(3 * attempt); continue
                 raise MatchError(f'{self.label} answered {e.code}')
-            except (urllib.error.URLError, OSError, ValueError) as e:
+            except (urllib.error.URLError, OSError, ValueError, IncompleteRead) as e:
                 emit(source=self.label, url=url, query=body, fetched=datetime.now(timezone.utc).isoformat(), attempt=attempt, error=str(e))
+                reason=e.reason if isinstance(e,urllib.error.URLError) else e
+                transient=isinstance(reason,(ConnectionError,TimeoutError,IncompleteRead)) or isinstance(reason,OSError) and reason.errno in (errno.ECONNRESET,errno.ECONNABORTED,errno.ECONNREFUSED,errno.ETIMEDOUT,errno.EHOSTUNREACH,errno.ENETUNREACH)
+                # Retry read requests only; a reset must not accidentally replay a mutation.
+                if body is None and transient and attempt<3:time.sleep(attempt);continue
                 raise MatchError(f'{self.label} unreachable: {e}')
 
 

@@ -20,7 +20,7 @@ def _safe(part: str) -> str:
     return re.sub(r'[\x00-\x1f<>:"|?*\\/]+', '_', part).strip(' .') or '_'
 
 
-def dir_for(book: dict) -> str:
+def dir_for(book: dict, probe_source: bool = True) -> str:
     """The mirror folder of a book (not created)."""
     path = book.get('path') or ''
     if not path: return os.path.join(root(), '_manual', _safe(f"{book['id']}-{book.get('title', '')}")[:120])
@@ -29,7 +29,7 @@ def dir_for(book: dict) -> str:
         rel = os.path.relpath(os.path.abspath(path), lib)
         if not rel.startswith('..') and not os.path.isabs(rel):
             parts = rel.split(os.sep)
-            if os.path.isfile(path) or os.path.splitext(parts[-1])[1].lower() in {'.mp3', '.m4b', '.m4a', '.aac', '.ogg', '.opus', '.flac', '.wma'}: parts[-1] = os.path.splitext(parts[-1])[0]
+            if probe_source and os.path.isfile(path) or os.path.splitext(parts[-1])[1].lower() in {'.mp3', '.m4b', '.m4a', '.aac', '.ogg', '.opus', '.flac', '.wma'}: parts[-1] = os.path.splitext(parts[-1])[0]
             return os.path.join(root(), *[_safe(p) for p in parts])
     return os.path.join(root(), '_external', _safe(os.path.basename(path.rstrip(os.sep)) or str(book['id'])))
 
