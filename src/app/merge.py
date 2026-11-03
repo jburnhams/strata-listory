@@ -58,6 +58,17 @@ def vote_title(cands: list[tuple]) -> dict | None:
     return vote([(_clean_title(v), s, w) for v, s, w in cands if _clean_title(v)], key=main_title, pick=lambda vs: min(vs, key=len))
 
 
+def earliest_year(cands):
+    """Work dates describe publication history: a later edition cannot displace an earlier year."""
+    result=vote(cands,key=int,pick=lambda vs:int(vs[0]))
+    if not result:return None
+    groups=[dict(value=result['value'],sources=result['sources'])]+result['alternatives']
+    groups.sort(key=lambda g:g['value']);best=groups[0]
+    total=sum(w for v,_,w in cands if v not in (None,'',[],0))
+    weight=sum(w for v,_,w in cands if v not in (None,'',[],0) and int(v)==best['value'])
+    return dict(best,alternatives=groups[1:],confidence=round(weight/total,2))
+
+
 def vote_people(cands: list[tuple]) -> dict | None:
     """cands: (list of names, source, weight). A person is kept when sources worth at least a quarter of the weight that spoke for the field name them (or when only one source spoke); order follows the heaviest source that has them."""
     spoke = [(v, s, w) for v, s, w in cands if v]
@@ -89,12 +100,12 @@ def vote_list(cands: list[tuple], limit: int = 10) -> dict | None:
     return dict(value=[e['value'] for e in ranked], sources=list(dict.fromkeys(s for e in ranked for s in e['sources'])), alternatives=[], confidence=1.0)
 
 
-def merge(records: dict[str, dict], locked: dict | None = None) -> dict:
+def merge(records: dict[str, dict], locked: dict | None = None, field_sources: dict | None = None) -> dict:
     """records: source -> normalised record (keys title, authors, narrators, publisher, series, series_position, original_year, release_year, runtime_minutes, isbns, asin, language, genres, description, rating, ratings_count, url).
     locked: field -> value the user set by hand (fields: title, authors, narrators, series, series_position, year, asin). Returns {field: {value, sources, alternatives, confidence}} plus `ratings` and `sources`."""
     locked = locked or {}
     def cands(field, sources=None):
-        allowed = FIELD_SOURCES.get(field) if sources is None else sources
+        allowed = (FIELD_SOURCES | (field_sources or {})).get(field) if sources is None else sources
         return [(r.get(field), s, WEIGHT.get(s.split(':')[0], 1.0)) for s, r in records.items() if r.get(field) not in (None, '', []) and (allowed is None or s.split(':')[0] in allowed)]
     out: dict = {}
     def put(field, v):
@@ -109,7 +120,7 @@ def merge(records: dict[str, dict], locked: dict | None = None) -> dict:
     put('publisher', vote(cands('publisher'))); put('language', vote(cands('language'))); put('asin', vote(cands('asin')))
     put('runtime_minutes', vote([(round(v / 5) * 5, s, w) for v, s, w in cands('runtime_minutes')], key=lambda x: x, pick=lambda vs: vs[0]))      # within a few minutes is the same recording
     put('series', vote(cands('series'))); put('series_position', vote(cands('series_position'), key=lambda x: float(x)))
-    put('original_year', vote(cands('original_year'), key=lambda x: int(x), pick=lambda vs: int(vs[0]))); put('release_year', vote(cands('release_year'), key=lambda x: int(x), pick=lambda vs: int(vs[0])))
+    put('original_year', earliest_year(cands('original_year'))); put('release_year', vote(cands('release_year'), key=lambda x: int(x), pick=lambda vs: int(vs[0])))
     put('genres', vote_list(cands('genres', None), 12)); put('isbns', vote_list(cands('isbns', None), 8)); put('description', vote(cands('description'), key=lambda x: x[:80], pick=lambda vs: max(vs, key=len)))
     for field, value in locked.items():
         if value in (None, ''): continue

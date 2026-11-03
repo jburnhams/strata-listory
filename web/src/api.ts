@@ -1,11 +1,13 @@
 // Typed client for the FastAPI server (src/app/server/app.py). Same-origin.
 export interface Health { ok: boolean; version: string }
 export interface Settings { data_dir: string; library_dir: string; backup_dir: string }
+export interface SourceFilesInfo { grouping?: string[]; folder: string; files: string[]; count: number | null; available: boolean }
 export type Status = 'unlistened' | 'listening' | 'finished'
 export const STATUSES: Status[] = ['unlistened', 'listening', 'finished']
 export type Review = 'new' | 'suggested' | 'confirmed' | 'ignored'
 export const REVIEWS: Review[] = ['new', 'suggested', 'confirmed', 'ignored']
 export type Kind = 'book' | 'radio'
+export type LibraryStage = 'processing' | 'metadata' | 'audiobook' | 'quality' | 'proposed' | 'finished'
 export interface Alternative { source: string; title: string; author: string; asin: string; score: number }
 export interface Suggestion { id?: string; source?: string; title?: string; author?: string; narrators?: string[]; series?: string; series_position?: number | null; runtime_minutes?: number | null; asin?: string; matched_by?: string; sources?: string[]; alternatives?: Alternative[] }
 export interface Book { id: number; title: string; author: string; narrator: string; series: string; series_position: number | null; duration_seconds: number | null; path: string; status: Status; added: string; asin: string; kind: Kind; review: Review; file_count: number | null; suggestion: Suggestion | null; match_score: number | null; year: number | null; year_source: string }
@@ -39,15 +41,19 @@ export const api = {
   settings: () => req<Settings>('/api/settings'),
   saveSettings: (s: Partial<Settings>) => req<Settings>('/api/settings', send('PUT', s)),
   books: (f: Filters = {}) => req<Book[]>(booksUrl(f).slice(BASE.length)),
+  libraryCovers: () => req<{ ids: number[] }>('/api/library/covers'),
+  libraryWorkflow: () => req<{ books: Record<string, LibraryStage[]> }>('/api/library/workflow'),
   addBook: (b: NewBook) => req<Book>('/api/books', send('POST', b)),
   setStatus: (id: number, status: Status) => req<Book>(`/api/books/${id}`, send('PATCH', { status })),
   removeBook: (id: number) => req<Book>(`/api/books/${id}`, { method: 'DELETE' }),
   confirm: (id: number) => req<Book>(`/api/books/${id}/confirm`, { method: 'POST' }),
   ignore: (id: number) => req<Book>(`/api/books/${id}/ignore`, { method: 'POST' }),
   details: (id: number) => req<BookDetails>(`/api/books/${id}/details`),
+  source: (id: number) => req<SourceFilesInfo>(`/api/books/${id}/source`),
   enrichBook: (id: number) => req<{ found: boolean; extras: Extras }>(`/api/books/${id}/enrich`, { method: 'POST' }),
   enrich: (limit = 25) => req<{ tried: number; enriched: number; not_found: number; remaining: number }>(`/api/enrich?limit=${limit}`, { method: 'POST' }),
   queue: () => req<QueueView>('/api/process'),
+  operations: (completed = false) => req<OperationsView>(`/api/operations?completed=${completed}`),
   finished: () => req<{ book_id: number; title: string; author: string; result: Processed }[]>('/api/finished'),
   output: (id: number) => req<Output>(`/api/books/${id}/output`),
   propose: (limit = 5) => req<QueueView>(`/api/process/propose?limit=${limit}`, { method: 'POST' }),
@@ -73,20 +79,35 @@ export const coverUrl = (id: number) => withBase(`/api/books/${id}/cover`)
 
 export type PlanState = 'planning' | 'proposed' | 'approved' | 'rejected' | 'running' | 'done' | 'failed'
 export interface MetaRow { field: string; value: string; source: string; note: string }
-export interface PlanSummary { enhancement?: { method: string } | null; metadata: MetaRow[]; year: number | null; hours: number; files: number; chapters: number; chapter_source: string; tiers: Record<string, number>; in_bytes: number; est_bytes: number; out_dir: string; loudness_before: number; loudness_after_est: number; decision: string; reencoded: boolean; warnings: string[]; downmix: string; chapter_list: { file: string; title: string; minutes: number; mode: string; tier: string }[] }
+export interface PlanSummary { book_metadata?: MetaRow[]; audiobook_metadata?: MetaRow[]; enhancement?: { method: string } | null; metadata: MetaRow[]; year: number | null; hours: number; files: number; chapters: number; chapter_source: string; tiers: Record<string, number>; in_bytes: number; est_bytes: number; out_dir: string; loudness_before: number; loudness_after_est: number; decision: string; reencoded: boolean; warnings: string[]; advisories?: string[]; downmix: string; chapter_list: { file: string; title: string; minutes: number; mode: string; tier: string }[] }
 export interface QueueRow { book_id: number; title: string; author: string; state: PlanState; error: string; updated: string; summary: PlanSummary | null }
 export interface QueueView { rows: QueueRow[]; worker: { busy: string | null; queued: number; last: Record<string, object>; counts: Record<string, number> }; result: Record<string, { out_bytes?: number; in_bytes?: number; loudness_after?: number; true_peak_after?: number; seconds?: number } | null> }
+export interface Operation { current_step?: string; step_elapsed?: number; logs?: { created: string; message: string; status: string }[]; id: string; book_id: number | null; run_id: string | null; title: string; stage: string; state: 'running' | 'queued' | 'failed' | 'waiting' | 'completed'; phase: 'metadata' | 'audiobook' | 'quality' | 'processing' | null; error: string }
+export interface OperationsView { rows: Operation[]; busy: boolean }
 
 export interface IngestCheck { metric: string; value: number | null; threshold: { min?: number; max?: number }; passed: boolean; reason: string }
-export interface IngestPolicy { revision?: number; auto_approve: boolean; auto_process: boolean; providers: string[]; allowed_kinds: string[]; gates: Record<string, { min?: number; max?: number }> }
+export interface IngestPolicy { revision?: number; auto_approve_metadata: boolean; auto_approve_audiobook: boolean; auto_approve_quality?: boolean; auto_approve: boolean; auto_process: boolean; providers: string[]; allowed_kinds: string[]; gates: Record<string, { min?: number; max?: number }> }
 export interface IngestEvaluation { eligible: boolean; kind_allowed: boolean; checks: IngestCheck[]; policy: IngestPolicy }
 export interface IngestStage { stage: string; status: string; elapsed: number; error: string; metrics: Record<string, number | null> }
-export interface IngestRun { quality_rating?: 'unrated' | 'good' | 'medium' | 'poor'; quality_suggestions?: string[]; selection?: { files: string[]; reason: string; provenance?: { file_count: number; codecs: string[]; extensions: string[]; bitrates_kbps: number[]; sample_rates_hz: number[]; medium_clues: { source: string; value: string }[]; medium_clues_truncated: boolean; recording_release_dates: { source: string; release_date: string }[]; embedded_dates: string[] }; loudness_range?: number | null; continuous_sound?: { flagged: boolean; valid_samples: number; sustained_samples: number; threshold_db: number; method: string }; acoustics?: { medians: { quiet_rms_dbfs: number | null; quiet_high_dbfs: number | null; quiet_to_active_db: number | null; active_low_to_presence_db: number | null }; samples: { start_seconds: number; duration_seconds: number; result: object | null }[] } | null; quiet_passages?: { median_dbfs: number | null; samples: { start_seconds: number; duration_seconds: number; rms_dbfs: number | null; status: string }[] } | null; ranking: { id: string; reasons: { coverage: number; true_peak: number | null; band4k_relative_db: number | null } }[] } | null; id: string; book_id: number; title: string; state: string; created: string; stage: string | null; metrics: Record<string, number | null>; stages: IngestStage[]; eligibility: IngestEvaluation | null; current_evaluation: IngestEvaluation; members: number[] }
-export interface IngestDashboard { runs: IngestRun[]; policy: IngestPolicy; stages: string[]; worker: { busy: string | null; queued: number; last: Record<string, unknown> } }
+export interface StageReview { approved: boolean; eligible: boolean; complete: boolean; checks: IngestCheck[]; kind_allowed: boolean; groups?: { work: ScopedReview; performance: ScopedReview; source: ScopedReview } }
+export type ScopedReview = Pick<StageReview, 'eligible' | 'complete' | 'checks' | 'kind_allowed'>
+export interface MetadataEvidence { records: Record<string, Record<string, unknown>>; rows: MetaRow[] }
+export interface WorkEvidence extends MetadataEvidence { score: number | null; families: number; lookups?: { source: string; status: string; reason: string }[] }
+export interface RecordingChoice { key: string; candidate: { title: string; narrators: string[]; runtime_minutes: number; language: string; abridged: boolean | null; source: string }; sources: string[]; runtime_error: number }
+export interface PerformanceEvidence extends MetadataEvidence { choices?: RecordingChoice[]; selected_choice?: string | null; matched: boolean; local: { title: string; narrators: string[]; language: string; abridged: boolean | null; duration_seconds: number; dates: string[] }; candidate: { source: string; title: string; narrators: string[]; publisher: string; release_date: string; runtime_minutes: number | null; language: string; abridged: boolean | null } | null }
+export interface IngestMetadata { work?: WorkEvidence; performance?: PerformanceEvidence; rows: MetaRow[]; recording: { asin?: string; language?: string; runtime_minutes?: number; abridged?: boolean | null }; source_families: number | null; match_score: number | null }
+export interface IngestRun { processing_proposed?: boolean; review_phase: 'metadata' | 'audiobook' | 'quality' | 'processing'; reviews: { metadata: StageReview; audiobook: StageReview; quality: StageReview }; metadata?: IngestMetadata; superseded?: boolean; quality_rating?: 'unrated' | 'good' | 'medium' | 'poor'; quality_suggestions?: string[]; selection?: { files: string[]; reason: string; provenance?: { file_count: number; codecs: string[]; extensions: string[]; bitrates_kbps: number[]; sample_rates_hz: number[]; medium_clues: { source: string; value: string }[]; medium_clues_truncated: boolean; recording_release_dates: { source: string; release_date: string }[]; embedded_dates: string[] }; loudness_range?: number | null; continuous_sound?: { flagged: boolean; valid_samples: number; sustained_samples: number; threshold_db: number; method: string }; acoustics?: { medians: { quiet_rms_dbfs: number | null; quiet_high_dbfs: number | null; quiet_to_active_db: number | null; active_low_to_presence_db: number | null }; samples: { start_seconds: number; duration_seconds: number; result: object | null }[] } | null; quiet_passages?: { median_dbfs: number | null; samples: { start_seconds: number; duration_seconds: number; rms_dbfs: number | null; status: string }[] } | null; ranking: { id: string; reasons: { coverage: number; true_peak: number | null; band4k_relative_db: number | null } }[] } | null; id: string; book_id: number; title: string; state: string; created: string; stage: string | null; metrics: Record<string, number | null>; stages: IngestStage[]; eligibility: IngestEvaluation | null; current_evaluation: IngestEvaluation; members: number[] }
+export type ReviewSort = 'strongest' | 'metadata' | 'newest' | 'oldest' | 'title'
+export interface IngestDashboard { total?: number; offset?: number; runs: IngestRun[]; policy: IngestPolicy; stages: string[]; worker: { busy: string | null; queued: number; last: Record<string, unknown> } }
+export interface ListeningSample { index: number; start_seconds: number; duration_seconds: number; url: string; status: 'generating' | 'ready' | 'failed' }
 export const ingestApi = {
-  dashboard: () => req<IngestDashboard>('/api/ingest'),
-  start: (ids: number[] | null, online: boolean) => req('/api/ingest/run', send('POST', { ids, online, limit: 5 })),
+  prepareSamples: (id: string) => req<{ samples: ListeningSample[] }>(`/api/ingest/runs/${encodeURIComponent(id)}/samples`, { method: 'POST' }),
+  samples: (id: string) => req<{ samples: ListeningSample[] }>(`/api/ingest/runs/${encodeURIComponent(id)}/samples`),
+  dashboard: (offset = 0, phase?: 'metadata' | 'audiobook' | 'quality', sort?: ReviewSort) => req<IngestDashboard>('/api/ingest' + (offset || phase || sort ? `?offset=${offset}${phase ? `&phase=${phase}` : ''}${sort ? `&sort=${sort}` : ''}` : '')),
+  start: (ids: number[], online: boolean) => req('/api/ingest/run', send('POST', { ids, online, limit: ids.length })),
   resume: (id: string) => req(`/api/ingest/runs/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
+  chooseRecording: (id: string, key: string) => req(`/api/ingest/runs/${encodeURIComponent(id)}/recording`, { method: 'PUT', body: JSON.stringify({ key }) }),
+  approveStage: (id: string, phase: 'metadata' | 'audiobook' | 'quality') => req(`/api/ingest/runs/${encodeURIComponent(id)}/approve/${phase}`, { method: 'POST' }),
   evaluate: (id: string) => req<IngestEvaluation>(`/api/ingest/runs/${encodeURIComponent(id)}/evaluate`, { method: 'POST' }),
   rateQuality: (id: string, rating: string) => req(`/api/ingest/runs/${encodeURIComponent(id)}/quality`, send('PUT', { rating })),
   enqueue: (id: string) => req(`/api/ingest/runs/${encodeURIComponent(id)}/enqueue`, { method: 'POST' }),

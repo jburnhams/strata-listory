@@ -55,7 +55,11 @@ def test_rating_requires_completed_ingest_and_a_book(monkeypatch):
     import pytest
     from app.ingest import pipeline
     saved=[]
-    run={'state':'review','events':[{'stage':'identity','status':'done','data':{'kind':'book'}}, {'stage':'inventory','status':'done','data':{'members':[{'id':4}]}}]}
+    run={'id':'r','state':'quality_review','events':[{'id':1,'stage':'identity','status':'done','data':{'kind':'book'}}, {'id':2,'stage':'inventory','status':'done','data':{'members':[{'id':4}]}}]}
+    for stage in ('providers','metadata','alignment','quality','selection'):
+        run['events'].append(dict(id=len(run['events'])+1,stage=stage,status='done',data={}))
+    run['events'].append(dict(id=8,stage='metadata_approval',status='done',data=dict(signature=pipeline.review_signature(run,'metadata'),automatic=False)))
+    for event in run['events']:event['metrics']={}
     monkeypatch.setattr(pipeline.store,'get',lambda _:run)
     monkeypatch.setattr(pipeline.catalogue,'get_plan',lambda _:None)
     monkeypatch.setattr(pipeline.store,'event',lambda *args,**kw:saved.append(kw['data']))
@@ -64,4 +68,4 @@ def test_rating_requires_completed_ingest_and_a_book(monkeypatch):
     run['events'][0]['data']['kind']='radio'
     with pytest.raises(ValueError,match='standard audiobooks'): pipeline.rate_quality('r','medium')
     run['state']='processed'
-    with pytest.raises(ValueError,match='awaiting processing'): pipeline.rate_quality('r','good')
+    with pytest.raises(ValueError,match='awaiting quality approval'): pipeline.rate_quality('r','good')

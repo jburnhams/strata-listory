@@ -21,5 +21,5 @@ export function Card({ children, to, className = '' }: { children: ReactNode; to
 }
 
 export const btn = 'rounded-md bg-blue-600 text-white px-3 py-1.5 text-sm hover:bg-blue-700 disabled:opacity-50'
-export const btnQuiet = 'rounded-md border border-stone-300 dark:border-stone-700 px-2 py-0.5 text-xs hover:border-blue-500'
+export const btnQuiet = 'rounded-md border border-stone-300 dark:border-stone-700 px-2 py-0.5 text-xs hover:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed'
 export const input = 'rounded-md border border-stone-300 dark:border-stone-700 bg-transparent px-2 py-1.5 text-sm'

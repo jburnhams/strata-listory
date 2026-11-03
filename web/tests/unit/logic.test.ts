@@ -1,3 +1,4 @@
+import { sourceFolder, inFolder } from '../../src/components/FolderTree'
 import { describe, expect, it } from 'vitest'
 import { parse, href } from '../../src/route'
 import { booksUrl, coverUrl, withBase } from '../../src/api'
@@ -14,6 +15,8 @@ describe('routes', () => {
     expect(parse('#/book')).toEqual({ page: 'library' })
     expect(parse('#/process')).toEqual({ page: 'process' })
     expect(href.process()).toBe('#/process')
+    expect(parse('#/proposed')).toEqual({ page: 'proposed' })
+    expect(href.proposed()).toBe('#/proposed')
     expect(href.library()).toBe('#/')
     expect(parse('#/nonsense/1')).toEqual({ page: 'library' })
     expect(href.book(3)).toBe('#/book/3')
@@ -51,5 +54,30 @@ describe('book page helpers', () => {
     expect(formatBytes(150 * 1024 * 1024)).toBe('150 MB')
     expect(formatBytes(5 * 1024 ** 3)).toBe('5.0 GB')
     expect(coverUrl(7)).toBe('/api/books/7/cover')
+  })
+})
+
+it('routes separate identification pages and preserves old metadata links', () => {
+  expect(parse('#/book-identification')).toEqual({ page: 'metadata' })
+  expect(parse('#/audiobook-identification')).toEqual({ page: 'audiobook' })
+  expect(parse('#/metadata')).toEqual({ page: 'metadata' })
+  expect(href.metadata()).toBe('#/book-identification')
+  expect(href.audiobook()).toBe('#/audiobook-identification')
+})
+
+
+describe('source folder paths', () => {
+  it('normalises file paths and respects directory boundaries across platforms', () => {
+    expect(sourceFolder('/audio/book.M4B')).toBe('/audio')
+    expect(sourceFolder('/audio/Books/')).toBe('/audio/Books')
+    expect(sourceFolder('/book.mp3')).toBe('/')
+    expect(sourceFolder('C:\\Books\\Novel.mp3')).toBe('C:/Books')
+    expect(inFolder('c:/BOOKS/Novel.mp3', 'C:/Books')).toBe(true)
+    expect(inFolder('//server/share/books/title.flac', '//server/share')).toBe(true)
+    expect(inFolder('/audio/Bookshelf/book.mp3', '/audio/Books')).toBe(false)
+    expect(inFolder('/audio/book.mp3', '/')).toBe(true)
+    expect(inFolder('', null)).toBe(true)
+    expect(inFolder('', '')).toBe(true)
+    expect(inFolder('/audio', '')).toBe(false)
   })
 })

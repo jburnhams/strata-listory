@@ -209,7 +209,10 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: d
     """Everything needed to process the book, as plain data (JSON-serialisable)."""
     r = sources.resolve(book, records if records is not None else sources.local_records(book, audible, extras)); year, year_src, year_note = r['year'], r['year_source'], r['year_note']
     title, author = r['title'], ', '.join(r['authors']); naming = dict(book, title=title, author=author)
-    warnings_pre = ['no year found: the folder will have no [year]; set one with `./app edit ID --year YYYY`'] if not year else ([f'year: {year_note}'] if year_note else [])
+    try:sources.require_identity(title,author)
+    except ValueError as e:raise probe.ToolError(str(e)) from e
+    warnings_pre = ['no year found: the folder will have no [year]; set one with `./app edit ID --year YYYY`'] if not year else ([f'year: {year_note}'] if year_note and r['year_note_requires_review'] else [])
+    advisories=[f'year: {year_note}; using the explicit first-publication year'] if year_note and not r['year_note_requires_review'] else []
     paths = list(input_paths) if input_paths is not None else sorted(details.audio_files(book['path']), key=probe.natural_key)
     if not paths: raise probe.ToolError(f"no audio files in {book['path']}")
     files = [probe.probe_file(p) for p in paths]; by_path = {f['path']: f for f in files}; tl = timeline(files)
@@ -239,8 +242,8 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: d
         warnings.append('re-encoded although the source is small enough to copy, because it needs normalising and lossless gain cannot reach it')
     if abs(g['db']) > 12: warnings.append('large gain (%+.1f dB)' % g['db'])
     short = round(g['db'] - g['apply_db'], 1)
-    if g['db'] > QUIET_TOL and short > 0.5: warnings.append(f"ends {short:.1f} dB below the target because its peaks leave no more room")
+    if g['db'] > QUIET_TOL and short > QUIET_TOL: warnings.append(f"ends {short:.1f} dB below the target because its peaks leave no more room")
     in_bytes = sum(os.path.getsize(f['path']) for f in files); est = sum(c['duration'] * c['kbps'] * 1000 / 8 for c in chapters)
     return dict(book_id=book['id'], title=title, author=author, out_dir=out_dir_for(naming, final_dir, year), year=year, year_source=year_src, metadata=sources.rows(book, r), narrator=', '.join(r['narrators']), series=r['series'], series_position=r['series_position'], publisher=r['publisher'], genres=r['genres'][:6], chapter_source=source, downmix=downmix, duration=round(sum(f['duration'] for f in files), 1),
-                loudness=dict(I=m['I'], normalisation_I=normalisation_i, TP=m['TP'], LRA=m['LRA'], target=TARGET_LUFS, gain_db=g['db'], apply_db=g['apply_db'], gain_steps=g['steps'], decision=g['why'], reencoded=g['reencode'], peak_p99=m.get('peak_p99')), chapters=chapters, warnings=warnings,
+                loudness=dict(I=m['I'], normalisation_I=normalisation_i, TP=m['TP'], LRA=m['LRA'], target=TARGET_LUFS, gain_db=g['db'], apply_db=g['apply_db'], gain_steps=g['steps'], decision=g['why'], reencoded=g['reencode'], peak_p99=m.get('peak_p99')), chapters=chapters, warnings=warnings, advisories=advisories,
                 in_bytes=in_bytes, est_bytes=int(est), in_files=len(files), channels=max(f['channels'] for f in files))

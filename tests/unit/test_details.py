@@ -198,3 +198,31 @@ def test_a_confirmed_book_is_matched_on_open_library_once_when_a_cover_is_wanted
     monkeypatch.setattr(enrich, 'enrich_openlibrary', lambda book, ol=None: (_ for _ in ()).throw(providers.MatchError('Open Library down')))
     c = book(tmp_path, 'Down'); catalogue.update_book(c['id'], review='confirmed')
     assert details.cover(catalogue.get_book(c['id'])) is None and not os.path.exists(os.path.join(settings.data_dir(), 'covers', f"{c['id']}.none"))        # an outage is retried, not remembered as "no cover"
+
+
+def test_new_approved_ingest_match_retries_a_missing_cover(tmp_path,monkeypatch):
+    from app.ingest import pipeline,store
+    b=book(tmp_path,'New metadata')
+    monkeypatch.setattr(details,'_embedded',lambda files:None)
+    assert details.cover(b) is None
+    rid=store.create(b['id'],{})
+    for stage in ('inventory','identity','providers'):store.event(rid,stage,'done',data=dict(members=[b]))
+    store.event(rid,'metadata','done',data=dict(recording=dict(source='audible',cover_url='https://cdn.example/approved.jpg')))
+    pipeline._record_approval(store.get(rid),'metadata')
+    urls=[];monkeypatch.setattr(details,'_download',lambda url:urls.append(url) or PNG)
+    assert details.cover(b).endswith('.png')
+    assert urls==['https://cdn.example/approved.jpg']
+
+
+def test_available_covers_only_checks_local_cache_and_mirror(tmp_path,monkeypatch):
+    from pathlib import Path
+    a=book(tmp_path,'Cached');b=book(tmp_path,'Mirrored');c=book(tmp_path,'Missing')
+    cache=Path(settings.data_dir())/'covers';cache.mkdir(exist_ok=True);(cache/f"{a['id']}.png").write_bytes(PNG)
+    directory=Path(mirror.dir_for(b));directory.mkdir(parents=True,exist_ok=True);(directory/'cover.jpg').write_bytes(JPG)
+    monkeypatch.setattr(details,'cover',lambda _:pytest.fail('must not search or download covers'))
+    original=mirror.dir_for
+    def cached_folder(book,probe_source=True):
+        assert not probe_source
+        return original(book,probe_source=False)
+    monkeypatch.setattr(mirror,'dir_for',cached_folder)
+    assert details.available_cover_ids([a,b,c])==[a['id'],b['id']]

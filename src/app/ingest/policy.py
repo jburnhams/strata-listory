@@ -6,24 +6,32 @@ from app.ingest import store
 GATES = {
  'inventory.probe_errors': {'max': 0}, 'inventory.files': {'min': 1},
  'identity.title_known': {'min': 1}, 'identity.author_known': {'min': 1}, 'identity.conflicts': {'max': 0},
- 'metadata.original_work_link': {'min': 1}, 'metadata.work_families': {'min': 2}, 'metadata.critical_conflicts': {'max': 0},
- 'recording.score': {'min': .9}, 'recording.runtime_error': {'max': .02}, 'recording.narrator_agrees': {'min': 1},
+ 'metadata.original_work_link': {'min': 1}, 'metadata.work_families': {'min': 2}, 'work.conflicts': {'max': 0}, 'recording.conflicts': {'max': 0}, 'recording.matched': {'min': 1},
+ 'work.score': {'min': .9}, 'recording.runtime_error': {'max': .02}, 'recording.narrator_agrees': {'min': 1},
  'recording.language_agrees': {'min': 1}, 'recording.abridgement_known': {'min': 1}, 'recording.ambiguous': {'max': 0},
  'alignment.coverage': {'min': .995}, 'alignment.max_gap_seconds': {'max': .5}, 'alignment.unmatched_fraction': {'max': .005},
  'alignment.missing_tracks': {'max': 0}, 'alignment.unresolved_representations': {'max': 0},
  'quality.complete': {'min': 1}, 'quality.decode_errors': {'max': 0}, 'quality.true_peak': {'max': 0}, 'quality.phase_loss_db': {'max': 3},
  'selection.ambiguous': {'max': 0}, 'planning.warning_count': {'max': 0},
 }
-DEFAULT = dict(auto_approve=False, auto_process=False, providers=['audible','audnexus','audiobookdb','hardcover','openlibrary','applebooks'], allowed_kinds=['book'], gates=GATES)
+DEFAULT = dict(auto_approve_metadata=False, auto_approve_audiobook=False, auto_approve_quality=False, auto_approve=False, auto_process=False, providers=['audible','audnexus','audiobookdb','hardcover','openlibrary','applebooks'], allowed_kinds=['book'], gates=GATES)
 
 
 def validate(value):
-    if not isinstance(value, dict) or set(value) - {'auto_approve','auto_process','providers','allowed_kinds','gates','revision'}: raise ValueError('unknown policy setting')
+    if not isinstance(value, dict) or set(value) - {'auto_approve_metadata','auto_approve_audiobook','auto_approve_quality','auto_approve','auto_process','providers','allowed_kinds','gates','revision'}: raise ValueError('unknown policy setting')
     out = deepcopy(DEFAULT); out.update({k:v for k,v in value.items() if k != 'revision'})
-    if type(out['auto_approve']) is not bool or type(out['auto_process']) is not bool: raise ValueError('automation settings must be booleans')
+    for key in ('auto_approve_metadata','auto_approve_audiobook','auto_approve_quality'):
+        if key not in value:out[key]=value.get('auto_approve_metadata',value.get('auto_approve',False)) if key=='auto_approve_audiobook' else value.get('auto_approve',False)
+    if any(type(out[key]) is not bool for key in ('auto_approve_metadata','auto_approve_audiobook','auto_approve_quality','auto_approve','auto_process')): raise ValueError('automation settings must be booleans')
     if out['auto_process'] and not out['auto_approve']: raise ValueError('auto_process requires auto_approve')
     if not isinstance(out['providers'], list) or not out['providers'] or any(n not in ('audible','audnexus','audiobookdb','hardcover','openlibrary','applebooks','googlebooks') for n in out['providers']): raise ValueError('invalid providers')
     if not isinstance(out['allowed_kinds'], list) or any(k not in ('book','radio','story','standup','episode') for k in out['allowed_kinds']): raise ValueError('invalid allowed_kinds')
+    if isinstance(out['gates'],dict) and ('recording.score' in out['gates'] or 'metadata.critical_conflicts' in out['gates']):
+        gates=deepcopy(out['gates'])
+        if 'recording.score' in gates:gates['work.score']=gates.pop('recording.score')
+        if 'metadata.critical_conflicts' in gates:gates['recording.conflicts']=gates.pop('metadata.critical_conflicts')
+        for name in ('work.conflicts','recording.matched'):gates.setdefault(name,deepcopy(GATES[name]))
+        out['gates']=gates
     if not isinstance(out['gates'], dict) or set(out['gates']) != set(GATES): raise ValueError('every known gate is required')
     for name, gate in out['gates'].items():
         if not isinstance(gate, dict) or not gate or set(gate) - {'min','max'}: raise ValueError(f'invalid gate {name}')
@@ -32,7 +40,11 @@ def validate(value):
     return out
 
 
-def current(): return store.policy_latest() or dict(revision=0, **deepcopy(DEFAULT))
+def current():
+    saved=store.policy_latest()
+    if not saved:return dict(revision=0, **deepcopy(DEFAULT))
+    value=dict(revision=saved['revision'],**validate(saved))
+    return value
 
 
 def save(value):
@@ -40,7 +52,7 @@ def save(value):
 
 
 def evaluate(metrics, kind, value=None):
-    p = value or current(); checks = []
+    p = dict(revision=value.get('revision',0),**validate(value)) if value is not None else current(); checks = []
     for name, gate in p['gates'].items():
         v = metrics.get(name); known = type(v) in (int,float) and math.isfinite(v)
         passed = known and ('min' not in gate or v >= gate['min']) and ('max' not in gate or v <= gate['max'])

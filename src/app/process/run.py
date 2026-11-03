@@ -6,7 +6,7 @@ Every chapter gets clean ID3 tags (the source tags are dropped) and a small cove
 import json, math, os, shutil, tempfile, time
 from datetime import datetime, timezone
 
-from app import details
+from app import details, sources
 from app.process import enhance, plan as P, probe
 
 COVER_PX = 400
@@ -75,6 +75,9 @@ def lessen(plan: dict, db: float):
 
 def execute(book: dict, plan: dict, force: bool = False) -> dict:
     """Process one planned book; returns a result summary. Raises ToolError on failure (nothing is left in the final library)."""
+    title=plan.get('title',book.get('title'));author=plan.get('author',book.get('author'))
+    try:sources.require_identity(title,author)
+    except ValueError as e:raise probe.ToolError(str(e)) from e
     out_dir = plan['out_dir']; partial = out_dir + '.partial'; t0 = time.time()
     if os.path.exists(out_dir) and not force: raise probe.ToolError(f'{out_dir} already exists (use --force to replace it)')
     shutil.rmtree(partial, ignore_errors=True); os.makedirs(partial)
@@ -99,7 +102,7 @@ def execute(book: dict, plan: dict, force: bool = False) -> dict:
         with open(os.path.join(partial, 'playlist.m3u8'), 'w', encoding='utf8') as f: f.write('#EXTM3U\n' + ''.join(f"#EXTINF:{round(c['duration'])},{c['title']}\n{c['file']}\n" for c in plan['chapters']))
         tiers: dict[str, int] = {}
         for c in plan['chapters']: tiers[c['tier']] = tiers.get(c['tier'], 0) + 1
-        summary = dict(status='done', out_dir=out_dir, chapters=len(names), chapter_source=plan['chapter_source'], tiers=tiers, in_bytes=plan['in_bytes'], out_bytes=v['bytes'], in_seconds=plan['duration'], out_seconds=v['seconds'],
+        summary = dict(status='done', title=title,author=author,out_dir=out_dir, chapters=len(names), chapter_source=plan['chapter_source'], tiers=tiers, in_bytes=plan['in_bytes'], out_bytes=v['bytes'], in_seconds=plan['duration'], out_seconds=v['seconds'],
                        loudness_before=plan['loudness']['I'], loudness_after=after['I'], true_peak_after=after['TP'], gain_db=plan['loudness']['apply_db'], decision=plan['loudness']['decision'], reencoded=plan['loudness']['reencoded'], retries=retries, downmix=plan['downmix'], warnings=plan['warnings'], seconds=round(time.time() - t0, 1),
                        finished=datetime.now(timezone.utc).isoformat(), enhancement=plan.get('enhancement'))
         if after['I'] is not None and abs(after['I'] - P.TARGET_LUFS) > 2.5: summary['warnings'] = summary['warnings'] + [f"final loudness {after['I']:.1f} LUFS is {after['I'] - P.TARGET_LUFS:+.1f} dB from the target"]

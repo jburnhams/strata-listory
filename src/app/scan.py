@@ -7,6 +7,7 @@ AUDIO = {'.mp3', '.m4b', '.m4a', '.aac', '.ogg', '.opus', '.flac', '.wma'}
 WHOLE_BOOK = {'.m4b', '.m4a', '.aac'}          # one file is one book (mp3 is usually one chapter among many)
 DISC = re.compile(r'(^|[\s(\[._-])(cd|disc|disk|part)[\s._-]*\d+[)\]]?$', re.I)
 CHAPTERISH = re.compile(r'^(\d|chapter\b|chap\b|ch\b|track\b|part\b|disc\b|cd\b)', re.I)
+BBC_RADIO = re.compile(r'(?<![a-z0-9])bbc[\s._-]*r(?:adio)?[\s._-]*4(?:x)?(?![a-z0-9])', re.I)
 RADIO = re.compile(r'\bS\d{1,2}E\d{1,2}\b|\b(series|season)\s*\d+\b|\bepisodes?\b|webrip|dabrip|\bbbc radio\b|\b(19|20)\d\d[-.]?\d\d[-.]?\d\d\b|\b\d{1,2}(st|nd|rd|th)? (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w* (19|20)\d\d\b', re.I)
 GENERIC = {'audible', 'books', 'audiobooks', 'audio', 'spoken', 'misc', '_misc', 'new', 'unsorted', 'downloads'}      # container folders that say nothing about the author
 SKIP = {'desktop.ini', 'thumbs.db'}
@@ -42,7 +43,7 @@ def _split_volumes(dirpath: str, dirnames: list[str]) -> bool:
 
 
 def kind_of(*names: str) -> str:
-    return 'radio' if any(RADIO.search(n) for n in names) else 'book'
+    return 'radio' if any(RADIO.search(n) or BBC_RADIO.search(n) for n in names) else 'book'
 
 
 def parse_name(name: str, parent: str = '') -> dict:

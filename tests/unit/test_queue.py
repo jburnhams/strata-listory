@@ -89,3 +89,12 @@ def test_the_worker_runs_tasks_in_the_background_and_survives_errors(books, monk
     t.submit('propose', limit=7); t._thread.join(2)                                                         # the real thread path, until its queue idles
     t.q.put(('propose', dict(limit=8))); t._loop.__self__ and None
     import time; time.sleep(0.2); assert 7 in done
+
+
+def test_explicit_replanning_only_proposes_the_selected_book(books):
+    selected=books[0]['id'];catalogue.set_plan(selected,'failed',error='retry')
+    changed=pq.repropose([selected])
+    assert pq.propose(ids=changed,limit=1)['planned']==1
+    assert catalogue.get_plan(selected)['state']=='proposed'
+    assert all(catalogue.get_plan(b['id']) is None for b in books[1:])
+    assert pq.propose(ids=[],limit=1)['planned']==0

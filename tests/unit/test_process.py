@@ -161,7 +161,7 @@ def test_probe_measurements_on_real_audio(tmp_path):
 def test_stereo_with_cancelling_channels_uses_one_channel(tmp_path):
     d = tmp_path / 'Anti'; d.mkdir(); f = d / '01.mp3'
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=f=220:d=30', '-af', 'volume=0.3,asplit[l][r];[r]volume=-1[ri];[l][ri]amerge=inputs=2', '-ac', '2', '-c:a', 'libmp3lame', '-b:a', '128k', str(f)], check=True)
-    b = catalogue.add_book(title='Anti', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
+    b = catalogue.add_book(title='Anti', author='Test Author', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
     assert p['downmix'] == 'left' and any('cancel' in w for w in p['warnings'])
     assert P.make_plan(make_book(tmp_path, 'Normal', 1, channels=2), str(tmp_path / 'final'))['downmix'] == 'average'
 
@@ -321,7 +321,7 @@ def test_a_clean_book_is_built_once(tmp_path, monkeypatch):
 def test_real_quiet_book_with_loud_clicks_stays_clear_of_clipping(tmp_path):
     d = tmp_path / 'Clicks'; d.mkdir()
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'aevalsrc=0.03*sin(2*PI*220*t)+if(lt(mod(t\\,10)\\,0.002)\\,0.95\\,0):d=60:s=44100', '-c:a', 'libmp3lame', '-b:a', '128k', str(d / '01.mp3')], check=True)
-    b = catalogue.add_book(title='Clicks', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
+    b = catalogue.add_book(title='Clicks', author='Test Author', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
     assert p['loudness']['gain_db'] > 6 and p['loudness']['TP'] > -2                                  # wants a big boost but the clicks leave no headroom
     assert any('below the target' in w for w in p['warnings'])                                         # and says it will stay quiet
     res = R.execute(b, p)
@@ -332,7 +332,7 @@ def test_real_quiet_book_with_loud_clicks_stays_clear_of_clipping(tmp_path):
 def test_plan_warns_when_the_source_already_clips(tmp_path):
     d = tmp_path / 'Hot'; d.mkdir()
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=f=220:d=30', '-af', 'volume=24,aeval=clip(val(0)\\,-1\\,1)', '-c:a', 'libmp3lame', '-b:a', '128k', str(d / '01.mp3')], check=True)       # pushed past full scale
-    b = catalogue.add_book(title='Hot', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
+    b = catalogue.add_book(title='Hot', author='Test Author', path=str(d)); p = P.make_plan(b, str(tmp_path / 'final'))
     assert p['loudness']['TP'] >= -0.2 and any('full scale' in w for w in p['warnings'])
 
 
@@ -432,3 +432,44 @@ def test_gain_uses_measured_mono_output_loudness(tmp_path, monkeypatch):
     assert p['chapters'][0]['mode']=='encode'
     m['mono_I']=-20.5
     assert P.make_plan(b,str(tmp_path/'final'),measurements=m)['loudness']['apply_db']==0
+
+
+def test_lossless_lift_within_the_loudness_tolerance_does_not_block_approval(tmp_path,monkeypatch):
+    src=tmp_path/'source.mp3';src.write_bytes(b'source')
+    b=catalogue.add_book(title='T',author='A',path=str(src))
+    monkeypatch.setattr(probe,'probe_file',lambda path:dict(path=path,duration=60,codec='mp3',channels=1,sample_rate=22050,bit_rate=64,chapters=[],tags={}))
+    measurements=dict(I=-23.3,TP=-5.5,LRA=3.9,silences=[],peak_p99=-6.8)
+    records=dict(catalogue=dict(title='T',authors=['A']),openlibrary=dict(original_year=2017))
+    plan=P.make_plan(b,str(tmp_path/'final'),records=records,measurements=measurements)
+    assert plan['year']==2017 and plan['loudness']['apply_db']==3
+    assert plan['loudness']['decision']=='too quiet: lifted losslessly'
+    assert plan['warnings']==[] and plan['loudness']['I']+plan['loudness']['apply_db']==pytest.approx(-20.3)
+    records['openlibrary']['year_kind']='first_publication'
+    records['hardcover']=dict(original_year=2016,year_kind='work_release')
+    plan=P.make_plan(b,str(tmp_path/'final'),records=records,measurements=measurements)
+    assert plan['year']==2016 and plan['warnings']==[] and 'Open Library says 2017' in plan['advisories'][0]
+    assert next(row for row in plan['metadata'] if row['field']=='Year')['note']=='Open Library says 2017'
+
+
+@pytest.mark.parametrize('field,value',[('title',''),('author',''),('title','Unknown'),('author','Unknown author'),('author','   '),('author',None)])
+def test_missing_identity_blocks_planning_and_execution_before_output_is_written(tmp_path,field,value):
+    book=dict(id=1,title='A book',author='An Author',narrator='',locked=[])
+    book[field]=value
+    # Supplied records bypass title fallbacks so blank and placeholder metadata are explicit.
+    records=dict(catalogue=dict(title=book['title'],authors=[book['author']] if book['author'] else []))
+    with pytest.raises(probe.ToolError,match='known title and author'):P.make_plan(book,str(tmp_path/'final'),records=records)
+    plan=dict(out_dir=str(tmp_path/'output'),title=book['title'],author=book['author'])
+    with pytest.raises(probe.ToolError,match='known title and author'):R.execute(dict(book,title='Old title',author='Old Author'),plan)
+    assert not (tmp_path/'output').exists() and not (tmp_path/'output.partial').exists()
+
+
+def test_measurements_survive_invalid_utf8_metadata_in_tool_diagnostics(monkeypatch):
+    raw=b'title: Easy Money \xe2\x80\xff\nSummary:\n I: -20.1 LUFS\n LRA: 9.5 LU\n Peak: -2.1 dBFS\n'
+    def completed(cmd,**options):
+        # Reproduce subprocess's text decoding boundary without a real process.
+        stderr=raw.decode(options.get('encoding') or 'utf-8',options.get('errors') or 'strict')
+        return subprocess.CompletedProcess(cmd,0,'',stderr)
+    monkeypatch.setattr(probe.subprocess,'run',completed)
+    result=probe.run(['ffmpeg'])
+    assert result.returncode==0 and '\ufffd' in result.stderr
+    assert probe.parse_ebur(result.stderr)==(-20.1,9.5,-2.1)

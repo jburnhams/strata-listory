@@ -61,3 +61,10 @@ def test_scan_finds_books_in_the_shapes_the_library_has(tmp_path):
 
 def test_scan_never_writes(tmp_path):
     tree(tmp_path, 'a/b.mp3'); before = sorted(os.walk(tmp_path)); list(scan.scan(str(tmp_path))); assert sorted(os.walk(tmp_path)) == before
+
+
+@pytest.mark.parametrize('label',['BBC R4','bbc_r4','BBC.R4','BBC-Radio-4','BBCR4X'])
+def test_bbc_r4_markers_always_identify_radio(label):
+    assert scan.kind_of(f'/library/{label}/Novel')=='radio'
+    assert scan.kind_of('Novel',label)=='radio'
+    assert scan.kind_of('Novel BBC R40')=='book'

@@ -32,7 +32,26 @@ def test_scoring_title_and_author():
     assert matcher.title_score('Great Gatsby: A Novel (Unabridged)', sub) > 0.9
     assert matcher.title_score('Completely Different', c) < 0.4
     assert matcher.author_score('Frank Herbert and Brian Herbert', cand('x', ('Frank Herbert', 'Brian Herbert'))) == 1.0
-    assert matcher.author_score('Frank Herbart', c) == 0.3
+    assert matcher.author_score('Frank Herbart', c) == 0.95
+    assert matcher.author_score('Professor Frank Herbert', c) == 1.0
+    assert matcher.author_score('Susan Brown', cand('x', ('Sue Brown',))) == 0.95
+
+
+def test_foreword_credit_does_not_lower_the_author_match():
+    b=dict(title='A Man for All Markets',author='Edward O. Thorp, Nassim Nicholas Taleb - foreword')
+    assert matcher.score(b,cand(b['title'],('Edward O. Thorp',)))==1
+    assert matcher.score(b,cand(b['title'],('Edward O. Thorp','Nassim Nicholas Taleb')))==1
+    # A shared author still corroborates the work when other credits differ.
+    assert matcher.author_score('Edward O. Thorp, Nassim Nicholas Taleb',cand(b['title'],('Edward O. Thorp',)))==1
+
+
+def test_edition_ordinals_match_without_discarding_edition_identity():
+    title='American Gods 10th Anniversary Edition'
+    c=cand('American Gods: The Tenth Anniversary Edition (A Full Cast Production)',('Neil Gaiman',))
+    assert matcher.score(dict(title=title,author='Neil Gaiman'),c)>=.9
+    assert c['title']=='American Gods: The Tenth Anniversary Edition (A Full Cast Production)'
+    assert matcher.norm('First edition')==matcher.norm('1st edition')
+    assert matcher.title_score('American Gods 20th Anniversary Edition',c)<matcher.title_score(title,c)
 
 
 def test_asin_wins_in_provider_order_then_falls_back_to_search():

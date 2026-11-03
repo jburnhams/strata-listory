@@ -15,3 +15,18 @@ def capture(callback):
     token = observer.set(callback)
     try: yield
     finally: observer.reset(token)
+
+
+progress_observer=ContextVar('ingest_progress_observer',default=None)
+
+
+def report(message,**values):
+    fn=progress_observer.get()
+    if fn:fn(dict(message=message,**values))
+
+
+@contextmanager
+def capture_progress(callback):
+    token=progress_observer.set(callback)
+    try:yield
+    finally:progress_observer.reset(token)

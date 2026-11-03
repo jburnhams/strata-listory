@@ -9,6 +9,13 @@ Fast and isolated: synthetic data and fakes; no external services, no network. `
 | Module | Tests | Coverage | Status | Notes |
 | --- | --- | --- | --- | --- |
 | `settings.py` | `test_settings.py` | 100% | done | home/data_dir/library_dir defaults, overrides, save/load, corrupt JSON |
+| `source_files.py` | `test_source_files.py`, `test_ingest_api.py` | 100% | done | Inventory reuse, directory/single-file samples, unavailable sources, filename counts and no audio probing |
+| `book_titles.py` | `test_book_titles.py`, `test_ingest.py` | covered | done | Full-title preference, safe missing-subtitle fallback, ambiguity across providers, joined words, author-prefixed collections and volume conflicts |
+| `contributors.py` | `test_contributors.py` | covered | done | Contribution roles, complete coauthors, honorifics and bounded name variants |
+| `ingest/grouping.py`, `ingest/collections.py` | `test_grouping.py`, `test_ingest.py` | covered | done | Mixed/nested/flat collections, explicit scoped manifests, disc sequencing, 395-file/28-disc anthology regression, album/volume spelling variants, missing discs/tracks, alternative recordings, hash-bound publisher corrections, filename/tag conflicts, durable child runs and existing-plan preservation |
+| `ingest/operations.py` | `test_operations.py`, `test_ingest_api.py` | covered | done | Current workflow membership for every linked/queued Library entry, inclusion filters and global review sorting with page-bounded evidence loading |
+| `ingest/pipeline.py` | `test_ingest.py`, `test_ingest_api.py` | covered | done | Sequential book/recording/quality consent, approved-identity provider handoff, immutable work fields, dependent signatures, automation and legacy approvals |
+| `ingest/previews.py` | `test_previews.py`, `test_ingest_api.py` | covered | done | Stable stratified samples, background deduplication/retries, atomic normalized cache, source freshness and HTTP audio |
 | `catalogue.py` | `test_catalogue.py` | 93% | done | validation, defaults, ids, search/sort, corrupt database refused and restored, hypothesis title strip |
 | `details.py` | `test_details.py` | 96% | done | Audible sidecar parsing, file list, cached probe, cover order and negative cache, loose-file covers, download rules, real ffmpeg probe/embedded art (skipped without ffmpeg) |
 | `process/` | `test_process.py` | 96% | done | parsers, chapter sources and cut points, tiers, gain rules, copy rules, real-audio planning and execution (encode, music tiers, lossless copy with mp3gain, stereo cancellation, failure cleanup, verify), CLI plan/run/status; ffmpeg tests skip when ffmpeg is missing |

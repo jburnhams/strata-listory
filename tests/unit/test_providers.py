@@ -55,7 +55,7 @@ def test_audiobookdb_search_asin_cover_and_key(fake_urlopen, monkeypatch, tmp_pa
 
 def test_audible_search_and_asin(fake_urlopen, monkeypatch):
     p = audible.AudibleSearch()
-    fake_urlopen.reply(dict(products=[AUDIBLE]), dict(product=AUDIBLE), http_error(404))
+    fake_urlopen.reply(dict(products=[AUDIBLE]), dict(product=AUDIBLE), http_error(404), http_error(404))
     c = p.search('Flashman at the Charge', 'George MacDonald Fraser')[0]
     assert (c['asin'], c['narrators'], c['series'], c['series_position'], c['runtime_minutes'], c['cover_url']) == ('B00VVVY0PI', ['Colin Mace'], 'The Flashman Papers', 7.0, 643, 'https://img/f.jpg')
     [call] = fake_urlopen.calls
@@ -68,11 +68,19 @@ def test_audible_search_and_asin(fake_urlopen, monkeypatch):
 
 def test_audnexus_tries_the_region_then_us(fake_urlopen, monkeypatch):
     p = audnexus.Audnexus()
-    fake_urlopen.reply(http_error(404), dict(asin='B0US', title='US Only', authors=[dict(name='A B')], narrators=[dict(name='N N')], seriesPrimary=dict(name='Saga', position='3'), runtimeLengthMin=100, image='https://img/a.jpg', releaseDate='2020-01-02T00:00:00.000Z'), http_error(404), http_error(404))
+    fake_urlopen.reply(http_error(404), dict(asin='B0US', title='US Only', authors=[dict(name='A B')], narrators=[dict(name='N N')], seriesPrimary=dict(name='Saga', position='3'), runtimeLengthMin=100, image='https://img/a.jpg', releaseDate='2020-01-02T00:00:00.000Z',formatType='unabridged'), http_error(404), http_error(404))
     c = p.by_asin('B0US')
     assert (c['title'], c['series'], c['series_position'], c['runtime_minutes'], c['release_date'], c['source']) == ('US Only', 'Saga', 3.0, 100, '2020-01-02', 'audnexus')
     assert 'region=uk' in fake_urlopen.calls[0]['url'] and 'region=us' in fake_urlopen.calls[1]['url']
     assert p.by_asin('B0MISSING') is None and p.search('anything') == []
+    assert c['abridged'] is False
+
+
+def test_audible_exact_lookup_tries_us_when_the_regional_product_is_a_stub(fake_urlopen):
+    p=audible.AudibleSearch()
+    fake_urlopen.reply(dict(product=dict(asin=AUDIBLE['asin'])),dict(product=AUDIBLE))
+    assert p.by_asin(AUDIBLE['asin'])['title']==AUDIBLE['title']
+    assert 'api.audible.co.uk' in fake_urlopen.calls[0]['url'] and 'api.audible.com' in fake_urlopen.calls[1]['url']
 
 
 def test_http_errors_are_reported_clearly(fake_urlopen):
@@ -168,3 +176,52 @@ def test_openlibrary_search_gives_the_first_published_year_and_is_not_a_default_
     call = fake_urlopen.calls[0]; assert call['url'].startswith('https://openlibrary.org/search.json?') and 'title=Brave+New+World' in call['url'] and 'author=Aldous+Huxley' in call['url'] and 'strata-listory' in call['headers']['user-agent']
     assert p.search('Nothing Here') == [] and p.search('x') == [] and openlibrary.to_candidate({})['cover_url'] == ''
     assert 'openlibrary' not in providers.configured() and providers.get('openlibrary').unavailable() is None and 'openlibrary' in [s['name'] for s in providers.status()]
+
+
+@pytest.mark.year_lookup
+@pytest.mark.parametrize('failure',['reset','timeout','incomplete'])
+def test_openlibrary_retries_transient_transport_errors_and_caches_success(fake_urlopen,failure):
+    import urllib.error
+    from http.client import IncompleteRead
+    from app.providers.openlibrary import OpenLibrary
+    errors={'reset':urllib.error.URLError(ConnectionResetError(104,'Connection reset by peer')),'timeout':TimeoutError('timed out'),'incomplete':IncompleteRead(b'partial')}
+    fake_urlopen.reply(errors[failure],errors[failure],dict(docs=[OL_DOC]))
+    p=OpenLibrary();result=p.search('Brave New World','Aldous Huxley')
+    assert result[0]['original_year']==1932 and len(fake_urlopen.calls)==3
+    assert p.search('Brave New World','Aldous Huxley')==result and len(fake_urlopen.calls)==3
+
+
+@pytest.mark.year_lookup
+def test_transport_retries_are_bounded_and_do_not_cache_failures(fake_urlopen):
+    from app.providers.openlibrary import OpenLibrary
+    fake_urlopen.reply(*(ConnectionResetError('reset') for _ in range(3)))
+    p=OpenLibrary()
+    with pytest.raises(MatchError,match='unreachable'):p.search('Outer Dark','Cormac McCarthy')
+    assert len(fake_urlopen.calls)==3
+    fake_urlopen.reply(dict(docs=[]))
+    assert p.search('Outer Dark','Cormac McCarthy')==[] and len(fake_urlopen.calls)==4
+
+
+def test_transport_failures_do_not_replay_post_requests(fake_urlopen):
+    from app.providers.base import Http
+    fake_urlopen.reply(ConnectionResetError('reset'))
+    with pytest.raises(MatchError,match='unreachable'):Http('Provider').request('https://provider.test/action',{'action':'change'})
+    assert len(fake_urlopen.calls)==1
+
+
+def test_edition_publishers_are_bounded_cached_and_linked_to_the_exact_work(fake_urlopen):
+    from app.providers.openlibrary import OpenLibrary
+    fake_urlopen.reply(dict(entries=[dict(key='/books/OL1M',works=[dict(key='/works/OL1W')],publish_date='November 5, 2009',publishers=['Original Press']),dict(key='/books/OL2M',works=[dict(key='/works/OL1W')],publish_date='2017',publishers=['Reprint Press']),dict(key='/books/OL3M',works=[dict(key='/works/OL2W')],publish_date='1900',publishers=['Wrong Work'])]))
+    provider=OpenLibrary();editions=provider.edition_publishers('/works/OL1W')
+    assert [(e['year'],e['publishers']) for e in editions]==[(2009,['Original Press']),(2017,['Reprint Press'])]
+    assert provider.edition_publishers('/works/OL1W')==editions and len(fake_urlopen.calls)==1
+    assert provider.edition_publishers('https://other.example/works')==[]
+
+
+def test_original_publisher_lookup_can_resolve_empty_duplicate_works(fake_urlopen):
+    from app.providers.openlibrary import OpenLibrary
+    from app.providers.base import candidate
+    fake_urlopen.reply(dict(entries=[]),dict(docs=[dict(key='/works/OL2W',title='Adrian Mole',author_name=['Sue Townsend'],first_publish_year=2009)]),dict(entries=[dict(key='/books/OL1M',title='Adrian Mole',subtitle='the prostate years',works=[dict(key='/works/OL2W')],publish_date='2009',publishers=['Original Press']),dict(key='/books/OL2M',title='Unrelated title',works=[dict(key='/works/OL2W')],publish_date='2009',publishers=['Wrong Press'])]))
+    editions=OpenLibrary().publication_editions(candidate('openlibrary',id='/works/OL1W',title='Adrian Mole: The Prostrate Years',authors=['Sue Townsend']),2009)
+    assert len(editions)==1 and editions[0]['publishers']==['Original Press']
+    assert 'first_publish_year=2009' in fake_urlopen.calls[1]['url']

@@ -49,6 +49,31 @@ def test_resolve_prefers_the_original_year_then_flags_the_fallbacks():
     hand = S.resolve(book(locked=['year'], year=1999, year_source='manual'), full); assert (hand['year'], hand['year_source']) == (1999, 'set by hand')
 
 
+def test_earliest_compatible_work_year_wins_over_a_later_first_publication_assertion():
+    records=dict(openlibrary=S.from_openlibrary(dict(first_publish_year=2017)),hardcover=S.from_hardcover(dict(release_date='2016-01-01')))
+    result=S.resolve(book(),records)
+    assert result['year']==2016 and result['year_source']=='Hardcover (first published)'
+    assert result['year_note']=='Open Library says 2017' and not result['year_note_requires_review']
+    records['hardcover']['year_kind']='first_publication'
+    assert not S.resolve(book(),records)['year_note_requires_review']
+
+
+def test_less_than_zero_keeps_1985_and_records_the_later_2025_edition():
+    records=dict(openlibrary=S.from_openlibrary(dict(first_publish_year=2025)),hardcover=S.from_hardcover(dict(release_date='1985-01-01')),audible=dict(release_year=1980))
+    result=S.resolve(book(),records)
+    assert result['year']==1985 and result['year_source']=='Hardcover (first published)'
+    assert result['year_note']=='Open Library says 2025' and not result['year_note_requires_review']
+
+
+def test_contribution_roles_remain_in_source_evidence_and_not_in_primary_authors():
+    local=S.from_catalogue(dict(title='T',author='Writer, Helper - foreword'))
+    assert local['authors']==['Writer'] and local['contributors']==[dict(name='Helper',role='foreword')]
+    external=S.from_candidate(cand('audnexus',authors=['Writer','Helper - introduction']))
+    assert external['authors']==['Writer'] and external['contributors']==[dict(name='Helper',role='introduction')]
+    assert S.from_audible_file(dict(authors=['Writer','Helper - foreword']))['authors']==['Writer']
+    assert S.locked_values(dict(author='Writer, Helper - foreword',locked=['author']))==dict(authors=['Writer'])
+
+
 def test_resolve_and_rows_show_value_sources_and_what_was_outvoted():
     recs = {'catalogue': dict(title='Brave New World', authors=['CBS Radio Workshop', 'Aldous Huxley']), 'audible_file': dict(title='Brave New World', authors=['Aldous Huxley'], narrators=['Michael York'], publisher='Blackstone', series='S', series_position=2.0, asin='B004EVP6BY', genres=['Classics']),
             'audnexus': dict(title='Brave New World', authors=['Aldous Huxley'], narrators=['Michael York'], release_year=2008), 'openlibrary': dict(authors=['Aldous Huxley'], original_year=1932)}
