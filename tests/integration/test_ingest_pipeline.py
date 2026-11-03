@@ -75,6 +75,7 @@ def test_stereo_pilot_normalises_measured_mono_output(tmp_path,monkeypatch):
     assert probe.probe_file(str(next(output.rglob('*.mp3'))))['channels']==1
 
 
+@pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')),reason='ffmpeg and ffprobe required')
 def test_listening_previews_generate_in_background_and_cache_selected_audio(client,tmp_path):
     import math
     import struct
