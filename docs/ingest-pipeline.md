@@ -192,3 +192,5 @@ Each reported case is represented by isolated fixtures or a parametrised behavio
 | Just William | `tests/unit/test_grouping.py`, `tests/unit/test_ingest.py`, `tests/integration/test_ingest_pipeline.py` | Full 395-file/28-disc structure, verified repairs, persisted grouping and real audio/API boundaries |
 
 Grouping evidence is shown alongside source folders and filenames. Explicit tag repairs are stored separately, include provenance, and only apply while the file hash matches.
+
+Review gates in existing runs use the current stage-automation settings and thresholds, while the original execution/provider policy remains in the run's audit record. Replanning a failed processing plan queues replacement proposals only for the selected entries, reusing valid ingest approvals and refusing changed inputs. Review pagination returns to an available page when approvals or background updates shrink the queue. These cases have backend/API and component regressions.

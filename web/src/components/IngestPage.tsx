@@ -50,6 +50,10 @@ export default function IngestPage({ phase = 'metadata' }: { phase?: 'metadata' 
   const [details, setDetails] = useState<object | null>(null)
   useEffect(() => { if (data) setPolicy(JSON.stringify(data.policy, null, 2)) }, [data?.policy.revision])
   useEffect(() => {
+    const total = data?.total
+    if (!loading && total != null) setPage(p => Math.min(p, Math.max(0, Math.ceil(total / 50) - 1)))
+  }, [data?.total, loading])
+  useEffect(() => {
     const timer = window.setInterval(() => { if (!loading) reload() }, 3000)
     return () => window.clearInterval(timer)
   }, [loading])
@@ -86,7 +90,7 @@ export default function IngestPage({ phase = 'metadata' }: { phase?: 'metadata' 
     {!data && !error && <p>Loading reviews…</p>}
     {data?.runs.length === 0 && <p>No books awaiting review.</p>}
     {phase === 'metadata' && <p className="text-xs text-stone-500">{sort === 'strongest' ? 'More passing book checks first, then title/author similarity, source agreement and metadata completeness.' : sort === 'metadata' ? 'More book metadata fields first, then source agreement and identification checks.' : ''}</p>}
-    {data && (data.total ?? runs.length) > 50 && <nav aria-label="Review pages" className="flex items-center gap-3 text-sm">
+    {data && ((data.total ?? runs.length) > 50 || page > 0) && <nav aria-label="Review pages" className="flex items-center gap-3 text-sm">
       <button type="button" className={btnQuiet} disabled={page === 0} onClick={() => setPage(p => p - 1)}>Previous page</button>
       <span>{page * 50 + 1}–{page * 50 + runs.length} of {data.total} reviews</span>
       <button type="button" className={btnQuiet} disabled={(page + 1) * 50 >= (data.total ?? 0)} onClick={() => setPage(p => p + 1)}>Next page</button>

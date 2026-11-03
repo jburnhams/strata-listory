@@ -26,7 +26,7 @@ def _plan_one(book: dict, final_dir: str) -> dict:
     ingest=store.latest(book['id'])
     if ingest:
         inv=pipeline.stage_data(ingest,'inventory');planned=pipeline.stage_data(ingest,'planning')
-        if ingest['state'] not in ('review','eligible') or not planned or not planned.get('plan'):raise probe.ToolError('ingest has no completed plan')
+        if ingest['state'] not in ('review','eligible','processing_failed') or not planned or not planned.get('plan'):raise probe.ToolError('ingest has no completed plan')
         if inv['primary_id']!=book['id']:raise probe.ToolError(f"this entry belongs to ingest group for book {inv['primary_id']}")
         try:pipeline.require_approvals(ingest)
         except ValueError as e:raise probe.ToolError(str(e)) from e
@@ -39,9 +39,10 @@ def _plan_one(book: dict, final_dir: str) -> dict:
     return P.make_plan(book, final_dir, audible, None, sources.gather(book, audible))        # asks every source that can be asked (Audnexus, Audible, AudiobookDB, Open Library, Hardcover), then merges
 
 
-def propose(limit: int = 5, jobs: int = 2) -> dict:
+def propose(limit: int = 5, jobs: int = 2, ids: list[int] | None = None) -> dict:
     """Plan up to `limit` eligible books that have no proposal yet; each becomes `proposed` (or `failed` with the reason)."""
-    final = settings.final_dir(); books = catalogue.pending_propose(limit)
+    final = settings.final_dir()
+    books=catalogue.pending_propose(limit) if ids is None else [catalogue.get_book(i) for i in dict.fromkeys(ids) if not catalogue.get_plan(i) and (catalogue.get_processed(i) or {}).get('status')!='done'][:limit]
     for b in books: catalogue.set_plan(b['id'], 'planning')
     def one(b):
         try:

@@ -1515,3 +1515,29 @@ def test_verified_layout_corrections_are_hash_bound_and_survive_split_and_redisc
     fresh,_=I.discover(parent)
     assert str(changed) not in I.layout_overrides(fresh) and len(I.layout_overrides(fresh))==5
     assert len(fresh['work_groups'])==3
+
+
+@pytest.mark.parametrize('recording_passes',[True,False])
+def test_existing_runs_use_current_automation_for_each_later_identification_stage(pipeline_fakes,recording_passes):
+    run=P.run([pipeline_fakes['id']])[0];original=run['options']['policy']
+    updated=policy.current();updated.update(auto_approve_metadata=True,auto_approve_audiobook=True)
+    if not recording_passes:updated['gates']['recording.matched']={'min':2}
+    policy.save(updated)
+    assert P.approve_passing_metadata()==[run['id']]
+    run=P.continue_review(run['id'])
+    assert run['state']==('quality_review' if recording_passes else 'audiobook_review')
+    assert run['options']['policy']==original
+    approval=P.stage_data(run,'audiobook_approval')
+    assert bool(approval)==recording_passes
+    if approval:assert approval['automatic'] and approval['policy_revision']==policy.current()['revision']
+    assert not P.approval_valid(run,'quality') and catalogue.get_plan(pipeline_fakes['id']) is None
+
+
+def test_failed_ingest_processing_can_be_reproposed_with_its_valid_stage_approvals(pipeline_fakes):
+    book=pipeline_fakes;run=complete_run([book['id']])[0]
+    catalogue.set_plan(book['id'],'failed',error='Temporary encoder failure',keep_plan=True);store.finish(run['id'],'processing_failed')
+    changed=P.Q.repropose([book['id']])
+    result=P.Q.propose(ids=changed,limit=1)
+    assert result['planned']==1 and result['failed']==0
+    assert catalogue.get_plan(book['id'])['state']=='proposed'
+    assert all(P.approval_valid(store.get(run['id']),phase) for phase in P.REVIEW_STAGES)

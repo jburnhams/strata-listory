@@ -189,7 +189,10 @@ def create_app():
     def post_reject(b: IdsIn): return dict(changed=pq.decide(b.ids, False))
 
     @app.post('/api/process/repropose')
-    def post_repropose(b: IdsIn): return dict(changed=pq.repropose(b.ids))
+    def post_repropose(b: IdsIn):
+        changed=pq.repropose(b.ids)
+        if changed:worker.submit('propose',ids=changed,limit=len(changed))
+        return dict(changed=changed)
 
     @app.post('/api/process/run')
     def post_run():

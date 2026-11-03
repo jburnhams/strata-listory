@@ -245,9 +245,11 @@ def _run_one(book_id,run_id,online=True,book_only=False):
         if phase:
             current=store.get(run_id)
             if not approval_valid(current,phase):
-                check=review_evaluation(current,phase,p)
-                if p.get('auto_approve_'+phase,p.get('auto_approve_metadata',p['auto_approve']) if phase=='audiobook' else p['auto_approve']) and p.get('revision',0)==policy.current().get('revision',0) and check['eligible']:
-                    _assert_review_inputs(current);_record_approval(current,phase,automatic=True,value=p)
+                # Execution keeps its original provider policy; consent at each
+                # new review gate uses the policy currently chosen by the user.
+                current_policy=policy.current();check=review_evaluation(current,phase,current_policy)
+                if current_policy.get('auto_approve_'+phase,current_policy.get('auto_approve_metadata',current_policy['auto_approve']) if phase=='audiobook' else current_policy['auto_approve']) and check['eligible']:
+                    _assert_review_inputs(current);_record_approval(current,phase,automatic=True,value=current_policy)
                 else:
                     store.finish(run_id,phase+'_review');return store.get(run_id)
         if book_only and stage=='recording_providers':

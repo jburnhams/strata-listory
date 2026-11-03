@@ -382,3 +382,20 @@ it('controls audiobook automation independently of book and quality approvals', 
   expect(body).toMatchObject({ auto_approve_metadata: false, auto_approve_audiobook: true, auto_approve_quality: false, auto_approve: false, auto_process: false })
   expect(screen.queryByRole('button', { name: 'Approve book and identify audiobook' })).toBeNull()
 })
+
+it.each([50,0])('returns to an accessible review page when approval shrinks the queue to %s', async remaining => {
+  const f = ingestFixture(); let approved = false; let lastOffset = -1
+  server.use(http.get('/api/ingest', ({ request }) => {
+    lastOffset = Number(new URL(request.url).searchParams.get('offset') || 0)
+    const total = approved ? remaining : 51
+    const runs = lastOffset >= total ? [] : [{ ...f.runs[0], title: lastOffset ? 'Last book' : 'Still awaiting' }]
+    return HttpResponse.json({ ...f, total, offset: lastOffset, runs })
+  }), http.post('/api/ingest/runs/:id/approve/metadata', () => { approved = true; return HttpResponse.json({ changed: true }) }))
+  const { user } = setup(<IngestPage />)
+  await user.click(await screen.findByRole('button', { name: 'Next page' }))
+  expect(await screen.findByText('Last book · review')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Approve book and identify audiobook' }))
+  await waitFor(() => expect(lastOffset).toBe(0))
+  if (remaining) expect(await screen.findByText('Still awaiting · review')).toBeInTheDocument()
+  else expect(await screen.findByText('No books awaiting review.')).toBeInTheDocument()
+})

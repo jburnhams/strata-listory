@@ -166,6 +166,10 @@ def test_processing_queue_endpoints(client, monkeypatch, tmp_path):
     assert client.get('/api/process').json()['rows'] == [] and client.post('/api/process/run').status_code == 400                    # nothing approved yet
     v = client.post('/api/process/propose', params=dict(limit=3)).json()
     assert [r['state'] for r in v['rows']] == ['proposed'] and v['rows'][0]['summary']['chapters'] == 1 and v['worker']['last']['propose']['planned'] == 1
+    from app import catalogue
+    catalogue.set_plan(b['id'],'failed',error='Transient failure',keep_plan=True)
+    assert client.post('/api/process/repropose',json=dict(ids=[b['id']])).json()==dict(changed=[b['id']])
+    assert client.get('/api/process').json()['rows'][0]['state']=='proposed'
     assert client.post('/api/process/reject', json=dict(ids=[b['id']])).json() == dict(changed=[b['id']])
     assert client.post('/api/process/approve', json=dict(ids=[b['id']])).json() == dict(changed=[b['id']]) and client.post('/api/process/approve', json=dict(ids=[999])).json() == dict(changed=[])
     v = client.post('/api/process/run').json()
