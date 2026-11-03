@@ -4,6 +4,8 @@ Shared commands, layout, hermetic setup and file-ownership rules are in [`tests/
 
 These run the program's boundaries end to end: the command line (in-process and as a subprocess) and the HTTP API over real on-disk files.
 
+CI installs and verifies both FFmpeg and ffprobe on Linux, macOS and Windows before running this suite, so the real-audio ingest, grouping and preview tests execute on every platform. Local runs may skip audio-dependent tests when those tools are unavailable.
+
 ## Fixtures (`conftest.py`)
 
 | Fixture | What it gives you |

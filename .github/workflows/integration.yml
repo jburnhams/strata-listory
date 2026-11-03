@@ -30,6 +30,14 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-test.txt
       - run: pip install -r requirements-test.txt
+      - name: Install and verify FFmpeg and ffprobe for real-audio integration tests
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ffmpeg
+          elif [ "$RUNNER_OS" = "macOS" ]; then brew install ffmpeg
+          else choco install ffmpeg -y --no-progress; fi
+          ffmpeg -version
+          ffprobe -version
       - name: Integration tests (CLI and HTTP API end-to-end)
         run: pytest tests/integration -n auto --durations=10
 
