@@ -582,3 +582,10 @@ configuration, queued-work behavior, output rebuilding and the proxy/auth bounda
 - Added optional streaming Open Library editions import with indexed ISBN/work links and bounded local publisher queries. Preserve edition publication dates separately from work first-publication dates; support multiple linked works and audio-format filtering. Atomic failed-import behavior remains unchanged.
 - The transfer excluded Open Library snapshots, so started resumable, checksum-verified authors/works/ratings/editions downloads and a waiting, bounded importer for the official 2026-10-31 snapshot on omarchy.
 - Final backend validation: 851 unit tests passed at 96.24% coverage; lint passed. The anthology re-ingest is queued behind existing work; four-dump download and waiting import are active.
+
+## 2026-11-04 — Compact multi-CD labels
+
+- Recognize compact disc totals such as `CD3o5` and `CD3of5` alongside `Disc 3 of 5` and `CD3/5`. Grouping version 7 rebuilds older descriptors on fresh inventory. This is a general parser change, with no title-specific exceptions.
+- Me Talk Pretty One Day's archived five-CD layout now groups as one 87-track recording, in disc/track order with zero missing/duplicate tracks. Tags and source audio remain unchanged. The earlier split came from combining ordinary `Disc 1/2` labels with unrecognised `(CD3o5)`–`(CD5o5)` labels.
+- Added positive/negative parser tests, an unrelated-title reconstruction of the mixed 87-track layout, and missing-disc detection. All 72 focused grouping tests and lint passed. Backed up the catalogue and queued normal full-container re-ingest (book 917), preserving old fragment history and requiring fresh combined-work consent.
+- Re-ingest has now linked all five catalogue members into one 87-track inventory and one recording representation (run `7972c9f5f3b0495390ca678dff9ba3fc`); later analysis remains in progress. Broader verification passed 231 ingest unit tests and nine pipeline integration tests.

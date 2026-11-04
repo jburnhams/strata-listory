@@ -4,10 +4,10 @@ from pathlib import Path
 import re
 from app import contributors, matcher, merge, scan
 
-VERSION=6
+VERSION=7
 GENERIC={'','audio','audiobook','audiobooks','book','books','unknown','unknown album','untitled'}
 
-DISC_LABEL=re.compile(r'\b(?:cd|disc|disk)\s*[._-]*\s*(\d+)(?:\s*(?:of|/)\s*(\d+))?\b',re.I)
+DISC_LABEL=re.compile(r'\b(?:cd|disc|disk)\s*[._-]*\s*(\d+)(?:\s*(?:of|o|/)\s*(\d+))?\b',re.I)
 NUMBERS={word:str(n) for n,word in enumerate(('zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve'))}
 
 
