@@ -538,3 +538,24 @@ the exact candidate the user reviewed. Trusted training rows now exclude an
 approval followed by revocation or rejection; a later explicit approval can
 provide fresh supervision. Added regressions for both stale decision actions and
 both forms of withdrawn consent.
+
+## 2026-11-04 — Stop the old service and prepare the Omarchy migration
+
+Stopped and disabled the single managed `strata-listory.service`. Created a
+consistent SQLite backup with no running jobs, verified its full integrity,
+and copied it to `~/data/strata-listory/migration-20261104/` on `//server/Omarchy`.
+The snapshot retains 5,706 entries, 1,745 ingest runs and all review history;
+one unattempted 113-entry ingest batch remains queued. Automatic output
+processing remains off. All 15,563 referenced provider archive paths exist and
+are preserved in a separate support archive, together with model/audit results.
+Private app settings, provider key files, the three configured app environment
+variables and service/proxy reference configuration are in a private archive,
+never committed to Git. Transfer files are verified after copying with SHA-256.
+
+The user will recreate `~/audio-local` from the audio mount on Omarchy. Retaining
+the original home/repository/source paths preserves signed inventory and evidence
+references. SQLite must be restored to local disk, rather than run on the SMB
+transfer share. Downloaded dumps, tool environments/caches, listening previews
+and output audio are omitted; generated state stays in the database as history.
+See `docs/omarchy-migration-20261104.md` for complete restore commands, required
+configuration, queued-work behavior, output rebuilding and the proxy/auth boundary.
