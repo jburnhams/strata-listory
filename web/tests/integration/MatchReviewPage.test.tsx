@@ -32,15 +32,18 @@ describe('quick match review', () => {
     expect(within(screen.getByRole('region', { name: 'Catalogue alternatives' })).getAllByRole('link')[0]).toHaveAttribute('href', 'https://openlibrary.org/works/OL1W')
   })
 
-  it('accepts the exact displayed snapshot, removes it and reports separate recording work', async () => {
+  it('accepts the exact displayed snapshot, retains it and reports separate recording work', async () => {
     let rows = [matchReviewFixture()], received: unknown
     server.use(http.get('/api/match-reviews', () => HttpResponse.json(listing(rows))), http.post('/api/match-reviews/:id/accept', async ({ request, params }) => {
       received = { id: params.id, ...await request.json() as object }; rows = []; return HttpResponse.json({ changed: true })
     }))
     const { user } = setup(<MatchReviewPage mode="shortlist" />)
     await user.click(await screen.findByRole('button', { name: 'Approve' }))
-    await screen.findByText(/book match accepted. Recording identification is queued/)
-    expect(received).toEqual({ id: 'review1', basis: 'a'.repeat(64) })
+    await screen.findByText(/book match accepted. Recording identification starts when you press Next/)
+    expect(received).toEqual({ id: 'review1', basis: 'a'.repeat(64), defer_continuation: true })
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Next' }))
     expect(await screen.findByText(/No current model suggestions/)).toBeInTheDocument()
   })
 
@@ -51,6 +54,9 @@ describe('quick match review', () => {
     expect(await screen.findByRole('region', { name: 'Approved match' })).toHaveTextContent('Dune')
     await user.click(screen.getByRole('button', { name: 'Reject' }))
     expect(await screen.findByRole('status')).toHaveTextContent('Automatic reapproval is held for manual review')
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Next' }))
     expect(await screen.findByText('No automatic approvals to review.')).toBeInTheDocument()
   })
 
@@ -136,9 +142,10 @@ it('firmly approves an automatic match and keeps it out of the review queue on r
   await screen.findByRole('button', { name: 'Approve' })
   expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled()
   await user.click(screen.getByRole('button', { name: 'Approve' }))
-  expect(await screen.findByRole('status')).toHaveTextContent('approval confirmed. Removed from this review queue')
+  expect(await screen.findByRole('status')).toHaveTextContent('approval confirmed.')
   expect(confirmed).toBe(true)
-  expect(await screen.findByText('No automatic approvals to review.')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled()
   await user.click(screen.getByRole('button', { name: 'Refresh' }))
   expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
 })
@@ -152,73 +159,14 @@ it('rejects a proposed model match without accepting it', async () => {
   await user.click(await screen.findByRole('button', { name: 'Reject' }))
   expect(await screen.findByRole('status')).toHaveTextContent('match rejected. Automatic reapproval is held for manual review')
   expect(rejected).toBe(true); expect(accepted).toBe(false)
-  expect(await screen.findByText(/No current model suggestions/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Reject' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled()
 })
 
 function reviewRows(count: number, mode: 'automatic' | 'shortlist' = 'automatic') {
   return Array.from({ length: count }, (_, i) => ({ ...matchReviewFixture(mode), id: `batch-${i + 1}`, book_id: i + 1, local: { ...matchReviewFixture(mode).local, title: `Book ${i + 1}` } }))
 }
 
-it.each(['automatic', 'shortlist'] as const)('preloads ten at a time and automatically advances %s batches without skips', async mode => {
-  const original = reviewRows(21, mode)
-  let rows = [...original]
-  const requests: { offset: number; after: string | null }[] = [], decisions: string[] = []
-  server.use(http.get('/api/match-reviews', ({ request }) => {
-    const url = new URL(request.url), offset = Number(url.searchParams.get('offset')), after = url.searchParams.get('after')
-    requests.push({ offset, after })
-    const eligible = after ? original.slice(original.findIndex(r => r.id === after) + 1).filter(r => rows.some(remaining => remaining.id === r.id)) : rows.slice(offset)
-    return HttpResponse.json({ rows: eligible.slice(0, 10), total: rows.length, offset, limit: 10 })
-  }), http.post('/api/match-reviews/:id/:action', ({ params }) => {
-    decisions.push(String(params.id)); rows = rows.filter(r => r.id !== params.id); return HttpResponse.json({ changed: true })
-  }))
-  const { user } = setup(<MatchReviewPage mode={mode} />)
-  await screen.findByRole('article', { name: 'Review Book 1' })
-  expect(screen.getAllByRole('article')).toHaveLength(10)
-  await waitFor(() => expect(requests).toContainEqual({ offset: 10, after: 'batch-10' }))
-  expect(screen.queryByRole('article', { name: 'Review Book 11' })).toBeNull()
-  for (let i = 1; i <= 10; i++) {
-    const card = screen.getByRole('article', { name: `Review Book ${i}` })
-    await user.click(within(card).getByRole('button', { name: i % 2 ? 'Approve' : 'Reject' }))
-    await waitFor(() => expect(screen.queryByRole('article', { name: `Review Book ${i}` })).toBeNull())
-    if (i < 10) expect(screen.getAllByRole('article')).toHaveLength(10 - i)
-  }
-  expect(await screen.findByRole('article', { name: 'Review Book 11' })).toBeInTheDocument()
-  expect(screen.getAllByRole('article')).toHaveLength(10)
-  expect(requests.filter(r => !r.after)).toHaveLength(1)
-  expect(requests.filter(r => r.after === 'batch-10')).toHaveLength(1)
-  await waitFor(() => expect(requests).toContainEqual({ offset: 10, after: 'batch-20' }))
-  for (let i = 11; i <= 21; i++) {
-    await user.click(within(await screen.findByRole('article', { name: `Review Book ${i}` })).getByRole('button', { name: 'Approve' }))
-    await waitFor(() => expect(screen.queryByRole('article', { name: `Review Book ${i}` })).toBeNull())
-  }
-  expect(new Set(decisions).size).toBe(21)
-  expect(decisions).toEqual(original.map(r => r.id))
-  expect(rows).toHaveLength(0)
-  expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' })
-})
-
-it('uses the stable cursor when a preload completes after decisions changed the queue', async () => {
-  const original = reviewRows(11), requests: (string | null)[] = []
-  let rows = [...original], release: () => void = () => {}
-  const held = new Promise<void>(resolve => { release = resolve })
-  server.use(http.get('/api/match-reviews', async ({ request }) => {
-    const url = new URL(request.url), after = url.searchParams.get('after'); requests.push(after)
-    if (after) await held
-    const eligible = after ? original.slice(original.findIndex(r => r.id === after) + 1).filter(r => rows.includes(r)) : rows
-    return HttpResponse.json({ rows: eligible.slice(0, 10), total: rows.length, offset: Number(url.searchParams.get('offset')), limit: 10 })
-  }), http.post('/api/match-reviews/:id/:action', ({ params }) => { rows = rows.filter(r => r.id !== params.id); return HttpResponse.json({ changed: true }) }))
-  const { user } = setup(<MatchReviewPage mode="automatic" />)
-  await screen.findByRole('article', { name: 'Review Book 1' })
-  await waitFor(() => expect(requests).toContain('batch-10'))
-  for (let i = 1; i <= 9; i++) {
-    await user.click(within(screen.getByRole('article', { name: `Review Book ${i}` })).getByRole('button', { name: 'Approve' }))
-    await waitFor(() => expect(screen.queryByRole('article', { name: `Review Book ${i}` })).toBeNull())
-  }
-  release()
-  await user.click(within(screen.getByRole('article', { name: 'Review Book 10' })).getByRole('button', { name: 'Approve' }))
-  expect(await screen.findByRole('article', { name: 'Review Book 11' })).toBeInTheDocument()
-  expect(requests.filter(after => after === 'batch-10')).toHaveLength(1)
-})
 
 it('ignores obsolete search preloads and retries a failed preload when advancing', async () => {
   const original = reviewRows(11)
@@ -245,49 +193,6 @@ it('ignores obsolete search preloads and retries a failed preload when advancing
   await waitFor(() => expect(screen.queryByRole('article', { name: 'Review Book 1' })).toBeNull())
 })
 
-it('returns to earlier unreviewed books after finishing a manually selected last page', async () => {
-  const original = reviewRows(11)
-  let rows = [...original]
-  server.use(http.get('/api/match-reviews', ({ request }) => {
-    const url = new URL(request.url), after = url.searchParams.get('after'), offset = Number(url.searchParams.get('offset'))
-    const eligible = after ? original.slice(original.findIndex(r => r.id === after) + 1).filter(r => rows.includes(r)) : rows.slice(offset)
-    return HttpResponse.json({ rows: eligible.slice(0, 10), total: rows.length, offset, limit: 10 })
-  }), http.post('/api/match-reviews/:id/:action', ({ params }) => { rows = rows.filter(r => r.id !== params.id); return HttpResponse.json({ changed: true }) }))
-  const { user } = setup(<MatchReviewPage mode="automatic" />)
-  await screen.findByRole('article', { name: 'Review Book 1' })
-  await user.click(within(screen.getByRole('article', { name: 'Review Book 1' })).getByRole('button', { name: 'Approve' }))
-  await waitFor(() => expect(screen.getAllByRole('article')).toHaveLength(9))
-  await user.click(screen.getByRole('button', { name: 'Next' }))
-  expect(await screen.findByText('10–10 of 10 reviews')).toBeInTheDocument()
-  await user.click(within(screen.getByRole('article', { name: 'Review Book 11' })).getByRole('button', { name: 'Reject' }))
-  expect(await screen.findByRole('article', { name: 'Review Book 2' })).toBeInTheDocument()
-  expect(screen.getAllByRole('article')).toHaveLength(9)
-  expect(screen.queryByRole('article', { name: 'Review Book 1' })).toBeNull()
-  expect(screen.queryByRole('article', { name: 'Review Book 11' })).toBeNull()
-})
-
-it('keeps completed decisions hidden if loading the next batch fails, then recovers on refresh', async () => {
-  const original = reviewRows(11)
-  let rows = [...original], recover = false
-  server.use(http.get('/api/match-reviews', ({ request }) => {
-    const url = new URL(request.url)
-    if (url.searchParams.has('after') && !recover) return HttpResponse.json({ detail: 'Next reviews unavailable' }, { status: 500 })
-    return HttpResponse.json({ rows: rows.slice(0, 10), total: rows.length, offset: 0, limit: 10 })
-  }), http.post('/api/match-reviews/:id/:action', ({ params }) => { rows = rows.filter(r => r.id !== params.id); return HttpResponse.json({ changed: true }) }))
-  const { user } = setup(<MatchReviewPage mode="automatic" />)
-  await screen.findByRole('article', { name: 'Review Book 1' })
-  for (let i = 1; i <= 10; i++) {
-    await user.click(within(screen.getByRole('article', { name: `Review Book ${i}` })).getByRole('button', { name: 'Approve' }))
-    await waitFor(() => expect(screen.queryByRole('article', { name: `Review Book ${i}` })).toBeNull())
-  }
-  expect(await screen.findByRole('alert')).toHaveTextContent('Next reviews unavailable')
-  expect(screen.queryAllByRole('article')).toHaveLength(0)
-  expect(screen.queryByText('No automatic approvals to review.')).toBeNull()
-  recover = true
-  await user.click(screen.getByRole('button', { name: 'Refresh' }))
-  expect(await screen.findByRole('article', { name: 'Review Book 11' })).toBeInTheDocument()
-})
-
 it('recovers when concurrent reviews empty a prefetched page or make its offset obsolete', async () => {
   let reads = 0, empty = false
   const original = reviewRows(20)
@@ -309,65 +214,126 @@ it('recovers when concurrent reviews empty a prefetched page or make its offset 
   expect(await screen.findByText('1–5 of 5 reviews')).toBeInTheDocument()
 })
 
-it.each(['automatic', 'shortlist'] as const)('saves %s cards independently while a decision is still queued', async mode => {
-  const original = reviewRows(11, mode)
+
+it.each(['automatic', 'shortlist'] as const)('keeps saved %s cards in place and fills only their slots on Next', async mode => {
+  const original = reviewRows(23, mode)
   let rows = [...original]
-  const calls: string[] = []
-  const releases = new Map<string, (failed?: boolean) => void>()
+  const cursors: (string | null)[] = []
   server.use(http.get('/api/match-reviews', ({ request }) => {
-    const after = new URL(request.url).searchParams.get('after')
-    return HttpResponse.json({ rows: after ? original.slice(10) : rows.slice(0, 10), total: rows.length, offset: after ? 10 : 0, limit: 10 })
+    const url = new URL(request.url), after = url.searchParams.get('after'); cursors.push(after)
+    const eligible = after ? original.slice(original.findIndex(row => row.id === after) + 1).filter(row => rows.includes(row)) : rows
+    return HttpResponse.json({ rows: eligible.slice(0, 10), total: rows.length, offset: 0, limit: 10 })
   }), http.post('/api/match-reviews/:id/:action', ({ params }) => {
-    const id = String(params.id); calls.push(id)
-    return HttpResponse.json({ job_id: id }, { status: 202 })
-  }), http.get('/api/jobs/:id', async ({ params }) => {
-    const id = String(params.id)
-    const failed = await new Promise<boolean>(resolve => { releases.set(id, (fail = false) => resolve(fail)) })
-    if (!failed) rows = rows.filter(row => row.id !== id)
-    return HttpResponse.json({ state: failed ? 'failed' : 'done', result: { changed: true }, error: failed ? 'Evidence changed; refresh and retry.' : '' })
+    rows = rows.filter(row => row.id !== params.id)
+    return HttpResponse.json({ changed: true, basis: 'b'.repeat(64) })
   }))
   const { user } = setup(<MatchReviewPage mode={mode} />)
-  const first = await screen.findByRole('article', { name: 'Review Book 1' })
-  const second = screen.getByRole('article', { name: 'Review Book 2' })
-  await user.click(within(first).getByRole('button', { name: 'Approve' }))
-  await waitFor(() => expect(releases.has('batch-1')).toBe(true))
-  expect(within(first).getByRole('button', { name: 'Saving…' })).toBeDisabled()
-  expect(within(first).getByRole('button', { name: 'Reject' })).toBeDisabled()
-  expect(within(second).getByRole('button', { name: 'Approve' })).toBeEnabled()
-  expect(screen.getByRole('textbox', { name: 'Search reviews' })).toBeEnabled()
-  expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
-  expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled()
-  await user.click(within(second).getByRole('button', { name: 'Approve' }))
-  await waitFor(() => expect(releases.has('batch-2')).toBe(true))
-  releases.get('batch-2')!()
-  await waitFor(() => expect(screen.queryByRole('article', { name: 'Review Book 2' })).toBeNull())
-  expect(within(first).getByRole('button', { name: 'Saving…' })).toBeDisabled()
-  releases.get('batch-1')!(true)
-  expect(await screen.findByRole('alert')).toHaveTextContent('Book 1: Evidence changed')
-  expect(within(first).getByRole('button', { name: 'Approve' })).toBeEnabled()
-  expect(calls).toEqual(['batch-1', 'batch-2'])
+  await screen.findByRole('article', { name: 'Review Book 1' })
+  await waitFor(() => expect(cursors).toContain('batch-10'))
+  const originalCards = screen.getAllByRole('article')
+  for (const i of [1, 4, 7]) {
+    const card = screen.getByRole('article', { name: `Review Book ${i}` })
+    await user.click(within(card).getByRole('button', { name: 'Approve' }))
+    await waitFor(() => expect(within(card).getByRole('button', { name: 'Approve' })).toBeDisabled())
+    expect(within(card).getByRole('button', { name: 'Reject' })).toBeEnabled()
+  }
+  expect(screen.getAllByRole('article')).toEqual(originalCards)
+  expect(window.scrollTo).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  await screen.findByRole('article', { name: 'Review Book 13' })
+  expect(screen.getAllByRole('article').map(card => card.getAttribute('aria-label'))).toEqual([2, 3, 5, 6, 8, 9, 10, 11, 12, 13].map(i => `Review Book ${i}`))
+  expect(screen.queryByRole('article', { name: 'Review Book 14' })).toBeNull()
+  await waitFor(() => expect(cursors).toContain('batch-13'))
+  for (const i of [2, 3, 5, 6, 8, 9, 10, 11, 12, 13]) {
+    const card = screen.getByRole('article', { name: `Review Book ${i}` })
+    await user.click(within(card).getByRole('button', { name: 'Reject' }))
+    await waitFor(() => expect(within(card).getByRole('button', { name: 'Reject' })).toBeDisabled())
+  }
+  expect(screen.getAllByRole('article')).toHaveLength(10)
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  await screen.findByRole('article', { name: 'Review Book 14' })
+  expect(screen.getAllByRole('article')).toHaveLength(10)
+  expect(screen.getByRole('article', { name: 'Review Book 23' })).toBeInTheDocument()
 })
 
-it('does not restore a saved card when an overlapping refresh returns stale rows', async () => {
-  const rows = reviewRows(2)
-  let releaseDecision: () => void = () => {}, releaseRefresh: () => void = () => {}, reads = 0, deciding = false
-  const decision = new Promise<void>(resolve => { releaseDecision = resolve })
-  const refresh = new Promise<void>(resolve => { releaseRefresh = resolve })
-  server.use(http.get('/api/match-reviews', async () => {
-    if (++reads > 1) await refresh
-    return HttpResponse.json(listing(rows))
-  }), http.post('/api/match-reviews/:id/confirm', async () => {
-    deciding = true; await decision; return HttpResponse.json({ changed: true })
+it.each(['automatic', 'shortlist'] as const)('uses current tokens to change saved %s decisions in either direction', async mode => {
+  const row = matchReviewFixture(mode), calls: { action: string; basis: string }[] = []
+  let count = 0
+  server.use(http.get('/api/match-reviews', () => HttpResponse.json(listing([row]))), http.post('/api/match-reviews/:id/:action', async ({ request, params }) => {
+    calls.push({ action: String(params.action), ...await request.json() as { basis: string } })
+    return HttpResponse.json({ changed: true, basis: ['b', 'c', 'd'][count++].repeat(64) })
+  }))
+  const { user } = setup(<MatchReviewPage mode={mode} />)
+  const card = await screen.findByRole('article', { name: `Review ${row.local.title}` })
+  for (const action of ['Approve', 'Reject', 'Approve']) {
+    await user.click(within(card).getByRole('button', { name: action }))
+    await waitFor(() => expect(within(card).getByRole('button', { name: action })).toBeDisabled())
+    expect(within(card).getByRole('button', { name: action === 'Approve' ? 'Reject' : 'Approve' })).toBeEnabled()
+    expect(screen.getByRole('article', { name: `Review ${row.local.title}` })).toBe(card)
+  }
+  expect(calls).toEqual([{ action: mode === 'automatic' ? 'confirm' : 'accept', basis: 'a'.repeat(64), ...(mode === 'shortlist' ? { defer_continuation: true } : {}) }, { action: 'reject', basis: 'b'.repeat(64), ...(mode === 'shortlist' ? { defer_continuation: true } : {}) }, { action: 'restore', basis: 'c'.repeat(64), ...(mode === 'shortlist' ? { defer_continuation: true } : {}) }])
+})
+
+it('keeps saving cards and failed decisions while Next replaces only successfully saved cards', async () => {
+  const original = reviewRows(12)
+  const releases = new Map<string, () => void>()
+  server.use(http.get('/api/match-reviews', ({ request }) => HttpResponse.json({ rows: new URL(request.url).searchParams.has('after') ? original.slice(10) : original.slice(0, 10), total: 12, offset: 0, limit: 10 })), http.post('/api/match-reviews/:id/:action', async ({ params }) => {
+    await new Promise<void>(resolve => { releases.set(String(params.id), resolve) })
+    return params.id === 'batch-2' ? HttpResponse.json({ detail: 'Review changed' }, { status: 400 }) : HttpResponse.json({ changed: true })
   }))
   const { user } = setup(<MatchReviewPage mode="automatic" />)
-  await user.click(within(await screen.findByRole('article', { name: 'Review Book 1' })).getByRole('button', { name: 'Approve' }))
-  await waitFor(() => expect(deciding).toBe(true))
-  await user.click(screen.getByRole('button', { name: 'Refresh' }))
-  await waitFor(() => expect(reads).toBe(2))
-  releaseDecision()
-  await waitFor(() => expect(screen.queryByRole('article', { name: 'Review Book 1' })).toBeNull())
-  releaseRefresh()
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled())
+  await screen.findByRole('article', { name: 'Review Book 1' })
+  for (const i of [1, 2, 3]) await user.click(within(screen.getByRole('article', { name: `Review Book ${i}` })).getByRole('button', { name: 'Approve' }))
+  await waitFor(() => expect(releases.size).toBe(3))
+  releases.get('batch-1')!(); releases.get('batch-2')!()
+  expect(await screen.findByRole('alert')).toHaveTextContent('Book 2: Review changed')
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  await screen.findByRole('article', { name: 'Review Book 11' })
   expect(screen.queryByRole('article', { name: 'Review Book 1' })).toBeNull()
-  expect(screen.getByRole('article', { name: 'Review Book 2' })).toBeInTheDocument()
+  expect(screen.getAllByRole('article')).toHaveLength(10)
+  expect(within(screen.getByRole('article', { name: 'Review Book 2' })).getByRole('button', { name: 'Approve' })).toBeEnabled()
+  const pending = screen.getByRole('article', { name: 'Review Book 3' })
+  expect(within(pending).getByRole('button', { name: 'Saving…' })).toBeDisabled()
+  releases.get('batch-3')!()
+  await waitFor(() => expect(within(pending).getByRole('button', { name: 'Approve' })).toBeDisabled())
+  expect(screen.getByRole('article', { name: 'Review Book 3' })).toBe(pending)
+})
+
+it('shows a shorter final batch and clears it only when Next is pressed', async () => {
+  const rows = reviewRows(2)
+  server.use(http.get('/api/match-reviews', () => HttpResponse.json(listing(rows))), http.post('/api/match-reviews/:id/:action', () => HttpResponse.json({ changed: true })))
+  const { user } = setup(<MatchReviewPage mode="automatic" />)
+  for (const i of [1, 2]) {
+    const card = await screen.findByRole('article', { name: `Review Book ${i}` })
+    await user.click(within(card).getByRole('button', { name: 'Approve' }))
+    await waitFor(() => expect(within(card).getByRole('button', { name: 'Approve' })).toBeDisabled())
+  }
+  expect(screen.getAllByRole('article')).toHaveLength(2)
+  expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled()
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  expect(await screen.findByText('No automatic approvals to review.')).toBeInTheDocument()
+})
+
+it('starts shortlist recording work only on Next and retains the card if queueing fails', async () => {
+  const row = matchReviewFixture(), resumes: string[] = []
+  let fail = true, jobPolls = 0
+  server.use(http.get('/api/match-reviews', () => HttpResponse.json(listing([row]))), http.post('/api/match-reviews/:id/accept', async ({ request }) => {
+    expect(await request.json()).toEqual({ basis: 'a'.repeat(64), defer_continuation: true })
+    return HttpResponse.json({ changed: true, basis: 'b'.repeat(64) })
+  }), http.post('/api/ingest/runs/:id/resume', ({ params }) => {
+    resumes.push(String(params.id))
+    return fail ? HttpResponse.json({ detail: 'Queue unavailable' }, { status: 503 }) : HttpResponse.json({ job_id: 'recording' }, { status: 202 })
+  }), http.get('/api/jobs/recording', () => { jobPolls++; return HttpResponse.json({ state: 'running' }) }))
+  const { user } = setup(<MatchReviewPage mode="shortlist" />)
+  await user.click(await screen.findByRole('button', { name: 'Approve' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled())
+  expect(resumes).toEqual([])
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Queue unavailable')
+  expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled()
+  fail = false
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  expect(await screen.findByText(/No current model suggestions/)).toBeInTheDocument()
+  expect(resumes).toEqual(['review1', 'review1'])
+  expect(jobPolls).toBe(0)
 })

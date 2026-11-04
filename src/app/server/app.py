@@ -54,6 +54,7 @@ class IdsIn(BaseModel):
 
 class MatchDecisionIn(BaseModel):
     basis: str = Field(min_length=64,max_length=64)
+    defer_continuation: bool = False
 
 
 class ScanIn(BaseModel):
@@ -255,9 +256,9 @@ def create_app():
     def match_review_detail(run_id:str):return ingest_guard(match_review.detail,run_id)
 
     @app.post('/api/match-reviews/{run_id}/{action}')
-    def match_review_decide(run_id:str,action:Literal['accept','unapprove','confirm','reject'],b:MatchDecisionIn):
+    def match_review_decide(run_id:str,action:Literal['accept','unapprove','confirm','reject','restore'],b:MatchDecisionIn):
         ingest_guard(ingest_store.run_book_id,run_id)
-        return queued('ingest','match_review',run_id=run_id,action=action,expected=b.basis)
+        return queued('ingest','match_review',run_id=run_id,action=action,expected=b.basis,**(dict(defer_continuation=True) if b.defer_continuation else {}))
 
     @app.get('/api/operations')
     def get_operations(completed:bool=False):

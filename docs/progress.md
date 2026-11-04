@@ -567,3 +567,10 @@ configuration, queued-work behavior, output rebuilding and the proxy/auth bounda
 - On omarchy, recent automatic confirmations spent 42 s and 158 s waiting, versus 0.18–0.21 s executing. The bottleneck was the shared ingest queue rather than the decision itself.
 - Added queued/out-of-order UI regressions for both review modes, failure recovery, stale refresh handling, and scheduling tests for both caps and shared book locks. No live review decisions were submitted as tests.
 - Validation: 835 backend unit tests passed at 96.25% coverage; six job/API integration tests passed; 115 web tests passed the unchanged coverage gate; lint and production build passed. Deployed on omarchy, verified health and both review APIs, and explicitly requeued the ingest job interrupted by the service restart.
+
+## 2026-11-04 — Stable review batches and reversible decisions
+
+- Automatic approvals and Match shortlist retain saved cards in place. Only the selected saved action is disabled; the opposite action submits the current server token. Next retains undecided/pending/failed cards and adds only enough new reviews to fill ten slots.
+- Shortlist recording continuation is queued on Next without waiting for analysis to finish, so acceptance remains reversible before advancing. Queue failures retain the affected card for retry. Restore validates the same candidate/evidence and renews book consent without reusing downstream consent.
+- Removed duplicate full audio validation within shortlist acceptance. Recent share-backed accepts started promptly but took 4–8 seconds; one full hash check per decision remains mandatory.
+- Validation: 114 frontend tests passed the unchanged coverage gate and production build; 268 ingest/approval tests plus 72 queue/API/reversal tests and three job integrations passed. No live decisions were submitted by validation.

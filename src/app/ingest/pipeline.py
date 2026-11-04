@@ -149,7 +149,7 @@ def _record_approval(run,phase,automatic=False,value=None):
         with suppress(OSError):(Path(settings.data_dir())/'covers'/f"{run['book_id']}.none").unlink(missing_ok=True)
 
 
-def approve_review(run_id,phase,automatic=False):
+def approve_review(run_id,phase,automatic=False,*,_validated_inputs=None):
     if phase not in REVIEW_STAGES:raise ValueError('review stage must be metadata or quality, or audiobook')
     lock=Path(settings.data_dir())/'ingest'/(run_id+'.approval.lock')
     # Resolve the ID before opening a path supplied by a caller.
@@ -166,7 +166,9 @@ def approve_review(run_id,phase,automatic=False):
         if automatic and (not policy.current().get('auto_approve_'+phase,False) or not evaluation['eligible']):raise ValueError('current thresholds do not permit automatic '+phase+' approval')
         if not evaluation['complete']:raise ValueError(phase+' analysis is not complete')
         if not evaluation['kind_allowed']:raise ValueError('content kind requires a supported processing recipe')
-        inv=_assert_review_inputs(run)
+        # Explicit shortlist selection already verified these exact immutable inputs
+        # immediately before appending its metadata choice. Do not hash the audio twice.
+        inv=_validated_inputs if phase=='metadata' and _validated_inputs==stage_data(run,'inventory') else _assert_review_inputs(run)
         for member in inv['members']:
             latest=store.latest(member['id'])
             if latest and latest['id']!=run_id:raise ValueError('a newer run exists; review that run instead')

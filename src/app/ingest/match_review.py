@@ -155,13 +155,37 @@ def reject(run_id,expected):
     return dict(changed=True,rejected=True)
 
 
+def restore(run_id,expected):
+    """Explicitly reverse the latest rejection of the same saved book match."""
+    from app.ingest import pipeline as P
+    run=_current(run_id,expected);decision=P.raw_stage(run,'match_review_decision') or {}
+    if decision.get('action')!='reject' or not P.book_review_held(run):raise ValueError('This match is no longer rejected. Refresh before deciding.')
+    if decision.get('candidate_key'):
+        suggestion=read_models.get('match_suggestion',run_id)
+        if not suggestion or suggestion['candidate_key']!=decision['candidate_key'] or suggestion['candidate']!=decision['candidate']:raise ValueError('The model suggestion changed. Refresh before deciding.')
+        # Only the current rejection is being reversed, not a later imported candidate.
+        read_models.save('match_suggestion',run_id,dict(suggestion,basis=expected))
+        return dict(accept(run_id,expected),resume=True)
+    approval=P.raw_stage(run,'metadata_approval')
+    if not approval or approval.get('signature')!=P.review_signature(run,'metadata'):raise ValueError('The rejected book evidence changed. Refresh before deciding.')
+    P._assert_review_inputs(run)
+    # Renew only book consent. Old downstream approvals and rejected plans stay invalid.
+    P._record_approval(run,'metadata')
+    fresh=store.get(run_id)
+    approval_id=next(e['id'] for e in reversed(fresh['events']) if e['stage']=='metadata_approval' and e['status']=='done')
+    store.event(run_id,'match_review_decision','done',data=dict(action='approve',scope='book',automatic=False,approval_id=approval_id,signature=P.review_signature(fresh,'metadata'),basis=expected))
+    if run['state']!='processed':store.finish(run_id,'audiobook_review')
+    P.publish_run(run_id)
+    return dict(changed=True,confirmed=True)
+
+
 def accept(run_id,expected):
     from app.ingest import pipeline as P
     run=_current(run_id,expected);suggestion=read_models.get('match_suggestion',run_id)
     if not suggestion or suggestion['basis']!=expected:raise ValueError('The model suggestion is stale. Refresh the shortlist.')
     if run['state'] not in ('metadata_review','review','eligible'):raise ValueError('This book is no longer awaiting identification.')
     if catalogue.get_plan(run['book_id']):raise ValueError('Replan the existing processing proposal before accepting another book match.')
-    P._assert_review_inputs(run);identity=P.raw_stage(run,'identity');candidate=suggestion['candidate']
+    validated=P._assert_review_inputs(run);identity=P.raw_stage(run,'identity');candidate=suggestion['candidate']
     # Providers sometimes repeat the subtitle inside title; preserve the asserted title.
     title=metadata.work_title(candidate['title'] if not candidate.get('subtitle') or candidate['subtitle'] in candidate['title'] else candidate['title']+': '+candidate['subtitle'])
     authors=candidate.get('authors') or []
@@ -183,7 +207,7 @@ def accept(run_id,expected):
     measure=dict(value.get('analysis_metrics',{}));measure.update({'work.score':value['work']['score'],'metadata.work_families':value['work']['families']});value['analysis_metrics']=measure
     store.event(run_id,'metadata_revocation','done',data=dict(reason='Explicit match selection pending human approval'))
     store.event(run_id,'metadata','done',metrics=measure,data=value)
-    result=P.approve_review(run_id,'metadata')
+    result=P.approve_review(run_id,'metadata',_validated_inputs=validated)
     P.publish_run(run_id)
     return result
 
