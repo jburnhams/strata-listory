@@ -1,5 +1,11 @@
 # Progress log
 
+## 2026-11-04: background job scheduling priority
+
+Isolated workers lower their CPU priority before importing processing code (POSIX nice 19, Windows idle priority class). Linux workers request idle I/O priority through ionice when available; an absent/unsupported tool does not fail the job. Child tools inherit those settings. Applied CPU nice 19 and idle I/O to the current job, FFmpeg and their existing threads without restarting or interrupting the job. Verified the web-server process remains nice 0.
+
+Validation: 23 focused OS/worker unit tests and two real-process integration tests passed. The new real-process test verifies a tool inherits nice 19/idle I/O while the supervisor's priority stays unchanged. Ruff and whitespace checks passed.
+
 ## 2026-11-04: terminal job failures, hard deadlines and review follow-ups
 
 Background slots now supervise isolated child processes, with per-job persisted deadlines (default 30 minutes via `APP_JOB_TIMEOUT_SECONDS`). A deadline, abnormal child exit or shutdown kills the child/process group and records a terminal failed state. Restart no longer requeues interrupted jobs. Duplicate automatic submissions return the existing failure; Processing exposes errors and an explicit Retry job action. Work ownership propagates failure to unfinished ingest runs, process plans and preview samples, including legacy interrupted regroup/processing work. Finished reviews remain intact; unattempted collection children and remaining batch books are queued in the same transaction as failure. Explicit retry selects failed work rather than repeating completed siblings or the remaining batch. Process retries reset only their own failed reservations, retaining normal source/approval validation.

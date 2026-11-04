@@ -2,7 +2,7 @@
 
 POSIX (macOS, Linux) uses fcntl, os.kill and os.nice; Windows uses msvcrt, the Win32 API through ctypes and taskkill. Other modules should call these
 instead of importing fcntl or calling os.kill(pid, 0) (on Windows that would terminate the process)."""
-import contextlib, os, subprocess, sys, time
+import contextlib, os, shutil, subprocess, sys, time
 
 WIN = sys.platform == 'win32'
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -64,6 +64,14 @@ def lower_priority(nice=19):
         with contextlib.suppress(Exception): ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x40 if nice >= 15 else 0x4000)    # IDLE / BELOW_NORMAL
         return
     with contextlib.suppress(OSError, AttributeError): os.nice(nice)
+
+
+def lower_job_priority():
+    """Background CPU scheduling; Linux idle I/O. Tools inherit the job's priorities."""
+    lower_priority(19)
+    if sys.platform.startswith('linux') and (ionice:=shutil.which('ionice')):
+        with contextlib.suppress(OSError,subprocess.TimeoutExpired):
+            subprocess.run([ionice,'-c','3','-p',str(os.getpid())],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
 
 
 def job_process(command, env=None):

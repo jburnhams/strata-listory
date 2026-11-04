@@ -4,6 +4,28 @@ import pytest
 from app import oslib
 
 
+@pytest.mark.parametrize('platform,available',[('linux',True),('linux',False),('darwin',True),('win32',True)])
+def test_job_priority_lowers_cpu_and_uses_idle_linux_io_when_available(monkeypatch,platform,available):
+    calls=[];monkeypatch.setattr(oslib.sys,'platform',platform)
+    monkeypatch.setattr(oslib,'lower_priority',lambda nice:calls.append(('cpu',nice)))
+    monkeypatch.setattr(oslib.shutil,'which',lambda name:'/bin/ionice' if available else None)
+    monkeypatch.setattr(subprocess,'run',lambda command,**kw:calls.append((command,kw)))
+    oslib.lower_job_priority()
+    assert calls[0]==('cpu',19)
+    if platform=='linux' and available:
+        assert calls[1][0]==['/bin/ionice','-c','3','-p',str(os.getpid())]
+        assert calls[1][1]['timeout']==5 and calls[1][1]['stdout']==subprocess.DEVNULL
+    else:assert len(calls)==1
+
+
+@pytest.mark.parametrize('error',[OSError('unsupported'),subprocess.TimeoutExpired('ionice',5)])
+def test_unavailable_io_priority_does_not_fail_a_job(monkeypatch,error):
+    monkeypatch.setattr(oslib.sys,'platform','linux');monkeypatch.setattr(oslib,'lower_priority',lambda nice:None)
+    monkeypatch.setattr(oslib.shutil,'which',lambda name:'/bin/ionice')
+    monkeypatch.setattr(subprocess,'run',lambda *a,**kw:(_ for _ in ()).throw(error))
+    oslib.lower_job_priority()
+
+
 @pytest.mark.parametrize('windows',[False,True])
 def test_job_process_is_detached_and_does_not_buffer_output(monkeypatch,windows):
     calls=[];process=object();monkeypatch.setattr(oslib,'WIN',windows)
