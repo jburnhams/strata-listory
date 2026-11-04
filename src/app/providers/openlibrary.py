@@ -67,6 +67,10 @@ class OpenLibrary(Provider):
     def edition_publishers(self,work_key):
         """Small cached edition lookups for a known work; no editions dump is required."""
         if not re.fullmatch(r'/works/OL\d+W',work_key or ''):return []
+        from app.providers import openlibrary_local
+        local=openlibrary_local.editions(work_key)
+        if local:
+            return [e for e in local if e['year'] and not re.search(r'audio|mp3|cassette',e['physical_format'],re.I)]
         from app.providers.openlibrary_local import year
         result=[]
         for offset in (0,100,200):
@@ -76,7 +80,7 @@ class OpenLibrary(Provider):
                 if re.search(r'audio|mp3|cassette',str(entry.get('physical_format','')),re.I):continue
                 if work_key not in [work.get('key') for work in entry.get('works',[]) if isinstance(work,dict)]:continue
                 published=year(entry.get('publish_date'))
-                if published:result.append(dict(key=entry.get('key',''),title=entry.get('title',''),subtitle=entry.get('subtitle',''),work_key=work_key,year=published,publish_date=entry.get('publish_date',''),publishers=[str(p) for p in entry.get('publishers',[]) if p],languages=[lang.get('key') for lang in entry.get('languages',[]) if isinstance(lang,dict)]))
+                if published:result.append(dict(key=entry.get('key',''),title=entry.get('title',''),subtitle=entry.get('subtitle',''),work_key=work_key,year=published,publish_date=entry.get('publish_date',''),publishers=[str(p) for p in entry.get('publishers',[]) if p],languages=[lang.get('key') for lang in entry.get('languages',[]) if isinstance(lang,dict)],isbns=list(dict.fromkeys(str(v) for field in ('isbn_10','isbn_13') for v in entry.get(field) or []))))
             if len(entries)<100:break
         return result
 

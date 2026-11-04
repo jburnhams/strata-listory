@@ -12,7 +12,7 @@ from app import book_titles, contributors, oslib, settings
 from app.providers.base import candidate
 from app.ingest.observe import emit
 
-VERSION=1
+VERSION=2
 
 
 def folder():return Path(settings.data_dir())/'openlibrary'
@@ -50,9 +50,9 @@ def year(value):
     return int(found[1]) if found else None
 
 
-def build(dumps=None,wait=False):
+def build(dumps=None,wait=False,editions=False):
     root=folder();root.mkdir(parents=True,exist_ok=True);source=Path(dumps) if dumps else root/'dumps'
-    paths={kind:source/f'{kind}.txt.gz' for kind in ('authors','works','ratings')}
+    paths={kind:source/f'{kind}.txt.gz' for kind in (('authors','works','ratings','editions') if editions else ('authors','works','ratings'))}
     for path in paths.values():
         if not path.is_file() and not wait:raise ValueError(f'missing Open Library dump: {path}')
     with (root/'import.lock').open('a+b') as lock,oslib.file_lock(lock):
@@ -64,7 +64,10 @@ def build(dumps=None,wait=False):
                 CREATE TABLE works(key TEXT PRIMARY KEY,title TEXT NOT NULL,normalised TEXT NOT NULL,authors TEXT NOT NULL,year INTEGER,subjects TEXT NOT NULL,cover INTEGER);
                 CREATE TABLE work_authors(work TEXT NOT NULL,author TEXT NOT NULL);
                 CREATE TABLE ratings(work TEXT PRIMARY KEY,total INTEGER NOT NULL,count INTEGER NOT NULL);
-                CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);''')
+                CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+                CREATE TABLE editions(key TEXT PRIMARY KEY,title TEXT NOT NULL,subtitle TEXT NOT NULL,year INTEGER,publish_date TEXT NOT NULL,publishers TEXT NOT NULL,languages TEXT NOT NULL,format TEXT NOT NULL,isbns TEXT NOT NULL);
+                CREATE TABLE edition_works(edition TEXT NOT NULL,work TEXT NOT NULL);
+                CREATE TABLE edition_isbns(isbn TEXT NOT NULL,edition TEXT NOT NULL);''')
             counts={};sizes={};started=time.monotonic()
             for kind in ('authors','works'):
                 while not paths[kind].is_file():_progress('waiting_'+kind);time.sleep(5)
@@ -97,8 +100,27 @@ def build(dumps=None,wait=False):
                         if count%100000==0:_progress('ratings',records=count)
                 sizes['ratings.txt.gz']=stream.tell()
             _ratings(connection,batch);counts['ratings']=count
+            if editions:
+                while not paths['editions'].is_file():_progress('waiting_editions');time.sleep(5)
+                _progress('editions',records=0);batch=[];links=[];identifiers=[];count=0
+                for key,data in records(paths['editions'],sizes):
+                    if not re.fullmatch(r'/books/OL\d+M',key) or not isinstance(data.get('title'),str):continue
+                    work_keys=list(dict.fromkeys(w['key'] for w in data.get('works') or [] if isinstance(w,dict) and re.fullmatch(r'/works/OL\d+W',w.get('key') or '')))
+                    isbns=list(dict.fromkeys(re.sub(r'[-\s]','',str(v)).upper() for field in ('isbn_10','isbn_13') for v in data.get(field) or []))
+                    isbns=[v for v in isbns if re.fullmatch(r'\d{9}[\dX]|\d{13}',v)]
+                    languages=[v.get('key','') for v in data.get('languages') or [] if isinstance(v,dict)]
+                    publishers=[str(v) for v in data.get('publishers') or [] if v]
+                    date=str(data.get('publish_date') or '')
+                    batch.append((key,data['title'],str(data.get('subtitle') or ''),year(date),date,json.dumps(publishers),json.dumps(languages),str(data.get('physical_format') or ''),json.dumps(isbns)))
+                    links.extend((key,w) for w in work_keys);identifiers.extend((isbn,key) for isbn in isbns);count+=1
+                    if len(batch)>=5000:
+                        _editions(connection,batch,links,identifiers);batch=[];links=[];identifiers=[]
+                        if count%100000==0:_progress('editions',records=count)
+                _editions(connection,batch,links,identifiers);counts['editions']=count
             _progress('indexing',records=0,counts=counts)
-            connection.executescript('''CREATE INDEX works_title ON works(normalised);
+            connection.executescript('''CREATE INDEX editions_work ON edition_works(work,edition);
+                CREATE INDEX editions_isbn ON edition_isbns(isbn,edition);
+                CREATE INDEX works_title ON works(normalised);
                 CREATE INDEX work_authors_author ON work_authors(author,work);
                 CREATE VIRTUAL TABLE titles USING fts5(title,content='works',content_rowid='rowid',tokenize='unicode61 remove_diacritics 2');
                 INSERT INTO titles(titles) VALUES('rebuild');
@@ -109,7 +131,7 @@ def build(dumps=None,wait=False):
                 try:info=json.loads((source/f'{kind}.download.json').read_text())
                 except (OSError,ValueError):info={}
                 provenance[kind]=dict(uncompressed_bytes=sizes[path.name],bytes=path.stat().st_size,url=info.get('url_effective',''),file=path.name)
-            summary=dict(version=VERSION,counts=counts,dumps=provenance,built=datetime.now(timezone.utc).isoformat())
+            summary=dict(version=VERSION,counts=counts,editions=editions,dumps=provenance,built=datetime.now(timezone.utc).isoformat())
             connection.execute('INSERT INTO metadata VALUES(?,?)',('snapshot',json.dumps(summary)));connection.commit()
             check=connection.execute('PRAGMA quick_check').fetchone()[0]
             if check!='ok':raise ValueError(f'Open Library index verification failed: {check}')
@@ -129,6 +151,39 @@ def _flush(connection,kind,batch,links):
 
 def _ratings(connection,batch):
     with connection:connection.executemany('INSERT INTO ratings VALUES(?,?,?) ON CONFLICT(work) DO UPDATE SET total=total+excluded.total,count=count+excluded.count',batch)
+
+
+def _editions(connection,batch,links,identifiers):
+    with connection:
+        connection.executemany('INSERT OR REPLACE INTO editions VALUES(?,?,?,?,?,?,?,?,?)',batch)
+        connection.executemany('INSERT INTO edition_works VALUES(?,?)',links)
+        connection.executemany('INSERT INTO edition_isbns VALUES(?,?)',identifiers)
+
+
+def editions(work_key=None,*,isbn=None,limit=300):
+    """Bounded edition facts, with work links and snapshot provenance. None means unavailable."""
+    root=folder();path=root/'index.sqlite'
+    if not path.is_file():return None
+    if work_key is not None and not re.fullmatch(r'/works/OL\d+W',work_key):return []
+    if isbn is not None:
+        isbn=re.sub(r'[-\s]','',str(isbn)).upper()
+        if not re.fullmatch(r'\d{9}[\dX]|\d{13}',isbn):return []
+    if work_key is None and isbn is None:return []
+    with (root/'index.lock').open('a+b') as reader,oslib.file_lock(reader):
+        connection=sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True);connection.row_factory=sqlite3.Row
+        try:
+            snapshot=json.loads(connection.execute("SELECT value FROM metadata WHERE key='snapshot'").fetchone()[0])
+            if not snapshot.get('editions'):return None
+            join='JOIN edition_works l ON l.edition=e.key' if work_key is not None else 'JOIN edition_isbns l ON l.edition=e.key'
+            field='l.work' if work_key is not None else 'l.isbn'
+            rows=connection.execute(f'SELECT DISTINCT e.* FROM editions e {join} WHERE {field}=? ORDER BY e.year IS NULL,e.year,e.key LIMIT ?',(work_key if work_key is not None else isbn,max(1,min(limit,300))))
+            result=[]
+            for row in rows:
+                works=[v[0] for v in connection.execute('SELECT work FROM edition_works WHERE edition=?',(row['key'],))]
+                result.append(dict(key=row['key'],title=row['title'],subtitle=row['subtitle'],work_key=work_key or (works[0] if len(works)==1 else None),works=works,year=row['year'],publish_date=row['publish_date'],publishers=json.loads(row['publishers']),languages=[dict(key=v) for v in json.loads(row['languages'])],physical_format=row['format'],isbns=json.loads(row['isbns'])))
+            emit(source='Open Library offline editions',query=dict(work=work_key,isbn=isbn),cached=True,raw=dict(editions=result,snapshot=snapshot))
+            return result
+        finally:connection.close()
 
 
 def search(title,author=''):

@@ -288,3 +288,31 @@ def test_reader_only_chapter_tags_share_a_group_without_inventing_an_author():
 def test_unlabelled_album_artist_retains_its_existing_writer_assertion():
     assert G.author_credit(dict(album_artist='Album Writer',artist='Other Writer'))=='Album Writer'
     assert G.author_credit(dict(artist='Writer, Helper - foreword'))=='Writer, Helper - foreword'
+
+
+@pytest.mark.parametrize('title,folder,editor',[
+    ('London After Midnight','Haining, Peter (Ed.) - London After Midnight','Peter Haining'),
+    ('Night Tales','Reader, Alex (Editor) - Night Tales','Alex Reader'),
+    ('Different Stories','Different Stories',''),
+])
+def test_ordered_anthology_groups_story_authors_under_the_shared_container(title,folder,editor):
+    files=[file(f'/books/{folder}/{n:02} Story {n}.mp3',title,writer,title=f'A short story {n}') for n,writer in ((1,'First Writer'),(2,'Second Writer'),(3,'Third Writer'))]
+    [group]=G.partition(files,f'/books/{folder}')
+    assert group['anthology'] and group['title']==title and group['author']==editor
+    assert len(group['paths'])==3
+    identity,metrics=I.recover(dict(title=title,author=editor,narrator='',asin='',locked=[]),dict(root=f'/books/{folder}',files=files,work_hint=group,sidecars=[]))
+    assert identity['kind']=='book' and identity['book']['author']==editor
+    assert [e['tags']['artist'] for e in identity['evidence']]==['First Writer','Second Writer','Third Writer']
+
+
+@pytest.mark.parametrize('change',['reset','gap','different_album','unrelated_folder','whole_books'])
+def test_anthology_grouping_does_not_swallow_ambiguous_collections(change):
+    files=[file(f'/books/Tales/{n:02} Story {n}.mp3','Tales',writer,track=str(n)) for n,writer in ((1,'First Writer'),(2,'Second Writer'),(3,'Third Writer'))]
+    if change=='reset':files[2]['probe']['tags']['track']='1'
+    if change=='gap':files[2]['probe']['tags']['track']='4'
+    if change=='different_album':files[2]['probe']['tags']['album']='Another Book'
+    if change=='unrelated_folder':
+        for f in files:f['path']=f['path'].replace('/Tales/','/Various Books/')
+    if change=='whole_books':
+        for f in files:f['path']=f['path'].replace('.mp3','.m4b')
+    assert len(G.partition(files,'/books'))>1

@@ -110,3 +110,51 @@ def test_subtitle_only_search_uses_attached_editions_and_caches_the_evidence(dum
     [c]=p.search('A Decade of Curious People and Dangerous Ideas','Chuck Klosterman')
     assert (c['id'],c['subtitle_edition'])==('/works/OL99W','/books/OL2M')
     assert p.search('A Decade of Curious People and Dangerous Ideas','Chuck Klosterman')==[c] and len(calls)==2
+
+
+def test_editions_import_retains_isbn_publisher_dates_and_work_links_without_inventing_original_years(dumps):
+    dump(dumps/'editions.txt.gz',[
+        ('/books/OL1M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_10=['0307387895'],isbn_13=['978-0-307-38789-9'],publish_date='March 2007',publishers=['Vintage'],languages=[dict(key='/languages/eng')],physical_format='Paperback')),
+        ('/books/OL2M',dict(title='The Road',works=[dict(key='/works/OL1W')],publish_date='2006',publishers=['Original Publisher'],languages=[dict(key='/languages/eng')],physical_format='Hardcover')),
+        ('/books/OL3M',dict(title='The Road',works=[dict(key='/works/OL1W')],publish_date='2005',publishers=['Audio Publisher'],physical_format='Audio CD')),
+        ('/books/OL4M',dict(title='Blood Meridian',works=[dict(key='/works/OL3W')],isbn_13=['9780679728757'],publish_date='1992',publishers=['Reprint Publisher'])),
+        ('/books/OL5M',dict(title='Combined volume',works=[dict(key='/works/OL1W'),dict(key='/works/OL3W')],isbn_10=['012345678X'])),
+        ('bad-key',dict(title='Bad record')),
+    ])
+    state=local.build(dumps,editions=True)
+    assert state['editions'] and state['counts']['editions']==5
+    rows=local.editions('/works/OL1W')
+    assert [r['key'] for r in rows]==['/books/OL3M','/books/OL2M','/books/OL1M','/books/OL5M']
+    [edition]=local.editions(isbn='978-0-307-38789-9')
+    assert edition['work_key']=='/works/OL1W' and edition['year']==2007
+    assert edition['publishers']==['Vintage'] and edition['isbns']==['0307387895','9780307387899']
+    assert edition['languages']==[dict(key='/languages/eng')]
+    assert local.search('The Road','Cormac McCarthy')[0]['original_year']==2006
+    assert local.search('Blood Meridian','Cormac McCarthy')[0]['original_year'] is None
+    assert local.editions(isbn='012345678X')[0]['work_key'] is None
+    assert local.editions(isbn='012345678X')[0]['works']==['/works/OL1W','/works/OL3W']
+    assert local.editions('/works/OL999W')==[] and local.editions(isbn='invalid')==[]
+    assert local.editions('unsafe')==[] and local.editions()==[]
+    from app.providers.openlibrary import OpenLibrary
+    published=OpenLibrary().edition_publishers('/works/OL1W')
+    assert [r['year'] for r in published]==[2006,2007]
+    assert published[-1]['isbns']==['0307387895','9780307387899']
+
+
+def test_editions_are_optional_and_failed_edition_import_preserves_published_index(dumps):
+    assert local.editions('/works/OL1W') is None
+    local.build(dumps)
+    assert local.editions('/works/OL1W') is None
+    with pytest.raises(ValueError,match='missing Open Library dump'):local.build(dumps,editions=True)
+    (dumps/'editions.txt.gz').write_bytes(b'corrupt gzip')
+    with pytest.raises(OSError):local.build(dumps,editions=True)
+    assert local.search('The Road','Cormac McCarthy')[0]['original_year']==2006
+    assert local.editions('/works/OL1W') is None
+
+
+def test_editions_cli_flag_imports_the_snapshot(dumps,capsys):
+    from app.cli import main
+    dump(dumps/'editions.txt.gz',[('/books/OL1M',dict(title='The Road',works=[dict(key='/works/OL1W')],publish_date='2006'))])
+    assert main(['openlibrary-import','--directory',str(dumps),'--editions'])==0
+    assert json.loads(capsys.readouterr().out)['counts']['editions']==1
+    assert local.editions('/works/OL1W')[0]['year']==2006

@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 from app import contributors, matcher, merge, scan
 
-VERSION=5
+VERSION=6
 GENERIC={'','audio','audiobook','audiobooks','book','books','unknown','unknown album','untitled'}
 
 DISC_LABEL=re.compile(r'\b(?:cd|disc|disk)\s*[._-]*\s*(\d+)(?:\s*(?:of|/)\s*(\d+))?\b',re.I)
@@ -160,8 +160,40 @@ def filename_layout(files):
     return result
 
 
+def anthology_layout(files,root,layout):
+    """A named, ordered album inside its matching book folder can contain many authors.
+
+    Require at least three tracks and a complete unique sequence. Generic collection
+    labels, competing album identities, numbering resets and whole-book files are
+    intentionally not evidence of a single anthology.
+    """
+    runs={};result={}
+    for f in files:
+        if sequence:=layout.get(f['path']):runs.setdefault((sequence['folder'],sequence['key']),[]).append(f)
+    for (directory,key),items in runs.items():
+        siblings=[f for f in files if str(Path(f['path']).parent)==directory]
+        if len(items)<3 or len(items)!=len(siblings):continue
+        numbers=[]
+        for f in items:
+            tags=f['probe']['tags']
+            match=re.match(r'\s*(\d+)',str(tags.get('track') or tags.get('tracknumber') or Path(f['path']).name))
+            if match:numbers.append(int(match[1]))
+        if sorted(numbers)!=list(range(1,len(items)+1)):continue
+        folder=scan.parse_name(Path(directory).name)
+        if matcher.norm(title_hint(folder['title']))!=key:continue
+        people={contributors.name_key(author_credit(f['probe']['tags'])) for f in items if author_credit(f['probe']['tags'])}
+        if len(people)<2:continue
+        editor=re.search(r'^(.*?)\s*\((?:ed\.?|eds\.?|editor|edited by)\)\s*$',folder.get('author') or '',re.I)
+        credit=editor[1].strip() if editor else ''
+        if credit.count(',')==1:
+            surname,given=credit.split(',',1);credit=given.strip()+' '+surname.strip()
+        for f in items:result[f['path']]=dict(author=credit,reason='Shared album, matching container and complete ordered anthology contents')
+    return result
+
+
 def partition(files,root):
     hints=[];coded=coded_parts(f['path'] for f in files);layout=sequence_layout(files);named=filename_layout(files)
+    anthologies=anthology_layout(files,root,layout)
     albums={}
     for f in files:
         album=title_hint(f['probe']['tags'].get('album',''))
@@ -203,7 +235,8 @@ def partition(files,root):
             related=[p for value,p in named.items() if p['kind']=='counter' and Path(value).parent==path.parent and matcher.norm(p['title'])==matcher.norm(parsed)]
             if related:title=related[0]['title']
             use_title=True;conflict=False
-        author=h['author'] or (part or {}).get('author','')
+        anthology=anthologies.get(h['file']['path'])
+        author=anthology['author'] if anthology else h['author'] or (part or {}).get('author','')
         if author and merge.norm(author) in merge.norm(title):author=''
         key=matcher.norm(title);who=contributors.name_key(author)
         matching=[g for g in groups if g['key']==key and (sequence and sequence['shared'] and g.get('shared_parent')==str(path.parent.parent) or not who or not g['author'] or any(contributors.same_author(a,b,True) for a in contributors.authors(author) for b in contributors.authors(g['author'])))]
@@ -211,6 +244,10 @@ def partition(files,root):
         else:
             group=dict(key=key,title=title or path.stem,author=author,paths=[],use_title=use_title,conflicting_album=conflict);groups.append(group)
             if sequence and sequence['shared']:group['shared_parent']=str(path.parent.parent)
+        if anthology:
+            group['anthology']=True
+            group.setdefault('grouping_notes',[])
+            if anthology['reason'] not in group['grouping_notes']:group['grouping_notes'].append(anthology['reason'])
         if not group['author'] and author:group['author']=author
         if sequence:
             group.setdefault('grouping_notes',[])
@@ -220,4 +257,4 @@ def partition(files,root):
             if part['reason'] not in group['grouping_notes']:group['grouping_notes'].append(part['reason'])
         group['use_title']=group['use_title'] or use_title;group['conflicting_album']=group['conflicting_album'] or conflict
         group['paths'].append(h['file']['path'])
-    return [{k:g[k] for k in ('title','author','paths','use_title','conflicting_album','grouping_notes') if k in g} for g in groups]
+    return [{k:g[k] for k in ('title','author','paths','use_title','conflicting_album','grouping_notes','anthology') if k in g} for g in groups]

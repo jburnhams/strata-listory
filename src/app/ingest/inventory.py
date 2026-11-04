@@ -230,7 +230,7 @@ def recover(book,inv):
         t=f['probe']['tags'];hint=inv.get('work_hint') or {};title=hint.get('title') if hint.get('use_title') else t.get('album') or hint.get('title') or t.get('title') or ''
         if not grouping.title_hint(title):title=hint.get('title') or t.get('title') or ''
         title=re.sub(r'\s*\((?:un)?abridged\)\s*','',title,flags=re.I).strip()
-        add(votes,title);who=grouping.author_credit(t)
+        add(votes,title);who='' if hint.get('anthology') else grouping.author_credit(t)
         if '/' in who and len(set(who.split('/')))==1: who=who.split('/')[0]
         if hint and who and merge.norm(who) in merge.norm(hint.get('title','')):who=''
         reader=t.get('narratedby') or t.get('narrator') or t.get('composer') or ''
@@ -255,6 +255,7 @@ def recover(book,inv):
     if 'asin' not in locked and len(asins)==1: out['asin']=next(iter(asins))
     text=' '.join([out['title'],inv['root']]+[f['path'] for f in inv['files']]+[str(f['probe']['tags'].get(k,'')) for f in inv['files'] for k in f['probe']['tags']]).lower()
     kind='radio' if scan.BBC_RADIO.search(text) or 'radio comedy' in text or re.search(r'\bbbc\s+(?:radio|r[1-6]x?)\b',text) or re.search(r'\bs\d+\s*-?\s*e\d+',text) else 'episode' if re.search(r'\bep(?:isode)?\.?\s*\d+',text) else 'standup' if 'stand-up' in text or 'standup' in text else 'story' if re.search(r'\ba story from\b|\bshort story\b',text) else 'book'
+    if (inv.get('work_hint') or {}).get('anthology'):kind='book'
     conflicts=int(bool((inv.get('work_hint') or {}).get('conflicting_album')))+int(len(asins)>1)+int(len(languages)>1)+int(len(formats)>1)
     # Multi-work/narrator folders must not turn into a single book by popularity vote.
     author_lists=[contributors.authors(value) for value in authors]
