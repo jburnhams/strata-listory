@@ -55,6 +55,25 @@ def test_accept_records_the_displayed_candidate_and_preserves_source_identity(re
     with pytest.raises(ValueError,match='changed'):R.accept(review['id'],value['basis'])
 
 
+@pytest.mark.parametrize('action',['accept','reject'])
+def test_reimported_candidate_invalidates_open_shortlist_decisions(review,tmp_path,action):
+    collected=P.raw_stage(review,'providers')
+    other=candidate('hardcover',id='2',title='Dune Messiah',authors=['Frank Herbert'],original_year=1969)
+    collected['providers']['hardcover']['candidates'].append(other)
+    store.event(review['id'],'providers','done',data=collected)
+    shown=suggest(store.get(review['id']),tmp_path)
+    replacement=suggest(store.get(review['id']),tmp_path,candidate=other,candidate_key='replacement')
+    assert shown['basis']!=replacement['basis']
+    before=store.get(review['id'])['events']
+    with pytest.raises(ValueError,match='changed'):getattr(R,action)(review['id'],shown['basis'])
+    assert store.get(review['id'])['events']==before
+    assert R.detail(review['id'])['suggestion']['candidate']['id']=='2'
+    getattr(R,action)(review['id'],replacement['basis'])
+    current=store.get(review['id'])
+    if action=='accept':assert P.raw_stage(current,'metadata')['manual_selection']['candidate']['id']=='2'
+    else:assert P.raw_stage(current,'match_review_decision')['candidate']['id']=='2'
+
+
 def test_revocation_invalidates_all_consent_rejects_pending_plan_and_blocks_reautomation(review):
     p=policy.current();p['auto_approve_metadata']=True;policy.save(p)
     P.approve_review(review['id'],'metadata',automatic=True);store.finish(review['id'],'audiobook_review');P.publish_run(review['id'])

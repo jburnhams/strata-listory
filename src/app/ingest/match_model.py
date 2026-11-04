@@ -24,7 +24,7 @@ def stages(run):return {e['stage']:e['data'] for e in run['events'] if e['status
 def trusted_rows(run):
     """Freeze features and the chosen identity at consent, before later refreshes."""
     index=next((i for i in range(len(run['events'])-1,-1,-1) if run['events'][i]['stage']=='metadata_approval' and run['events'][i]['status']=='done'),None)
-    if index is None:return []
+    if index is None or any(e['status']=='done' and (e['stage']=='metadata_revocation' or e['stage']=='match_review_decision' and e['data'].get('action')=='reject') for e in run['events'][index+1:]):return []
     frozen=dict(run,events=run['events'][:index+1]);data=stages(frozen)
     approved=data.get('metadata') or {};work=approved.get('work') or {}
     records=work.get('records') or approved.get('records') or {}

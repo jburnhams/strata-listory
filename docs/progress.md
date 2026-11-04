@@ -528,3 +528,13 @@ whitespace checks. Both review endpoints on the managed backend returned HTTP
 200 with ten cards. The automatic review search for Lords of Finance returns
 exactly one current entry containing 30 files; follow-up recording analysis is
 queued on the existing worker.
+
+## 2026-11-04 — Bind shortlist decisions and training labels to current consent
+
+Addressed PR review findings by recording each validated shortlist import as an
+append-only revision included in the card's review token. Importing a replacement
+candidate invalidates both Approve and Reject on an already open card, preserving
+the exact candidate the user reviewed. Trusted training rows now exclude an
+approval followed by revocation or rejection; a later explicit approval can
+provide fresh supervision. Added regressions for both stale decision actions and
+both forms of withdrawn consent.

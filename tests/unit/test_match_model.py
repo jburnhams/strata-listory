@@ -41,6 +41,17 @@ def test_label_fallback_uses_frozen_selected_record_without_inventing_missing_po
     assert M.trusted_rows(r)==[]
 
 
+@pytest.mark.parametrize('withdrawal',[dict(stage='metadata_revocation',data={}),dict(stage='match_review_decision',data=dict(action='reject'))])
+def test_withdrawn_match_is_not_a_training_label_until_reapproved(withdrawal):
+    r=run();r['events'].append(dict(status='done',**withdrawal))
+    assert M.trusted_rows(r)==[]
+    # A later explicit approval can establish fresh supervision.
+    r['events'].append(deepcopy(r['events'][2]))
+    r['events'].append(dict(stage='metadata_approval',status='done',data=dict(automatic=False)))
+    rows=M.trusted_rows(r)
+    assert rows and any(row['label']==1 and row['label_origin']=='manual_approval' for row in rows)
+
+
 def test_related_editions_and_volume_subtitles_are_not_invented_negative_labels():
     target=dict(title='History: Ancient World',author='Alice Writer')
     assert not M.distinct_work(target,candidate('hardcover',title='History: Ancient Civilisations',authors=['Alice Writer']))

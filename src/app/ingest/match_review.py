@@ -13,7 +13,7 @@ CANDIDATE_FIELDS=('source','id','url','title','subtitle','subtitle_edition','aut
 
 
 def basis(run):
-    return hashlib.sha256(json.dumps([(e['stage'],e['id']) for e in run['events'] if e['status']=='done' and e['stage'] in ('inventory','identity','providers','metadata','metadata_approval','metadata_revocation','match_review_decision')]).encode()).hexdigest()
+    return hashlib.sha256(json.dumps([(e['stage'],e['id']) for e in run['events'] if e['status']=='done' and e['stage'] in ('inventory','identity','providers','metadata','metadata_approval','metadata_revocation','match_review_decision','match_shortlist')]).encode()).hexdigest()
 
 
 def chosen_fields(candidate):return {k:candidate.get(k) for k in CANDIDATE_FIELDS}
@@ -99,6 +99,10 @@ def import_shortlist(path):
         decision=P.raw_stage(run,'match_review_decision') or {}
         if decision.get('action')=='reject' and decision.get('candidate_key')==row.get('candidate_key'):continue
         if not any(c.get('source')==name and c.get('id')==other.get('id') and c.get('title')==other.get('title') and c.get('authors')==other.get('authors') and c.get('subtitle','')==other.get('subtitle','') for name,entry in collected['providers'].items() for other in entry.get('candidates',[])):continue
+        # Version the displayed suggestion as well as the underlying evidence:
+        # an open card must never consent to a later import's replacement.
+        store.event(rid,'match_shortlist','done',data=dict(candidate=chosen_fields(c),candidate_key=row['candidate_key'],model=Path(path).parent.name,score=row['model_score']))
+        run=store.get(rid)
         read_models.save('match_suggestion',rid,dict(candidate=chosen_fields(c),score=row['model_score'],features=row['features'],basis=basis(run),candidate_key=row['candidate_key'],model=Path(path).parent.name))
         P.publish_run(rid);imported+=1
     return dict(imported=imported)
