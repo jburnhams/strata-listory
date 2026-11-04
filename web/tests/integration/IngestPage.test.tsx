@@ -45,7 +45,7 @@ describe('staged ingest', () => {
     const realInterval = window.setInterval.bind(window)
     // Testing Library also uses intervals: only capture the app's polling timer.
     vi.spyOn(window, 'setInterval').mockImplementation((cb, delay, ...args) => {
-      if (delay !== 3000) return realInterval(cb, delay, ...args)
+      if (delay !== 3000) return realInterval(cb, delay, ...args) as unknown as ReturnType<typeof window.setInterval>
       poll = cb as () => void; return {} as ReturnType<typeof window.setInterval>
     })
     server.use(http.get('/api/ingest', async () => { requests++; await ready; return HttpResponse.json(ingestFixture()) }))
