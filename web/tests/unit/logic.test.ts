@@ -1,7 +1,7 @@
 import { sourceFolder, inFolder } from '../../src/components/FolderTree'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { parse, href } from '../../src/route'
-import { booksUrl, coverUrl, withBase } from '../../src/api'
+import { api, booksUrl, coverUrl, withBase } from '../../src/api'
 import { formatBytes } from '../../src/components/BookPage'
 import { describeCount, formatDuration, matchLabel } from '../../src/components/LibraryPage'
 
@@ -80,4 +80,29 @@ describe('source folder paths', () => {
     expect(inFolder('', '')).toBe(true)
     expect(inFolder('/audio', '')).toBe(false)
   })
+})
+
+
+it('awaits queued work through lightweight status requests and returns its result', async () => {
+  vi.useFakeTimers()
+  const fetcher=vi.fn()
+    .mockResolvedValueOnce(Response.json({ job_id: 'scan-1' }, { status: 202 }))
+    .mockResolvedValueOnce(Response.json({ state: 'queued' }))
+    .mockResolvedValueOnce(Response.json({ state: 'running' }))
+    .mockResolvedValueOnce(Response.json({ state: 'done', result: { found: 4, added: 1, existing: 3 } }))
+  vi.stubGlobal('fetch',fetcher)
+  try {
+    const pending=api.scan()
+    await vi.runAllTimersAsync()
+    expect(await pending).toEqual({ found: 4, added: 1, existing: 3 })
+    expect(fetcher.mock.calls.map(call=>call[0])).toEqual(['/api/scan','/api/jobs/scan-1','/api/jobs/scan-1','/api/jobs/scan-1'])
+  } finally { vi.unstubAllGlobals();vi.useRealTimers() }
+})
+
+it('reports an asynchronous job failure instead of treating queue acceptance as success', async () => {
+  vi.stubGlobal('fetch',vi.fn()
+    .mockResolvedValueOnce(Response.json({ job_id: 'failed' }, { status: 202 }))
+    .mockResolvedValueOnce(Response.json({ state: 'failed', error: 'Source files changed' })))
+  try { await expect(api.scan()).rejects.toThrow('Source files changed') }
+  finally { vi.unstubAllGlobals() }
 })

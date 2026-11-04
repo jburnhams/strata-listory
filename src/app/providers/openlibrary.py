@@ -8,6 +8,11 @@ from app import book_titles
 FIELDS = 'key,title,author_name,first_publish_year,ratings_average,ratings_count,subject,edition_count,cover_i'
 
 
+def edition_language(entry):
+    codes={v.get('key','').rsplit('/',1)[-1] if isinstance(v,dict) else str(v).rsplit('/',1)[-1] for v in entry.get('languages') or []}
+    return next(iter(codes)) if len(codes)==1 else ''
+
+
 def to_candidate(d: dict) -> dict:
     cover = f"https://covers.openlibrary.org/b/id/{d['cover_i']}-L.jpg" if d.get('cover_i') else ''
     c = candidate('openlibrary', id=d.get('key', ''), title=d.get('title', ''), authors=d.get('author_name') or [], cover_url=cover, rating=d.get('ratings_average'), ratings_count=d.get('ratings_count'), genres=(d.get('subject') or [])[:8],
@@ -46,11 +51,11 @@ class OpenLibrary(Provider):
                     try:editions=self.cache(f"publisher-editions:{c['id']}:0",lambda c=c:self.http.request(f"https://openlibrary.org{c['id']}/editions.json?limit=100&offset=0"))
                     except MatchError:continue
                     titles=[]
-                    for edition in (editions or {}).get('entries',[]):
+                    for edition in sorted((editions or {}).get('entries',[]),key=lambda e:edition_language(e) in ('eng','en','en-gb','en-us'),reverse=True):
                         if c['id'] not in [work.get('key') for work in edition.get('works',[]) if isinstance(work,dict)]:continue
                         em,es=book_titles.parts(edition.get('title',''),edition.get('subtitle',''))
                         if not es or not book_titles.similar(main,em) or any(book_titles.similar(es,old['subtitle']) for old in titles):continue
-                        titles.append(dict(c,subtitle=es,subtitle_edition=edition.get('key','')))
+                        titles.append(dict(c,subtitle=es,subtitle_edition=edition.get('key',''),language=edition_language(edition)))
                     if titles:c.update(titles[0]);variants.extend(titles[1:])
         local.extend(variants)
         if local and any(accepted(c) for c in local):return local

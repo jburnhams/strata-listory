@@ -91,9 +91,10 @@ def test_listening_previews_generate_in_background_and_cache_selected_audio(clie
         stat=p.stat();paths.append(str(p));files.append(dict(path=str(p),size=stat.st_size,mtime_ns=stat.st_mtime_ns,sha256=str(i),probe=probe.probe_file(str(p))))
     rid=store.create(1,{});store.event(rid,'inventory','done',{},dict(files=files));store.event(rid,'selection','done',{},dict(paths=paths))
     before=[p.read_bytes() for p in map(__import__('pathlib').Path,paths)]
-    assert client.post(f'/api/ingest/runs/{rid}/samples').status_code==200
-    with previews.LOCK:jobs=list(previews.JOBS.values())
-    for job in jobs:job.result(timeout=60)
+    response=client.post(f'/api/ingest/runs/{rid}/samples');assert response.status_code==202
+    queue=client.app.state.jobs
+    assert queue.run_one()
+    assert queue.get(response.json()['job_id'])['state']=='done'
     samples=client.get(f'/api/ingest/runs/{rid}/samples').json()['samples']
     assert len(samples)==5 and all(s['status']=='ready' for s in samples)
     assert all(0<=s['start_seconds']<=24 and s['duration_seconds']==6 for s in samples)
@@ -105,7 +106,7 @@ def test_listening_previews_generate_in_background_and_cache_selected_audio(clie
     previews.audio(rid,0).unlink();cross=previews.generate(ctx,0)
     assert abs(probe.probe_file(str(cross))['duration']-6)<.1
     mtime=cross.stat().st_mtime_ns
-    client.post(f'/api/ingest/runs/{rid}/samples')
+    client.post(f'/api/ingest/runs/{rid}/samples');assert queue.run_one()
     assert cross.stat().st_mtime_ns==mtime
     assert [p.read_bytes() for p in map(__import__('pathlib').Path,paths)]==before
     assert client.get(f'/api/ingest/runs/{rid}/samples/5').status_code==400
@@ -158,3 +159,64 @@ def test_multi_disc_anthologies_keep_stories_as_chapters_and_show_grouping_evide
         response=client.get(f"/api/books/{child['book_id']}/source")
         assert response.status_code==200 and response.json()==location
     assert {str(path):path.read_bytes() for path in root.rglob('*.mp3')}==before
+
+
+@pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')),reason='ffmpeg and ffprobe required')
+@pytest.mark.parametrize('style',['total','counter'])
+def test_untagged_filename_parts_replace_legacy_fragment_reviews_without_audio_changes(tmp_path,style):
+    from app.ingest import grouping as G,store
+    root=tmp_path/'Example';root.mkdir();paths=[]
+    for n in range(1,4):
+        name=f'Writer Person - Example {n:02} of 3.mp3' if style=='total' else f'1 ({n}).mp3'
+        path=root/name
+        subprocess.run(['ffmpeg','-nostdin','-v','error','-f','lavfi','-i',f'sine=frequency={250+n*50}:duration=0.5',str(path)],check=True,capture_output=True)
+        paths.append(path)
+    if style=='counter':
+        preview=root/'Example by Writer Person - Listen Online.mp3'
+        subprocess.run(['ffmpeg','-nostdin','-v','error','-f','lavfi','-i','sine=frequency=300:duration=0.2',str(preview)],check=True,capture_output=True);paths.append(preview)
+    parent=catalogue.add_book(title='Example',path=str(root));aliases=[]
+    for path in paths:
+        alias=catalogue.add_book(title='Legacy fragment',path=str(path));aliases.append(alias)
+        catalogue.set_extra(alias['id'],'source_group',dict(version=G.VERSION-1,root=str(root),paths=[str(path)],scope_paths=[str(p) for p in paths]))
+        catalogue.set_extra(alias['id'],'source_group_ref',dict(primary_id=alias['id']))
+    before={str(p):p.read_bytes() for p in paths}
+    [run]=P.run([a['id'] for a in aliases],limit=len(aliases),online=False)
+    inv=P.stage_data(run,'inventory')
+    assert run['state']=='metadata_review' and inv['primary_id']==parent['id']
+    assert {m['id'] for m in inv['members']}=={parent['id'],*(a['id'] for a in aliases)}
+    assert sorted(len(r['files']) for r in inv['representations'])==([3] if style=='total' else [1,3])
+    assert all(store.latest_id(a['id'])==run['id'] for a in aliases)
+    assert all(not P.approval_valid(run,p) for p in P.REVIEW_STAGES)
+    assert {str(p):p.read_bytes() for p in paths}==before
+
+
+@pytest.mark.skipif(not (shutil.which('ffmpeg') and shutil.which('ffprobe')),reason='ffmpeg and ffprobe required')
+def test_byte_split_vbr_mp3_uses_decoded_part_durations_instead_of_whole_book_header(tmp_path):
+    from app.process import probe
+    root=tmp_path/'Example';root.mkdir();master=tmp_path/'master.mp3'
+    subprocess.run(['ffmpeg','-nostdin','-v','error','-f','lavfi','-i','anoisesrc=d=12:r=44100:c=pink:seed=42','-c:a','libmp3lame','-q:a','4',str(master)],check=True,capture_output=True)
+    source=master.read_bytes();block=(len(source)+4)//5;paths=[]
+    for n in range(5):
+        path=root/f'Example {n+1}.mp3';path.write_bytes(source[n*block:(n+1)*block]);paths.append(path)
+    before={str(p):p.read_bytes() for p in paths};book=catalogue.add_book(title='Example',author='Writer',year=2000,path=str(paths[0]))
+    [run]=P.run([book['id']],online=False)
+    inv=P.stage_data(run,'inventory');[rep]=inv['representations']
+    assert run['state']=='metadata_review' and len(inv['files'])==5 and not inv['errors']
+    first=next(f for f in inv['files'] if f['path']==str(paths[0]))
+    assert first['probe']['reported_duration']>first['probe']['duration']*2
+    assert first['probe']['requires_reencode']
+    assert all(f['probe']['duration_method']=='decoded audio clock' for f in inv['files'])
+    assert abs(rep['duration']-probe.probe_file(str(master))['duration'])<.25
+    assert rep['files']==[str(p) for p in paths] and rep['missing_tracks']==0
+    assert all(not P.approval_valid(run,p) for p in P.REVIEW_STAGES)
+    from app.process import plan as planner,run as runner
+    paths=[f['path'] for f in inv['files']];facts=[f['probe'] for f in inv['files']]
+    plan=planner.make_plan(book,str(tmp_path/'final'),input_paths=paths,input_facts=facts,measurements=dict(I=-18,TP=-6,LRA=2,silences=[],peak_p99=-8))
+    damaged={d['path'] for d in plan['source_diagnostics']}
+    assert str(root/'Example 1.mp3') in damaged
+    assert all(c['mode']=='encode' for c in plan['chapters'] if any(p in damaged for p,_,_ in c['segments']))
+    chapter=next(c for c in plan['chapters'] if c['segments'][0][0]==str(root/'Example 1.mp3'))
+    output=tmp_path/'reencoded.mp3';runner.build_chapter(book,plan,chapter,1,str(output),None)
+    repaired=probe.probe_file(str(output))
+    assert not repaired.get('requires_reencode') and abs(repaired['duration']-chapter['duration'])<.15
+    assert {str(p):Path(p).read_bytes() for p in paths}==before and master.read_bytes()==source

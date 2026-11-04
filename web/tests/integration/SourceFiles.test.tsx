@@ -12,10 +12,10 @@ it('shows a folder and a sample of filenames with the remaining count', async ()
   expect(screen.getByText(/\/source\/Book/)).toBeInTheDocument()
 })
 
-it.each([true,false])('distinguishes an empty folder from unavailable files: available %s', async available => {
+it.each([true,false])('distinguishes an inventoried empty folder from a missing saved file list: available %s', async available => {
   server.use(http.get('/api/books/:id/source', () => HttpResponse.json({ folder: '/source/Book', files: [], count: null, available })))
   setup(<SourceFiles bookId={1} />)
-  expect(await screen.findByText(available ? /No audio files found/ : /Source unavailable/)).toBeInTheDocument()
+  expect(await screen.findByText(available ? /No audio files found/ : /No saved file list/)).toBeInTheDocument()
 })
 
 it('keeps the audiobook usable when source details fail', async () => {

@@ -7,17 +7,18 @@ GET /api/books?q=&status=&review=&kind=; POST /api/scan {folder?}; POST /api/mat
 GET|PATCH|DELETE /api/books/{id}; GET /api/books/{id}/details (files, embedded tags, Audible metadata file); GET /api/books/{id}/cover (image).
 The page at / serves `src/app/server/static/index.html` when built (`cd web && npm run build`), else the plain stand-in `landing.html`."""
 import os
-import json
 from contextlib import asynccontextmanager
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app import __version__, catalogue, db, details, enrich, fs, matcher, providers, scan, settings
+from app import __version__, catalogue, db, details, providers, settings, read_models
 from app.process import queue as pq
+from app.jobs import JobQueue
+from app.server import tasks
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 LANDING = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'landing.html')
@@ -69,9 +70,33 @@ class BookPatch(BaseModel):
 def create_app():
     @asynccontextmanager
     async def lifespan(app):
+        jobs.start()
+        jobs.submit('system','bootstrap')
         reconcile_identification_reviews()
-        yield
+        try:yield
+        finally:jobs.stop()
     app = FastAPI(title='strata-listory', docs_url='/api/docs', openapi_url='/api/openapi.json',lifespan=lifespan)
+
+    @app.middleware('http')
+    async def saved_reads(request,call_next):
+        from app.ingest.pipeline import saved_evidence_only
+        with catalogue.deferred_mirrors(lambda bid:jobs.submit('system','mirror',book_id=bid)):
+            if request.method in ('GET','HEAD'):
+                with saved_evidence_only():return await call_next(request)
+            return await call_next(request)
+
+    initial_settings=settings.all_settings()
+    jobs=JobQueue(lambda domain,kind,options:tasks.execute(jobs,domain,kind,options))
+    app.state.jobs=jobs
+
+    def queued(domain,kind,**options):
+        ident=jobs.submit(domain,kind,**options)
+        return JSONResponse(dict(queued=True,job_id=ident,url=f'/api/jobs/{ident}'),status_code=202)
+
+    @app.get('/api/jobs/{job_id}')
+    def get_job(job_id:str):
+        try:return jobs.get(job_id)
+        except ValueError as e:raise HTTPException(404,str(e))
 
     def guard(fn, *a, **kw):
         try: return fn(*a, **kw)
@@ -88,7 +113,7 @@ def create_app():
     def get_health(): return dict(ok=True, version=__version__)
 
     @app.get('/api/settings')
-    def get_settings(): return settings.all_settings()
+    def get_settings():return read_models.get('settings','current',initial_settings)
 
     @app.put('/api/settings')
     def put_settings(s: SettingsIn):
@@ -96,7 +121,8 @@ def create_app():
             if v and not os.path.isabs(os.path.expanduser(v)): raise HTTPException(400, f'the {label} folder must be an absolute path')
         changes = {k: v for k, v in (('data_dir', s.data_dir), ('library_dir', s.library_dir), ('backup_dir', s.backup_dir)) if v is not None}
         if changes: settings.save({k: v or None for k, v in changes.items()})      # an empty value resets the setting
-        return settings.all_settings()
+        value=settings.all_settings();read_models.save('settings','current',value)
+        return value
 
     @app.get('/api/books')
     def get_books(q: str = '', status: str | None = None, review: str | None = None, kind: str | None = None): return guard(catalogue.list_books, q, status, review, kind)
@@ -111,41 +137,32 @@ def create_app():
 
     @app.post('/api/scan')
     def post_scan(b: ScanIn):
-        folder = b.folder or settings.library_dir()
-        if not folder: raise HTTPException(400, 'set the audiobook folder in Settings first')
-        if not fs.reachable(folder): raise HTTPException(503, f'{folder} is on a network share that is not reachable (is the server up?)')
-        if not os.path.isdir(folder): raise HTTPException(400, f'not a folder: {folder}')
-        try: found = list(scan.scan(folder))
-        except OSError as e: raise HTTPException(503, f'the scan was interrupted ({e.strerror or e}); nothing was changed')
-        return guard(lambda: dict(found=len(found), **catalogue.add_scanned(found)))
+        folder=b.folder or settings.library_dir()
+        if not folder:raise HTTPException(400,'set the audiobook folder in Settings first')
+        return queued('system','scan',folder=folder)
 
     @app.post('/api/match')
-    def post_match(limit: int = 25, providers_: str | None = Query(None, alias='providers')):
-        try: return guard(matcher.match_pending, max(1, min(limit, 200)), providers.enabled(providers_.split(',') if providers_ else None))
-        except KeyError as e: raise HTTPException(400, str(e.args[0]))
-        except matcher.MatchError as e: raise HTTPException(502, str(e))
+    def post_match(limit:int=25,providers_:str|None=Query(None,alias='providers')):
+        names=providers_.split(',') if providers_ else None
+        if names and any(n not in {p.name for p in providers.ALL} for n in names):raise HTTPException(400,'unknown provider')
+        return queued('system','match',limit=max(1,min(limit,200)),providers=names)
 
     @app.post('/api/enrich')
-    def post_enrich(limit: int = 25):
-        try: return guard(enrich.enrich_pending, max(1, min(limit, 100)))
-        except matcher.MatchError as e: raise HTTPException(502, str(e))
+    def post_enrich(limit:int=25):return queued('system','enrich',limit=max(1,min(limit,100)))
 
     @app.post('/api/books/{book_id}/enrich')
-    def enrich_one(book_id: int):
-        b = guard(catalogue.get_book, book_id)
-        found = False
-        try: guard(enrich.enrich_openlibrary, b); found = True                          # Open Library needs no key
-        except matcher.MatchError: pass
-        try: found = guard(enrich.enrich_book, b) is not None or found
-        except matcher.MatchError as e:
-            if not found: raise HTTPException(502, str(e))
-        return dict(found=found, extras=catalogue.get_extras(book_id))
+    def enrich_one(book_id:int):
+        guard(catalogue.get_book,book_id)
+        return queued('system','enrich_book',book_id=book_id)
 
-    worker = pq.Worker()
+    @app.post('/api/books/{book_id}/inspect')
+    def inspect_book(book_id:int):
+        guard(catalogue.get_book,book_id)
+        return queued('system','inspect',book_id=book_id)
 
-    def queue_view():
-        rows = [dict(book_id=r['book_id'], title=r['title'], author=r['author'], state=r['state'], error=r['error'], updated=r['updated'], summary=pq.summary(r['plan']) if r['plan'] else None) for r in catalogue.list_plans()]
-        return dict(rows=rows, worker=worker.status(), result={k: catalogue.get_processed(r['book_id']) for k, r in ((str(r['book_id']), r) for r in rows) if r['state'] in ('done', 'failed')})
+    worker = pq.Worker();worker.jobs=jobs
+
+    def queue_view():return tasks.process_view(jobs)
 
     @app.get('/api/process')
     def get_process(): return queue_view()
@@ -157,10 +174,9 @@ def create_app():
         guard(catalogue.get_book, book_id)
         result = catalogue.get_processed(book_id)
         if not result or result.get('status') != 'done' or not result.get('out_dir'): raise HTTPException(404, 'no finished output')
-        folder = os.path.realpath(result['out_dir'])
-        try:
-            with open(os.path.join(folder, 'metadata.json'), encoding='utf8') as f: metadata = json.load(f)
-        except (OSError, ValueError): raise HTTPException(404, 'finished metadata unavailable')
+        folder=result['out_dir']
+        metadata=read_models.get('output',book_id)
+        if metadata is None:raise HTTPException(404,'finished metadata unavailable')
         return folder, metadata
 
     @app.get('/api/books/{book_id}/output')
@@ -170,7 +186,7 @@ def create_app():
 
     @app.get('/api/books/{book_id}/audio/{chapter}')
     def book_audio(book_id: int, chapter: int):
-        folder, metadata = output_metadata(book_id)
+        folder, metadata = output_metadata(book_id);folder=os.path.realpath(folder)
         chapters = metadata.get('chapters', [])
         if chapter < 0 or chapter >= len(chapters): raise HTTPException(404, 'no such chapter')
         name = chapters[chapter].get('file', '')
@@ -180,51 +196,30 @@ def create_app():
 
     @app.post('/api/process/propose')
     def post_propose(limit: int = 5):
-        worker.submit('propose', limit=max(1, min(limit, 50))); return queue_view()
+        return queued('process','propose',limit=max(1,min(limit,50)))
 
     @app.post('/api/process/approve')
-    def post_approve(b: IdsIn): return dict(changed=guard(pq.decide,b.ids,True))
+    def post_approve(b: IdsIn):return queued('process','approve',ids=b.ids)
 
     @app.post('/api/process/reject')
-    def post_reject(b: IdsIn): return dict(changed=pq.decide(b.ids, False))
+    def post_reject(b: IdsIn):return queued('process','reject',ids=b.ids)
 
     @app.post('/api/process/repropose')
     def post_repropose(b: IdsIn):
-        changed=pq.repropose(b.ids)
-        if changed:worker.submit('propose',ids=changed,limit=len(changed))
-        return dict(changed=changed)
+        return queued('process','repropose',ids=b.ids)
 
     @app.post('/api/process/run')
     def post_run():
-        if not catalogue.list_plans(('approved',)): raise HTTPException(400, 'nothing is approved yet')
-        worker.submit('run'); return queue_view()
+        if not catalogue.plan_counts().get('approved'):raise HTTPException(400,'nothing is approved yet')
+        return queued('process','run')
 
     from app.ingest import pipeline as ingest, policy as ingest_policy, store as ingest_store
     from app.ingest.worker import Worker as IngestWorker
-    ingest_worker=IngestWorker()
+    ingest_worker=IngestWorker();ingest_worker.jobs=jobs
 
     def reconcile_identification_reviews():
-        # Existing pending reviews may now pass the independent book gates.
-        # Queue through the same worker and consent checks as a policy change.
-        try:
-            current=ingest_policy.current()
-            from app.ingest import grouping
-            runs=list(ingest_store.all_runs());restored=set()
-            for run in runs:
-                inv=ingest.stage_data(run,'inventory') or {}
-                if run['state']=='running' and inv.get('work_groups') and ingest_store.latest_id(run['book_id'])==run['id']:
-                    ingest_worker.submit('restore',run_id=run['id']);restored.add(run['id'])
-            if current['auto_approve_metadata'] or current['auto_approve_audiobook']:ingest_worker.submit('auto_metadata')
-            for run in runs:
-                if run['id'] in restored or ingest_store.latest_id(run['book_id'])!=run['id']:continue
-                inv=ingest.stage_data(run,'inventory') or {};last=run['events'][-1] if run['events'] else {}
-                continuation=run['state']=='running' and last.get('stage','').endswith('_approval') and last.get('status')=='done'
-                pending=run['state'] in ('metadata_review','audiobook_review','quality_review','review','eligible') or continuation
-                if pending and inv.get('files') and len(grouping.partition(inv['files'],inv['root']))>1 and not catalogue.get_plan(run['book_id']) and not catalogue.get_processed(run['book_id']):
-                    ingest_worker.submit('regroup',run_id=run['id'])
-                elif continuation or run['state'] in ('queued','running') and not catalogue.get_plan(run['book_id']) and not catalogue.get_processed(run['book_id']):
-                    ingest_worker.submit('restore',run_id=run['id'])
-        except db.CorruptDatabase:pass
+        # Recovery is processing too: do it on the worker, one current run at a time.
+        ingest_worker.submit('reconcile')
 
     def ingest_guard(fn,*args,**kwargs):
         try:return guard(fn,*args,**kwargs)
@@ -236,10 +231,10 @@ def create_app():
     @app.get('/api/operations')
     def get_operations(completed:bool=False):
         from app.ingest import operations
-        return operations.view(ingest_worker.tasks(),worker.tasks(),completed)
+        return operations.view(ingest_worker.tasks()+jobs.tasks('system'),worker.tasks(),completed)
 
     @app.get('/api/library/covers')
-    def library_covers():return dict(ids=details.available_cover_ids(catalogue.list_books()))
+    def library_covers():return dict(ids=details.available_cover_ids())
 
     @app.get('/api/library/workflow')
     def library_workflow():
@@ -252,16 +247,17 @@ def create_app():
             if not b.ids:raise HTTPException(400,'select at least one book ID')
             for bid in b.ids:guard(catalogue.get_book,bid)
         if b.limit>max(200,len(b.ids or [])):raise HTTPException(422,'limit must be 1..200, or at most the number of explicitly selected book IDs')
-        ingest_worker.submit('run',ids=b.ids,limit=b.limit,online=b.online)
-        return dict(queued=True,worker=ingest_worker.status())
+        return queued('ingest','run',ids=b.ids,limit=b.limit,online=b.online)
 
     @app.get('/api/ingest/runs/{run_id}')
-    def get_ingest_run(run_id:str):return ingest_guard(ingest_store.get,run_id)
+    def get_ingest_run(run_id:str):return ingest_guard(ingest_store.run_summary,run_id)
 
     from app.ingest import previews
 
     @app.post('/api/ingest/runs/{run_id}/samples')
-    def prepare_ingest_samples(run_id:str):return ingest_guard(previews.prepare,run_id)
+    def prepare_ingest_samples(run_id:str):
+        ingest_guard(ingest_store.run_book_id,run_id)
+        return queued('system','samples',run_id=run_id)
 
     @app.get('/api/ingest/runs/{run_id}/samples')
     def get_ingest_samples(run_id:str):return ingest_guard(previews.status,run_id)
@@ -272,34 +268,46 @@ def create_app():
 
     @app.post('/api/ingest/runs/{run_id}/resume')
     def resume_ingest(run_id:str):
-        ingest_guard(ingest_store.get,run_id);ingest_worker.submit('resume',run_id=run_id);return dict(queued=True)
+        ingest_guard(ingest_store.run_book_id,run_id)
+        return queued('ingest','resume',run_id=run_id)
 
     @app.post('/api/ingest/runs/{run_id}/evaluate')
-    def evaluate_ingest(run_id:str):return ingest_guard(ingest.evaluate,run_id)
+    def evaluate_ingest(run_id:str):
+        ingest_guard(ingest_store.run_book_id,run_id)
+        return queued('ingest','evaluate',run_id=run_id)
 
     @app.post('/api/ingest/runs/{run_id}/approve/{phase}')
     def approve_ingest_review(run_id:str,phase:str):
-        result=ingest_guard(ingest.approve_review,run_id,phase)
-        if result['changed']:ingest_worker.submit('continue',run_id=run_id)
-        return dict(result,queued=result['changed'])
+        ingest_guard(ingest_store.run_book_id,run_id)
+        if phase not in ingest.REVIEW_STAGES:raise HTTPException(400,'invalid review stage')
+        return queued('ingest','approve',run_id=run_id,phase=phase)
 
     @app.put('/api/ingest/runs/{run_id}/recording')
-    def choose_ingest_recording(run_id:str,b:dict):return ingest_guard(ingest.choose_recording,run_id,b.get('key'))
+    def choose_ingest_recording(run_id:str,b:dict):
+        ingest_guard(ingest_store.run_book_id,run_id)
+        if not isinstance(b.get('key'),str):raise HTTPException(400,'recording key is required')
+        return queued('ingest','recording',run_id=run_id,key=b['key'])
 
     @app.put('/api/ingest/runs/{run_id}/quality')
-    def rate_ingest_quality(run_id:str, b:dict):return ingest_guard(ingest.rate_quality,run_id,b.get('rating'))
+    def rate_ingest_quality(run_id:str,b:dict):
+        ingest_guard(ingest_store.run_book_id,run_id)
+        if b.get('rating') not in ('good','medium','poor','unrated'):raise HTTPException(400,'invalid quality rating')
+        return queued('ingest','quality',run_id=run_id,rating=b['rating'])
 
     @app.post('/api/ingest/runs/{run_id}/enqueue')
-    def enqueue_ingest(run_id:str):return ingest_guard(ingest.enqueue,run_id)
+    def enqueue_ingest(run_id:str):
+        ingest_guard(ingest_store.run_book_id,run_id)
+        return queued('ingest','enqueue',run_id=run_id)
 
     @app.put('/api/ingest/policy')
     def put_ingest_policy(b:dict):
         value=ingest_guard(ingest_policy.save,b)
+        jobs.submit('system','views')
         if value['auto_approve_metadata'] or value['auto_approve_audiobook']:ingest_worker.submit('auto_metadata')
         return value
 
     @app.get('/api/providers')
-    def get_providers(): return providers.status()
+    def get_providers():return read_models.get('providers','configured',[])
 
     @app.post('/api/books/{book_id}/confirm')
     def confirm_book(book_id: int): return guard(catalogue.confirm, book_id)
@@ -309,15 +317,13 @@ def create_app():
 
     @app.get('/api/books/{book_id}/details')
     def book_details(book_id: int):
-        b = guard(catalogue.get_book, book_id); d = guard(details.describe, b)
-        probe = d['probe'] or {}; secs = probe.get('duration_seconds') if probe.get('complete') else (d['audible'] or {}).get('runtime_minutes', 0) * 60 or None      # a full probe is exact; otherwise Audible's runtime
-        if b['duration_seconds'] is None and secs: b = guard(catalogue.update_book, book_id, duration_seconds=int(secs))
+        b = guard(catalogue.get_book, book_id); d = guard(details.saved_description, b)
         return dict(book=b, extras=catalogue.get_extras(book_id), processed=catalogue.get_processed(book_id), **d)
 
     @app.get('/api/books/{book_id}/cover')
     def book_cover(book_id: int):
-        p = guard(lambda: details.cover(catalogue.get_book(book_id)))
-        if not p: raise HTTPException(404, 'no cover')
+        p = guard(lambda: details.saved_cover(catalogue.get_book(book_id)))
+        if not p or not os.path.isfile(p):raise HTTPException(404,'no cover')
         return FileResponse(p, headers={'Cache-Control': 'private, max-age=3600'})
 
     @app.get('/api/books/{book_id}')

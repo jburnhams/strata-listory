@@ -1,4 +1,5 @@
 import json, os, shutil, subprocess
+from pathlib import Path
 import pytest
 from app import catalogue, details, mirror, providers, settings
 
@@ -225,4 +226,25 @@ def test_available_covers_only_checks_local_cache_and_mirror(tmp_path,monkeypatc
         assert not probe_source
         return original(book,probe_source=False)
     monkeypatch.setattr(mirror,'dir_for',cached_folder)
-    assert details.available_cover_ids([a,b,c])==[a['id'],b['id']]
+    from app.server.tasks import bootstrap
+    bootstrap()
+    assert details.available_cover_ids()==[a['id'],b['id']]
+    monkeypatch.setattr(mirror,'dir_for',lambda *a,**kw:pytest.fail('read must use database only'))
+    assert details.available_cover_ids()==[a['id'],b['id']]
+
+
+def test_saved_description_reads_legacy_probe_and_local_metadata_without_inspecting_source(tmp_path,monkeypatch):
+    from app import db
+    b=catalogue.add_book(title='Offline',path=str(tmp_path/'Offline'))
+    c=db.connect()
+    with c:c.execute('INSERT INTO match_cache VALUES (?,?,?)',(f"probe:{b['path']}:1:200:123",'2026-11-03',json.dumps(dict(duration_seconds=100,complete=True))))
+    c.close()
+    folder=Path(mirror.dir_for(b,probe_source=False));folder.mkdir(parents=True,exist_ok=True)
+    from app import read_models
+    read_models.save('audible',b['id'],dict(title='Saved Audible title'))
+    def forbidden(*a,**kw):raise AssertionError('lookup touched source')
+    monkeypatch.setattr(details,'audio_files',forbidden)
+    monkeypatch.setattr(details.fs,'reachable',forbidden)
+    out=details.saved_description(b)
+    assert out['probe']['duration_seconds']==100 and out['audible']['title']=='Saved Audible title'
+    assert out['files'] is None

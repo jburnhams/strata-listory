@@ -32,6 +32,14 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(withBase(url), init)
   const d = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error((d as { detail?: string }).detail || r.statusText)
+  if (r.status === 202 && typeof d.job_id === 'string') {
+    for (;;) {
+      const job = await req<{ state: string; result: T; error: string }>(`/api/jobs/${encodeURIComponent(d.job_id)}`)
+      if (job.state === 'done') return job.result
+      if (job.state === 'failed') throw new Error(job.error || 'Job failed')
+      await new Promise(resolve => setTimeout(resolve, 750))
+    }
+  }
   return d as T
 }
 const send = (method: string, body: unknown): RequestInit => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -56,11 +64,11 @@ export const api = {
   operations: (completed = false) => req<OperationsView>(`/api/operations?completed=${completed}`),
   finished: () => req<{ book_id: number; title: string; author: string; result: Processed }[]>('/api/finished'),
   output: (id: number) => req<Output>(`/api/books/${id}/output`),
-  propose: (limit = 5) => req<QueueView>(`/api/process/propose?limit=${limit}`, { method: 'POST' }),
+  propose: (limit = 5) => req<Record<string, number>>(`/api/process/propose?limit=${limit}`, { method: 'POST' }),
   approve: (ids: number[]) => req<{ changed: number[] }>('/api/process/approve', send('POST', { ids })),
   reject: (ids: number[]) => req<{ changed: number[] }>('/api/process/reject', send('POST', { ids })),
   repropose: (ids: number[]) => req<{ changed: number[] }>('/api/process/repropose', send('POST', { ids })),
-  runApproved: () => req<QueueView>('/api/process/run', { method: 'POST' }),
+  runApproved: () => req<Record<string, number>>('/api/process/run', { method: 'POST' }),
   scan: () => req<ScanResult>('/api/scan', send('POST', {})),
   match: (limit = 25) => req<MatchResult>(`/api/match?limit=${limit}`, { method: 'POST' }),
 }

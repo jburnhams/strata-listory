@@ -171,3 +171,47 @@ def test_batch_ingest_yields_between_books_and_skips_members_of_the_completed_gr
     assert calls==[dict(ids=[a['id']],limit=1,online=True)]
     assert worker.q.get()[0]=='continue'
     assert worker.q.get()==('run',dict(ids=[b['id']],limit=1,online=True))
+
+
+def test_list_reads_never_load_full_evidence_or_validate_approvals(monkeypatch):
+    book=catalogue.add_book(title='Compact');rid=saved(book)
+    store.event(rid,'providers','done',data=dict(large_payload=['raw']*10000))
+    store.event(rid,'metadata','done',data=dict(version=1,resolved=dict(title='Saved identification')))
+    for phase in ('metadata','audiobook','quality'):
+        store.event(rid,phase+'_approval','done',data=dict(scope=phase,automatic=True,policy_revision=0,signature=P.review_signature(store.get(rid),phase)))
+    store.finish(rid,'eligible')
+    def forbidden(*a,**kw):raise AssertionError('list read loaded or processed evidence')
+    for name in ('get','all_runs','latest'):monkeypatch.setattr(store,name,forbidden)
+    for name in ('review_phase','review_evaluation','stage_data'):monkeypatch.setattr(P,name,forbidden)
+    monkeypatch.setattr(catalogue,'list_plans',forbidden)
+    monkeypatch.setattr(catalogue,'list_processed',forbidden)
+    snapshot=store.workflow_snapshot()
+    assert all(e['data']=={} for e in snapshot['runs'][rid]['events'] if not e['stage'].endswith('_approval'))
+    assert operations.library([],[])['books'][str(book['id'])]==['processing']
+    row=operations.view([],[])['rows'][0]
+    assert row['title']=='Saved identification' and row['phase']=='processing'
+    assert len(row['logs'])<=12
+
+
+def test_operations_retains_step_start_with_only_twelve_recent_log_messages():
+    rid=saved(catalogue.add_book(title='Long inventory'),'running')
+    store.event(rid,'inventory','running')
+    for n in range(20):store.event(rid,'inventory','progress',data=dict(message=f'File {n}'))
+    row=operations.view([],[])['rows'][0]
+    assert row['current_step']=='File 19' and row['step_elapsed']>=0
+    assert len(row['logs'])==12 and row['logs'][0]['message']=='File 8'
+
+
+def test_http_review_mode_uses_materialized_rows_and_marks_missing_views_incomplete(monkeypatch):
+    book=catalogue.add_book(title='Stored');rid=saved(book)
+    P.publish_run(rid)
+    def forbidden(*a,**kw):raise AssertionError('read loaded full evidence')
+    monkeypatch.setattr(store,'get',forbidden)
+    with P.saved_evidence_only():
+        page=P.dashboard(phase='metadata')
+        assert page['runs'][0]['id']==rid and page['runs'][0]['review_phase']=='metadata'
+        assert P.dashboard()['runs'][0]['id']==rid
+        fresh=saved(catalogue.add_book(title='Not materialized'))
+        missing=next(r for r in P.dashboard(phase='metadata')['runs'] if r['id']==fresh)
+        assert missing['title']=='Not materialized'
+        assert not missing['reviews']['metadata']['complete']

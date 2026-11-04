@@ -22,3 +22,6 @@ Not gated. `pytest tests/integration -n auto --cov --cov-fail-under=0 --cov-repo
 | --- | --- |
 | `cli.py` | `test_cli.py`: doctor, catalogue commands, settings, real subprocess |
 | `server/app.py` | `test_server_api.py`: health, books shared with the CLI, settings updates, validation errors |
+| `ingest/`, `process/` | `test_ingest_pipeline.py`: legacy fragment consolidation, named/counter sequences, preserved previews, split-VBR decoded timing, forced encoding and clean output headers |
+
+Listening-preview HTTP integration submits a durable job, executes it on the shared queue, then serves the persisted ready assets. Finished-output fixtures explicitly persist their verified metadata read model; JSON routes no longer discover metadata from output folders.

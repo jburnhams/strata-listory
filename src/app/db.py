@@ -29,6 +29,11 @@ SCHEMA = (
        CREATE TABLE ingest_members(run_id TEXT NOT NULL,book_id INTEGER NOT NULL,PRIMARY KEY(run_id,book_id));
        CREATE INDEX ingest_members_book ON ingest_members(book_id);
        CREATE TABLE ingest_policy(id INTEGER PRIMARY KEY AUTOINCREMENT,created TEXT NOT NULL,data TEXT NOT NULL)""",
+    """CREATE TABLE jobs(id TEXT PRIMARY KEY,domain TEXT NOT NULL,kind TEXT NOT NULL,options TEXT NOT NULL,dedupe TEXT NOT NULL,state TEXT NOT NULL,created TEXT NOT NULL,started TEXT,finished TEXT,result TEXT,owner_pid INTEGER,error TEXT NOT NULL DEFAULT '');
+       CREATE UNIQUE INDEX jobs_pending ON jobs(dedupe) WHERE state IN ('queued','running');
+       CREATE INDEX jobs_state ON jobs(state,created);
+       CREATE TABLE read_models(kind TEXT NOT NULL,owner TEXT NOT NULL,data TEXT NOT NULL,updated TEXT NOT NULL,PRIMARY KEY(kind,owner))""",
+    "ALTER TABLE jobs ADD COLUMN resources TEXT NOT NULL DEFAULT '[]'",
 )       # schema version n is SCHEMA[n-1]; append new migrations, never edit old ones (PRAGMA user_version tracks the applied count)
 
 

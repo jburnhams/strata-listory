@@ -178,6 +178,24 @@ def test_openlibrary_search_gives_the_first_published_year_and_is_not_a_default_
     assert 'openlibrary' not in providers.configured() and providers.get('openlibrary').unavailable() is None and 'openlibrary' in [s['name'] for s in providers.status()]
 
 
+def test_openlibrary_hydrates_edition_languages_and_prefers_english_duplicate(fake_urlopen,monkeypatch):
+    from app.providers import openlibrary_local
+    from app.providers.openlibrary import OpenLibrary
+    from app.providers.base import candidate
+    def local(*args):return [candidate('openlibrary',id='/works/OL1W',title='Homo Deus',authors=['Yuval Noah Harari']) for _ in range(2)]
+    monkeypatch.setattr(openlibrary_local,'search',local)
+    editions=[dict(key='/books/OL1M',works=[dict(key='/works/OL1W')],title='Homo Deus',subtitle='A Brief History of Tomorrow',languages=[dict(key='/languages/fre')]),dict(key='/books/OL2M',works=[dict(key='/works/OL1W')],title='Homo Deus',subtitle='A Brief History of Tomorrow',languages=[dict(key='/languages/eng')])]
+    fake_urlopen.reply(dict(title='Homo Deus'),dict(entries=editions))
+    found=OpenLibrary().search('Homo Deus','Yuval Noah Harari')
+    assert all(c['language']=='eng' and c['subtitle_edition']=='/books/OL2M' for c in found)
+
+
+@pytest.mark.parametrize('languages,expected',[(None,''),([],''),(['/languages/eng'],'eng'),([dict(key='/languages/spa')],'spa'),(['/languages/eng','/languages/spa'],'')])
+def test_edition_language_does_not_guess_for_missing_or_multilingual_entries(languages,expected):
+    from app.providers.openlibrary import edition_language
+    assert edition_language(dict(languages=languages))==expected
+
+
 @pytest.mark.year_lookup
 @pytest.mark.parametrize('failure',['reset','timeout','incomplete'])
 def test_openlibrary_retries_transient_transport_errors_and_caches_success(fake_urlopen,failure):

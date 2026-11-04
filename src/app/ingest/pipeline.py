@@ -4,20 +4,25 @@ import json
 import copy
 import math
 import hashlib
-from contextlib import suppress
-from collections import OrderedDict
-from threading import RLock
+from contextlib import suppress, contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 import time
 
-from app import catalogue, oslib, settings, sources
+from app import catalogue, oslib, settings, sources, read_models
 from app.ingest import acoustics, audio, collections, grouping, inventory, metadata, policy, provenance, store
 from app.process import plan as P, queue as Q
 from app.ingest.observe import capture_progress
 
 STAGES=('inventory','identity','providers','metadata','recording_providers','recording','alignment','quality','selection','planning','eligibility')
-_METADATA_CACHE=OrderedDict()
-_METADATA_CACHE_LOCK=RLock()
+_SAVED_EVIDENCE=ContextVar('saved_ingest_evidence',default=False)
+
+
+@contextmanager
+def saved_evidence_only():
+    token=_SAVED_EVIDENCE.set(True)
+    try:yield
+    finally:_SAVED_EVIDENCE.reset(token)
 
 REVIEW_STAGES={'metadata':STAGES[:4],'audiobook':('recording_providers','recording'),'quality':('alignment','quality','selection')}
 
@@ -41,26 +46,26 @@ def stage_data(run,stage):
     if stage=='metadata':data=raw_stage(run,'recording') or data
     if data is None and stage in ('recording','recording_providers') and legacy_metadata_consent(run):
         data=stage_data(run,'metadata' if stage=='recording' else 'providers')
+    if _SAVED_EVIDENCE.get():return data
     if stage=='recording' and data is not None and data.get('version',1)<metadata.VERSION:return stage_data(run,'metadata')
     if stage=='metadata' and data is not None and data.get('version',1)<metadata.VERSION:
         ids=tuple((e['stage'],e['id']) for e in run['events'] if e['status']=='done' and e['stage'] in ('inventory','identity','providers','metadata','recording_providers','recording'))
         key=(str(settings.data_dir()),run['id'],metadata.VERSION,data.get('version',1),ids)
         local=run.get('_metadata_projection')
         if local and local['key']==key:return local['data']
-        with _METADATA_CACHE_LOCK:
-            if key in _METADATA_CACHE:
-                data=copy.deepcopy(_METADATA_CACHE[key]);_METADATA_CACHE.move_to_end(key)
-            else:
-                inv=stage_data(run,'inventory');identity=stage_data(run,'identity');providers=stage_data(run,'providers')
-                if inv and inv.get('representations') and identity and identity.get('book') and providers and 'providers' in providers:
-                    data=metadata.resolve(identity,inv,providers)[0]
-                    recording_providers=raw_stage(run,'recording_providers')
-                    if raw_stage(run,'recording') and recording_providers:
-                        combined=dict(providers=dict(providers['providers'],**recording_providers['providers']))
-                        data=metadata.refine_recording(dict(identity,_recording_choice=(raw_stage(run,'recording_choice') or {}).get('key')),inv,combined,data)[0]
-                    _METADATA_CACHE[key]=copy.deepcopy(data)
-                    while len(_METADATA_CACHE)>128:_METADATA_CACHE.popitem(last=False)
-            run['_metadata_projection']=dict(key=key,data=data)
+        cache_key='ingest-metadata:'+hashlib.sha256(json.dumps(key).encode()).hexdigest()
+        cached=store.projection_get(cache_key)
+        if cached is not None:data=cached
+        else:
+            inv=stage_data(run,'inventory');identity=stage_data(run,'identity');providers=stage_data(run,'providers')
+            if inv and inv.get('representations') and identity and identity.get('book') and providers and 'providers' in providers:
+                data=metadata.resolve(identity,inv,providers)[0]
+                recording_providers=raw_stage(run,'recording_providers')
+                if raw_stage(run,'recording') and recording_providers:
+                    combined=dict(providers=dict(providers['providers'],**recording_providers['providers']))
+                    data=metadata.refine_recording(dict(identity,_recording_choice=(raw_stage(run,'recording_choice') or {}).get('key')),inv,combined,data)[0]
+                store.projection_save(cache_key,data)
+        run['_metadata_projection']=dict(key=key,data=data)
     return data
 
 
@@ -190,7 +195,9 @@ def _plan(book,inv,selected,meta,identity,run_id,archives=()):
     if not inventory.unchanged(selected['manifest']):raise ValueError('input changed since inventory')
     # Do not give an episode/radio source a print-work processing identity by accident.
     if identity['kind']!='book':return dict(plan=None,reason='non-book content requires a separate processing recipe'),{'planning.warning_count':None}
-    plan=P.make_plan(book,settings.final_dir(),None,None,meta['records'],input_paths=selected['paths'],measurements=selected['measurements'])
+    selected_paths=set(selected['paths'])
+    facts={f['path']:f['probe'] for f in inv['files'] if f['path'] in selected_paths}
+    plan=P.make_plan(book,settings.final_dir(),None,None,meta['records'],input_paths=selected['paths'],measurements=selected['measurements'],input_facts=[facts[path] for path in selected['paths']])
     plan['ingest']=dict(run_id=run_id,group=inv['group'],primary_id=inv['primary_id'],members=[b['id'] for b in inv['members']],root=inv['root'],sidecars=inv['sidecars'],member_signatures={str(b['id']):inventory.signature(b) for b in inv['members']},manifest=selected['manifest'],book_signature=inventory.signature(catalogue.get_book(inv['primary_id'])))
     plan['metadata_evidence']={k:meta[k] for k in ('records','resolved','recording','community','candidates','rejected')}
     plan['metadata_evidence'].update({k:meta.get(k) for k in ('version','work','performance')})
@@ -278,7 +285,8 @@ def _run_one(book_id,run_id,online=True,book_only=False):
                 store.link(run_id,[b['id'] for b in value['members']]);book=catalogue.get_book(value['primary_id'])
             elif stage=='identity':value,measure=inventory.recover(book,data['inventory'])
             elif stage=='providers':
-                value,measure=metadata.collect(data['identity'],data['inventory'],folder/'sources',[n for n in p['providers'] if n in ('hardcover','openlibrary')]) if online else (dict(providers={},archives=[],offline=True),{'metadata.provider_attempts':0,'metadata.provider_errors':0,'metadata.raw_responses':0})
+                lookup_identity=dict(data['identity'],_work_discovery_providers=[n for n in p['providers'] if n not in ('hardcover','openlibrary')])
+                value,measure=metadata.collect(lookup_identity,data['inventory'],folder/'sources',[n for n in p['providers'] if n in ('hardcover','openlibrary')]) if online else (dict(providers={},archives=[],offline=True),{'metadata.provider_attempts':0,'metadata.provider_errors':0,'metadata.raw_responses':0})
                 value['manifest']=[dict(path=str(path),size=Path(path).stat().st_size,sha256=inventory.digest(path)) for path in value['archives']]
             elif stage=='metadata':value,measure=metadata.resolve(data['identity'],data['inventory'],data['providers'])
             elif stage=='recording_providers':
@@ -496,8 +504,25 @@ def dashboard(offset=0,limit=50,phase=None,sort=None):
         waiting=[r for r in store.review_headers() if header_phase(r,value)==phase]
         if order=='oldest':waiting.reverse()
         elif order!='newest':waiting.sort(key=lambda run:review_sort_key(run,value,order))
-        total=len(waiting);rows=[store.get(r['id']) for r in waiting[offset:offset+limit]]
-    else:rows=store.runs(limit,offset)
+        total=len(waiting);headers=waiting[offset:offset+limit]
+        rows=(store.get(r['id']) for r in headers)
+    else:
+        headers=store.page_headers(limit,offset);rows=(store.get(r['id']) for r in headers)
+    if _SAVED_EVIDENCE.get():
+        cached=read_models.many('ingest', [h['id'] for h in headers])
+        views=[]
+        for header in headers:
+            view=dict(cached.get(header['id']) or _pending_view(header),state=header['state'])
+            if phase:
+                current=header_phase(header,value);view['review_phase']=current
+                order=list(REVIEW_STAGES)+['processing']
+                view['reviews']={name:dict(review,approved=order.index(name)<order.index(current)) for name,review in view['reviews'].items()}
+            views.append(view)
+    else:views=_review_rows(rows)
+    return dict(runs=views,policy=policy.current(),stages=list(STAGES),offset=offset,total=total)
+
+
+def _review_rows(rows):
     output=[];groups=set()
     for r in rows:
         inv=stage_data(r,'inventory') or {};identity=stage_data(r,'identity') or {};ev=stage_data(r,'eligibility');sel=stage_data(r,'selection');latest=r['events'][-1] if r['events'] else {}
@@ -508,10 +533,10 @@ def dashboard(offset=0,limit=50,phase=None,sort=None):
         meta=stage_data(r,'metadata') or {};resolved=meta.get('resolved')
         group=inv.get('group',str(r['book_id']))
         latest_id=store.latest_id(inv.get('primary_id',r['book_id']))
-        output[-1].update(review_phase=phase,reviews=reviews,superseded=group in groups or bool(latest_id and latest_id!=r['id']),processing_proposed=bool(catalogue.get_plan(inv.get('primary_id',r['book_id']))),metadata=dict(rows=sources.rows(identity.get('book',{}),resolved) if resolved else [],recording={k:(meta.get('recording') or {}).get(k) for k in ('asin','language','runtime_minutes','abridged')},source_families=metrics(r).get('metadata.work_families'),match_score=metrics(r).get('work.score'),corroboration=meta.get('corroboration',{}),work=dict(meta['work'],lookups=book_lookup_status(r,meta['work'])) if meta.get('work') else None,performance=meta.get('performance')))
+        output[-1].update(review_phase=phase,reviews=reviews,superseded=group in groups or bool(latest_id and latest_id!=r['id']),processing_proposed=store.plan_exists(inv.get('primary_id',r['book_id'])),metadata=dict(rows=sources.rows(identity.get('book',{}),resolved) if resolved else [],recording={k:(meta.get('recording') or {}).get(k) for k in ('asin','language','runtime_minutes','abridged')},source_families=metrics(r).get('metadata.work_families'),match_score=metrics(r).get('work.score'),corroboration=meta.get('corroboration',{}),work=dict(meta['work'],lookups=book_lookup_status(r,meta['work'])) if meta.get('work') else None,performance=meta.get('performance')))
         if resolved:output[-1]['title']=resolved['title']
         groups.add(group)
-    return dict(runs=output,policy=policy.current(),stages=list(STAGES),offset=offset,total=total)
+    return output
 
 
 def regroup_collection(run_id):
@@ -522,3 +547,20 @@ def regroup_collection(run_id):
     if Path(book['path']).resolve()!=Path(inv['root']).resolve() or catalogue.get_plan(bid) or catalogue.get_processed(bid):return []
     if not inventory.snapshot_unchanged(inv):raise ValueError('collection sources changed; start a fresh ingest')
     return [r['id'] for r in run(ids=[bid],limit=1,online=previous['options'].get('online',True))]
+
+
+def publish_run(run_id):
+    """Materialize a single archived review on the worker; HTTP never loads its raw evidence."""
+    with saved_evidence_only():view=_review_rows([store.get(run_id)])[0]
+    read_models.save('ingest',run_id,view)
+
+
+def _pending_view(header):
+    # A new/legacy view is populated by its job. Unknown analysis cannot authorize approval.
+    measure={};title=header.get('title') or f"Book {header['book_id']}"
+    for event in header.get('events',[]):
+        measure.update(event.get('metrics',{}))
+        if event['stage'] in ('metadata','recording'):title=event.get('summary',{}).get('title') or title
+    value=policy.current();phase=header_phase(header,value)
+    reviews={name:dict(approved=False,eligible=False,complete=False,checks=[],kind_allowed=False) for name in REVIEW_STAGES}
+    return dict(id=header['id'],book_id=header['book_id'],created=header['created'],state=header['state'],title=title,review_phase=phase,reviews=reviews,metrics=measure,stages=[],members=[],quality_rating='unrated',quality_suggestions=[],selection=None,eligibility=None,current_evaluation=policy.evaluate(measure,'unknown',value),superseded=False,metadata=None)

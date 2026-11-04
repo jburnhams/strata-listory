@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 from app import contributors, matcher, merge, scan
 
-VERSION=3
+VERSION=4
 GENERIC={'','audio','audiobook','audiobooks','book','books','unknown','unknown album','untitled'}
 
 DISC_LABEL=re.compile(r'\b(?:cd|disc|disk)\s*[._-]*\s*(\d+)(?:\s*(?:of|/)\s*(\d+))?\b',re.I)
@@ -103,8 +103,60 @@ def coded_parts(paths):
     return result
 
 
+def filename_parts(paths):
+    """Candidate filename sequences; bare suffixes require byte-split proof later."""
+    families={};result={}
+    for value in paths:
+        path=Path(value);stem=path.stem;kind='';total=None
+        if m:=re.fullmatch(r'(.+?)\s+(\d{1,4})\s+of\s+(\d{1,4})',stem,re.I):
+            base=m[1];number=int(m[2]);total=int(m[3]);kind='total'
+            if not 1<=number<=total or total<2:continue
+            if re.search(r'\b(?:book|vol(?:ume)?|series|season|episode|ep)\s*$',base,re.I):continue
+            base=re.sub(r'\s+(?:chapter|chap|part|track)\s*$','',base,flags=re.I)
+        elif m:=re.fullmatch(r'(\d+)\s*\((\d{1,4})\)',stem):base=m[1];number=int(m[2]);kind='counter'
+        elif m:=re.fullmatch(r'(.+?)\s+(\d{1,3})',stem):
+            base=m[1];number=int(m[2]);kind='bytes'
+            if re.search(r'\b(?:book|vol(?:ume)?|part|disc|cd|series|season|episode|ep)\s*$',base,re.I):continue
+        else:continue
+        key=(str(path.parent),path.suffix.lower(),kind,matcher.norm(base))
+        families.setdefault(key,[]).append((str(value),base,number,total))
+    for key,items in families.items():
+        numbers=[v[2] for v in items];totals={v[3] for v in items};kind=key[2]
+        if kind=='counter' and key[1] in scan.WHOLE_BOOK:continue
+        if len(set(numbers))!=len(numbers) or len(totals)!=1:continue
+        if len(items)<(2 if kind=='total' else 3 if kind=='counter' else 4) or kind!='total' and min(numbers)!=1:continue
+        folder=title_hint(scan.parse_name(Path(key[0]).name)['title'])
+        if kind=='counter':
+            if not folder or re.search(r'\b(?:collection|collected works|complete works)\b',folder,re.I):continue
+            title=folder.replace('.',' ');author=''
+        else:
+            parsed=scan.parse_name(items[0][1]);title=title_hint(parsed['title']);author=parsed['author']
+            if not title or kind=='bytes' and (key[1]!='.mp3' or matcher.norm(folder)!=matcher.norm(title)):continue
+        for path,_,number,total in items:result[path]=dict(key='|'.join(key),kind=kind,title=title,author=author,number=number,total=total,reason='Ordered filename parts of one work')
+    return result
+
+
+def filename_layout(files):
+    """Accept explicit part runs, numeric copy counters, and fixed-size MP3 chunks."""
+    candidates=filename_parts(f['path'] for f in files);families={};result={}
+    for f in files:
+        if f['path'] in candidates:families.setdefault(candidates[f['path']]['key'],[]).append(f)
+    for items in families.values():
+        info=candidates[items[0]['path']];title=info['title']
+        if any((album:=title_hint(f['probe']['tags'].get('album',''))) and matcher.norm(album)!=matcher.norm(title) for f in items):continue
+        hashes=[f['sha256'] for f in items if f.get('sha256')]
+        if info['kind']=='counter' and len(set(hashes))!=len(hashes):continue
+        if info['kind']=='bytes':
+            ordered=sorted(items,key=lambda f:candidates[f['path']]['number']);sizes=[f['size'] for f in ordered];middle=sizes[1:-1]
+            # Series volumes do not become chapters merely because names end in
+            # 1,2,3. Equal byte chunks plus a shorter tail establish this layout.
+            if len(set(middle))!=1 or middle[0]<4096 or not .98*middle[0]<=sizes[0]<=middle[0] or not 0<sizes[-1]<middle[0]:continue
+        for f in items:result[f['path']]=dict(candidates[f['path']])
+    return result
+
+
 def partition(files,root):
-    hints=[];coded=coded_parts(f['path'] for f in files);layout=sequence_layout(files)
+    hints=[];coded=coded_parts(f['path'] for f in files);layout=sequence_layout(files);named=filename_layout(files)
     albums={}
     for f in files:
         album=title_hint(f['probe']['tags'].get('album',''))
@@ -130,15 +182,23 @@ def partition(files,root):
         title=album;use_title=False;conflict=False
         sequence=layout.get(h['file']['path'])
         if sequence:title=sequence['title'];use_title=True
-        if not sequence and len(sequences)>1 and filename and album and matcher.title_score(album,dict(title=filename,subtitle=''))<.85:
+        part=named.get(h['file']['path'])
+        if part:title=part['title'];use_title=True
+        if not sequence and not part and len(sequences)>1 and filename and album and matcher.title_score(album,dict(title=filename,subtitle=''))<.85:
             title=filename;use_title=True;conflict=True
-        if generic_album and not sequence:
+        if generic_album and not sequence and not part:
             # A numbered book stem repeated across files is stronger than a
             # collection label. Bare chapter titles still use the folder clue.
             title=filename if filename and (repeated[merge.norm(filename)]>1 or path.suffix.lower() in scan.WHOLE_BOOK or not tags.get('track')) else ''
             title=title or (h['folder'] if h['file']['path'] in coded else title_hint(tags.get('title',''))) or h['folder'] or filename
+            # A descriptive/sample file can accompany a numeric chapter run.
+            # Its parsed work title must match that run; it remains a separate
+            # representation because it has no sequence number.
+            parsed=scan.parse_name(path.name)['title']
+            related=[p for value,p in named.items() if p['kind']=='counter' and Path(value).parent==path.parent and matcher.norm(p['title'])==matcher.norm(parsed)]
+            if related:title=related[0]['title']
             use_title=True;conflict=False
-        author=h['author']
+        author=h['author'] or (part or {}).get('author','')
         if author and merge.norm(author) in merge.norm(title):author=''
         key=matcher.norm(title);who=contributors.name_key(author)
         matching=[g for g in groups if g['key']==key and (sequence and sequence['shared'] and g.get('shared_parent')==str(path.parent.parent) or not who or not g['author'] or any(contributors.same_author(a,b,True) for a in contributors.authors(author) for b in contributors.authors(g['author'])))]
@@ -150,6 +210,9 @@ def partition(files,root):
         if sequence:
             group.setdefault('grouping_notes',[])
             if sequence['reason'] not in group['grouping_notes']:group['grouping_notes'].append(sequence['reason'])
+        if part:
+            group.setdefault('grouping_notes',[])
+            if part['reason'] not in group['grouping_notes']:group['grouping_notes'].append(part['reason'])
         group['use_title']=group['use_title'] or use_title;group['conflicting_album']=group['conflicting_album'] or conflict
         group['paths'].append(h['file']['path'])
     return [{k:g[k] for k in ('title','author','paths','use_title','conflicting_album','grouping_notes') if k in g} for g in groups]

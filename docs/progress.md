@@ -1,5 +1,95 @@
 # Progress log
 
+## 2026-11-04: fix repeated OOM restarts and unresponsive HTTP
+
+The service had repeatedly been killed by systemd-oomd/the kernel overnight. A loose MP3, The Road to Kalamata, has a malformed `track=1/4294967295` tag. Its track total expanded discovery recursively into the entire Books directory (16,830 files). On completing inventory, missing-track calculation materialised `set(range(1,total+1))`, attempting billions of integers. After limiting discovery, the same allocation reproduced immediately: Python RSS reached 3.3 GiB, MemoryHigh throttling held the GIL, and even health requests timed out. The second ingest worker waited for the active ingest lock, so durable recovery repeatedly retried the same failing work.
+
+Loose-file expansion now requires coherent direct audio siblings and never recursively enters unrelated subdirectories. Sidecar discovery uses the same bounded sibling scope; explicit folder/collection selection remains recursive. Missing track/disc counts are calculated by subtracting observed, in-range unique numbers from the declared total, with no allocation proportional to untrusted totals. Raw malformed counts remain visible and completeness gates still fail rather than silently treating a corrupt total as complete.
+
+Deployed with the existing two-worker/4 GiB limits. The original durable Road job passed inventory, work/recording identification and reached alignment; progress now reports one file rather than 16,830. Live validation during processing: health 14 ms, Library workflow 31 ms, Operations 162 ms, books 212 ms; Python RSS about 360 MiB (service cgroup including filesystem cache about 1.2 GiB). No source audio or queue entries were discarded.
+
+The Road run subsequently reached quality review, safely retaining the malformed missing-track count for review. Validation: 290 ingest/grouping/HTTP unit tests passed, all 21 integration tests passed, and 28 final focused inventory tests passed. A real byte-split MP3 integration regression ensures recognised numbered sibling families still reunite after tightening discovery. Ruff and whitespace checks passed. The final fix is loaded in the running service.
+
+## 2026-11-04: prefer English work editions
+
+English now wins among strongly compatible work entries before popularity/edition-count tie breakers; incompatible titles, authors and volumes remain excluded. Open Library retains explicit edition language during subtitle hydration and chooses the English duplicate when equivalent subtitle editions are encountered. Unknown or multilingual edition language remains unknown. Saved, verified work-to-edition links can recover the same language evidence during resolver projection (version 18).
+
+A consistent full title tag, matching an explicitly English linked work edition and compatible with the existing author/main title, can disambiguate a shortened album title. Mixed chapter titles, missing language, invalid links and manually locked titles cannot use this rule. No language is inferred from the words in a subtitle. Raw tags/provider archives remain unchanged; HTTP reads continue to use saved views, with projection/approval performed by queued workers.
+
+Read-only cached replay of 142 reviews finds one additional eligible work: Homo Deus (#383), supported by Hardcover and the English Open Library edition. Yuval Noah Harari and original publication year 2015 remain resolved; the 2017 English-edition date does not replace that original year. No eligibility regressions. Results are in gitignored `data/audio-work-identification-audit-20261103/english-editions-{replay,summary}.json`.
+
+Validation: 295 provider, identification, title and HTTP ingest unit tests passed, including 13 new language regressions. Ruff and whitespace checks passed. Deployed with the existing two-worker/4 GiB limits; saved-evidence automatic approval is queued under the existing policy.
+
+## 2026-11-03: distinctive full titles can correct unverified artist credits
+
+Resolver version 17 allows title-led discovery when a long, distinctive full title agrees despite the local author tag. A single unambiguous work-catalogue hit can supply search terms; replacing an unlocked local author requires agreement from two independent families, including a work catalogue. Every returned full-title author set must agree, including complete coauthors and pairwise initial variants. An observed collision vetoes the override. Short/generic titles, omitted subtitles, different volumes and manually locked authors cannot use it. A compatible exact audiobook ASIN can supply the title-led discovery evidence; recording consent remains separate.
+
+The original artist credit remains in archived identity evidence and `unverified_authors` in the projected catalogue record, rather than being merged into the inferred work's authors. New tests cover successful inference, discovery before consensus, single-source refusal, collisions, manual locks, generic/partial/volume mismatches, coauthor conflicts and competing middle initials. Cached replay of the same 142 reviews adds no further eligible works beyond the preceding audiobook fix, with no eligibility regressions. Results: gitignored `data/audio-work-identification-audit-20261103/title-consensus-replay.json`.
+
+Validation: all 313 identification, contributor, title and HTTP ingest unit tests passed; Ruff and whitespace checks passed. Deployed with the two-worker/4 GiB limits intact; Sherlock's existing durable metadata-refresh job remains queued.
+
+## 2026-11-03: audiobook discovery before original-work identification
+
+The work-provider stage now queries configured audiobook providers first. A compatible exact ASIN, or an unambiguous title/author match with local narrator and runtime agreement, supplies canonical work-search terms. Conflicting authors/volumes and ambiguous recordings cannot supply the hint. Accepted evidence remains archived in the provider stage; work approval still requires an original-work catalogue link and independent source families. Audible/Audnexus remain one family, and recording/quality consent remain separate. An unknown writer requires independent work-catalogue corroboration. Audiobook release dates do not populate original publication years.
+
+Contributor roles now recognise plural introductions/forewords/afterwords. Joined title/subtitle matching works in both directions, including when a recording supplies punctuation for two previously joined work titles. Resolver version 16 refreshes saved projections; collecting missing audiobook evidence still requires a queued metadata refresh, which reuses verified inventory.
+
+A read-only replay of 142 current metadata reviews combines previously saved work evidence with cached audiobook lookups, omitting uncached requests and preserving existing candidate contradictions. Sherlock Holmes: The Definitive Collection (#1945) is the single additional eligible work: an exact B06X1BRZYC audiobook plus Hardcover corroborate the collection and Arthur Conan Doyle. Stephen Fry is retained as an introduction contributor/narrator. This identifies the complete collection, not a single constituent novel; Hardcover's 2017 date describes that collection. Replay made no live approvals. Audit script/results are in gitignored `data/audio-work-identification-audit-20261103/`. Deployed with two shared workers and the existing 4 GiB service cap; Sherlock refresh job `f8c6e5459e474420abc2d35a3c2c6c78` is durable and waits behind existing work.
+
+Validation: 700 full backend unit tests passed, 284 identification/contributor/title tests passed, final focused checks passed (101 tests plus 12 checks covering the last title/refresh adjustments), and all 21 integration tests passed. Ruff and whitespace checks passed. Coverage was not recalculated in this pass.
+
+## 2026-11-03: all server analysis behind a shared durable queue
+
+All source scanning, provider matching/enrichment, source inspection, approval validation, recording selection, evaluation, rating, proposal/build execution and listening-preview generation now run through one SQLite job queue. Default concurrency is one worker total (`APP_WORKERS`, 1–8); process jobs use one internal book worker and previews no longer have a separate pool. HTTP processing actions return 202/job ID and the browser polls saved job outcomes. Identical pending submissions coalesce, transactional claims enforce the shared cap, known book resources exclude overlapping work, dead-owner jobs recover, interrupted batches resume their saved active run, and remaining selected IDs stay durable. Catalogue mirror writes are deferred to the queue. Existing consent/source validation remains in the queued actions.
+
+Reviews are materialized by workers instead of loading full evidence on GET. Saved provider status, covers/index, source details/sidecars, listening status/locations, plan summaries and output metadata live in read models. JSON reads use database records; static/media routes serve existing assets. Configuration uses its bootstrap settings file with the displayed settings saved in SQLite. Run evidence views return at most 100 small event headers. Policy updates queue a saved-view refresh.
+
+Cutover captured four interrupted runs, two pending regrouping entries and metadata automation. All six book jobs and automation are restored in the durable queue. A local intermediate schema-nine queue lacked the later resource column; schema ten explicitly migrates it without losing jobs, with an exact regression. Live validation: one active worker, no failed jobs, duplicate evaluation requests share one job ID; processing POSTs return in 21 ms / 2 ms. Reads: cover index 2 ms, Library workflow 34 ms, Operations 204 ms, identification page 123 ms. Python RSS about 221 MiB during startup/recovery. Audit snapshots: gitignored `data/shared-queue-audit-20261103/`.
+
+Validation: full backend suite 687 passed, 95.67% coverage; subsequent migration/queue/server subset 69 passed, including the additional schema-nine regression; 21 integration tests and 93 web tests passed. Web coverage gate, typecheck/build, Ruff and whitespace checks passed. Existing source grouping/identification fixes remain included; source audio is not modified by this queue migration.
+
+## 2026-11-03: lookup-only reads and bounded server memory
+
+Library workflow and Operations previously loaded every current run's full evidence and re-evaluated approvals, including legacy metadata projection. Book details could probe sources and update durations; cover GETs could extract artwork and fetch providers. These reads now return compact saved SQLite summaries and existing local assets. HTTP GET/HEAD cannot project old identification evidence. Resolver projections are stored in SQLite instead of a global in-memory cache. Run iteration and review formatting load one run at a time, and startup reconciliation runs on the background worker.
+
+The old service repeatedly hit OOM limits (about 25 GB memory and 47 GB swap peak). Captured eight queued entries plus the active run and verified all nine durable records before restart. Every entry remains queued, active or advanced to review after recovery. Live timings after deployment: health 6 ms, books 144 ms, Library workflow 30 ms, cover index 162 ms, Operations 152 ms, identification queue 279 ms, source summary 9 ms and book details 11 ms. Python resident memory measured about 164 MiB after these reads; total service memory including background audio work was about 710 MiB. Audit snapshots are under gitignored `data/server-read-audit-20261103/`.
+
+Validation: full unit suite 668 passed at 95.52% coverage; 48 focused tests also cover two subsequently added saved-probe/bounded-log cases. All 21 integration tests and 91 web tests passed, with web coverage gate, production build, Ruff and whitespace checks. File SHA-256 values already exist in SQLite inventory JSON. A normalized content/location index for reuse after moves is documented as future work, not implemented by this timeout fix.
+
+## 2026-11-03: 45 fragments, three works and stale duration headers
+
+Read-only inventory and decoding confirm 16 Summer's Lease parts, 23 Reborn on the Run parts plus a five-minute preview, and five Ego Is the Enemy byte chunks. Grouping version 4 unites them into three work groups, preserving the preview and all source hashes. Ego's decoded chunks total 6:56:18 instead of the erroneous 12:19:57 header-based sum. Diagnosed header/decoder faults now force encoding regardless of mono/bitrate/loudness, with original evidence and corrected timing retained in plans. No live regrouping or consent writes were made. Bret Easton Ellis (723 files / six groups), Adrian Mole (473 / nine) and Just William (395 / ten) retain identical work boundaries. Details: [fragment audit](fragment-grouping-review-20261103.md).
+
+Validation: 666 backend unit tests passed, 95.46% coverage; 21 integration tests passed, including real split-VBR encoding with a clean output header. Ruff and whitespace checks passed.
+
+## 2026-11-03: broader lookup and contributor fixes
+
+Resolver version 15 separates slash-joined personal credits, recognises explicit reader labels, guides second-source discovery with an unambiguous first-source hit, and compares inferred authors against the complete title cohort. One source still cannot approve identity. Numeric chapter labels cannot infer unrelated work authors. Read-only replay of 144 current pending reviews finds six distinct eligible works: Build, Losing the Signal, A Far Cry from Kensington, Flying Blind, Now You See Me and The Pyramid of Lies. Two need only current evidence projection; four require improved second-source lookups to be saved by a refresh. Archived Hardcover results and read-only Open Library/cache lookups support the replay; contradictory old candidates were retained. No catalogue/queue writes were made. See [broad identification audit](broad-identification-review-20261103.md).
+
+Validation: 637 backend unit tests passed, 95.42% coverage; Ruff and whitespace checks passed.
+
+## 2026-11-03: revised editions identify the original work
+
+Resolver version 14 uses saved, explicitly attached publication-edition titles as work evidence and ignores numbered edition labels in work comparison. The Pragmatic Programmer (#1864) now passes all nine book checks with two source families, original year 1999 and Addison-Wesley; its complete 20th Anniversary / 2nd Edition title remains the recording clue for the next stage. Source aliases are deduplicated and do not mutate archived provider evidence or count as independent providers. Replay of the 155-review snapshot adds only this eligible book (three to four). Endurance gains an original publisher; The Impossible First remains blocked on contradictory original years, and four other entries gain metadata without becoming eligible. See the [revised-edition audit](identification-review-20261103.md#revised-edition-follow-up-the-pragmatic-programmer).
+
+Validation completed after the earlier approval-review usage-limit interruption: 621 backend unit tests passed, 95.37% coverage; Ruff and whitespace checks passed.
+
+## 2026-11-03: anniversary wording belongs to edition evidence
+
+Expanded the existing numbered-anniversary normalization to plain Anniversary Edition and hyphenated forms, removing empty surrounding brackets for work searches. Original recording titles remain unchanged. Regression tests cover search/provider agreement, original publication year, preserved recording titles, genuine Anniversary titles and retained volume/revision evidence. Resolver version 13 ensures saved evidence uses the current rules. The 155-review replay has no additional work/recording measurement changes or newly eligible books from this adjustment.
+
+Validation: 613 backend unit tests passed, 95.35% coverage; Ruff and whitespace checks passed.
+
+## 2026-11-03: conservative omitted-initial book identification
+
+Follow-up after pulling main: the first stage targets the original work rather than requiring an exact edition. Resolver version 12 treats explicitly attached Open Library editions as evidence that alternate/translated subtitles belong to one work, preserving distinct unlinked works and volume numbers. Endurance (#371) newly passes all nine book checks with original year 1959; Hitch-22 gains source agreement but remains blocked by its local identity conflict. The 155-review replay changes only those two work results, taking eligibility from two to three. Automatic audiobook/quality approval remains separate and no live approvals were changed. Details: [attached-edition follow-up](identification-review-20261103.md#follow-up-attached-editions-identify-the-original-work).
+
+Follow-up validation: 603 backend unit tests passed, 95.35% coverage; Ruff and whitespace checks passed.
+
+Replayed 155 current pending book reviews (including seven legacy reviews) from saved evidence with read-only SQLite access. Allowing one omitted middle initial with a strong title and exact full first/surname makes only The Player of Games (#429) and Apollo (#851) eligible: both gain Open Library corroboration alongside Hardcover and pass all nine book checks. Official author/NASA/Smithsonian references support these identities. No other pending work result changed. Added competing-initial ambiguity protection, negative name tests, stage-automation regressions and a version-10 saved-review projection test; resolver version is now 11. No live approval records were changed. Details and remaining candidates: [identification-review-20261103.md](identification-review-20261103.md).
+
+Validation: 589 backend unit tests passed, 95.32% coverage; Ruff and whitespace checks passed. The complete suite ran outside the sandbox after reproducing and isolating a sandbox-only stall in an existing HTTP test.
+
 ## 2026-11-01: Library workflow filters and metadata-driven source groups
 
 - Library now hides current/queued workflow entries by default, with counted inclusion checkboxes for Processing, Book identification, Audiobook identification, Quality, Proposed and Finished. Membership covers linked catalogue entries and selected-but-not-started batch items. Hidden workflow selections are cleared, and ingest submission reloads membership.

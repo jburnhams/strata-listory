@@ -1,19 +1,14 @@
 """On-demand listening copies of the selected source; never modify source audio."""
-from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 from pathlib import Path
 import random
 from tempfile import TemporaryDirectory
-from threading import Lock
-from app import oslib, settings
+from app import oslib, settings, read_models
 from app.ingest import pipeline, store
 from app.process import plan, probe
 
 VERSION='listening-v1-lufs20'
-POOL=ThreadPoolExecutor(max_workers=2,thread_name_prefix='listening-preview')
-JOBS={}
-LOCK=Lock()
 
 
 def context(run_id):
@@ -36,7 +31,8 @@ def context(run_id):
 
 
 def status(run_id,ctx=None):
-    folder,_,samples=ctx or context(run_id)
+    if ctx is None:return read_models.get('previews',run_id,dict(samples=[]))
+    folder,_,samples=ctx
     return dict(samples=[dict(s,url=f'/api/ingest/runs/{run_id}/samples/{s["index"]}',status='ready' if (folder/f'{s["index"]}.mp3').is_file() else 'failed' if (folder/f'{s["index"]}.error').exists() else 'generating') for s in samples])
 
 
@@ -62,21 +58,23 @@ def generate_all(ctx):
 
 
 def prepare(run_id):
-    ctx=context(run_id);folder=ctx[0]
-    with LOCK:
-        # Completed jobs leave no growing in-memory registry; the disk cache
-        # remains the source of truth across restarts and multiple processes.
-        for key in list(JOBS):
-            if JOBS[key].done():del JOBS[key]
-        if folder not in JOBS and any(s['status']!='ready' for s in status(run_id,ctx)['samples']):
-            folder.mkdir(parents=True,exist_ok=True)
-            for p in folder.glob('*.error'):p.unlink(missing_ok=True)
-            JOBS[folder]=POOL.submit(generate_all,ctx)
-    return status(run_id,ctx)
+    """Called only by the shared job worker; no independent thread pool."""
+    ctx=context(run_id)
+    read_models.save('previews',run_id,status(run_id,ctx))
+    generate_all(ctx)
+    result=status(run_id,ctx)
+    read_models.save('preview_path',run_id,str(ctx[0]))
+    read_models.save('previews',run_id,result)
+    return result
 
 
 def audio(run_id,index):
     if index not in range(5):raise ValueError('No such listening sample')
-    ctx=context(run_id);path=ctx[0]/f'{index}.mp3'
+    result=read_models.get('previews',run_id) or {}
+    sample=next((s for s in result.get('samples',[]) if s['index']==index and s['status']=='ready'),None)
+    if not sample:raise ValueError('Listening sample is not ready yet')
+    location=read_models.get('preview_path',run_id)
+    if not location:raise ValueError('Listening sample is not ready yet')
+    path=Path(location)/f'{index}.mp3'
     if not path.is_file():raise ValueError('Listening sample is not ready yet')
     return path

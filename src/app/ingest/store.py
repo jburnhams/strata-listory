@@ -47,10 +47,13 @@ def get(run_id):
 
 
 def runs(limit=50,offset=0):
-    c = db.connect()
-    try: ids = [r[0] for r in c.execute('SELECT id FROM ingest_runs ORDER BY created DESC LIMIT ? OFFSET ?', (max(1, min(limit, 200)),max(0,offset)))]
-    finally: c.close()
-    return [get(i) for i in ids]
+    return [get(i) for i in run_ids(limit,offset)]
+
+
+def run_ids(limit=50,offset=0):
+    c=db.connect()
+    try:return [r[0] for r in c.execute('SELECT id FROM ingest_runs ORDER BY created DESC LIMIT ? OFFSET ?',(max(1,min(limit,200)),max(0,offset)))]
+    finally:c.close()
 
 
 def run_count():
@@ -60,7 +63,8 @@ def run_count():
 
 
 def all_runs():
-    for offset in range(0,run_count(),200):yield from runs(200,offset)
+    for offset in range(0,run_count(),200):
+        for rid in run_ids(200,offset):yield get(rid)
 
 
 def link(run_id, members):
@@ -121,4 +125,101 @@ def review_headers():
                 for field in ('data','metrics','summary'):value[field]=json.loads(value[field])
                 runs[value['run_id']]['events'].append(value)
         return list(runs.values())
+    finally:c.close()
+
+
+def workflow_snapshot(activity=False):
+    """Current membership and small saved stage headers; never deserialize audio/provider evidence."""
+    c=db.connect()
+    try:
+        latest={}
+        for row in c.execute('SELECT m.book_id,m.run_id FROM ingest_members m JOIN ingest_runs r ON r.id=m.run_id ORDER BY r.created DESC'):
+            latest.setdefault(row['book_id'],row['run_id'])
+        runs={};ids=list(dict.fromkeys(latest.values()))
+        for offset in range(0,len(ids),200):
+            batch=ids[offset:offset+200];slots=','.join('?' for _ in batch)
+            for row in c.execute(f'SELECT id,book_id,created,state FROM ingest_runs WHERE id IN ({slots})',batch):
+                runs[row['id']]=dict(row,events=[])
+            # Signatures use event IDs. Only consent records need their small JSON body.
+            for row in c.execute(f"SELECT id,run_id,stage,status,CASE WHEN stage LIKE '%_approval' THEN data ELSE '{{}}' END AS data FROM ingest_events WHERE run_id IN ({slots}) AND status='done' AND id=(SELECT max(newer.id) FROM ingest_events newer WHERE newer.run_id=ingest_events.run_id AND newer.stage=ingest_events.stage AND newer.status='done') ORDER BY id",batch):
+                event=dict(row);event['data']=json.loads(event['data']);runs[event['run_id']]['events'].append(event)
+            if activity:
+                for rid in batch:
+                    run=runs[rid]
+                    for stage,field,expr in (('inventory','primary_id',"json_extract(data,'$.primary_id')"),('metadata','title',"COALESCE(json_extract(data,'$.work.resolved.title'),json_extract(data,'$.resolved.title'))"),('split','children',"json_array_length(data,'$.children')")):
+                        row=c.execute(f"SELECT {expr} FROM ingest_events WHERE run_id=? AND stage=? AND status='done' ORDER BY id DESC LIMIT 1",(rid,stage)).fetchone()
+                        run[field]=row[0] if row else None
+                    events=[dict(r) for r in c.execute("SELECT id,stage,status,created,elapsed,error,CASE WHEN status='progress' THEN json_extract(data,'$.message') END AS message FROM ingest_events WHERE run_id=? ORDER BY id DESC LIMIT 12",(rid,))][::-1]
+                    for event in events:event['data']=dict(message=event.pop('message'))
+                    run['activity']=events
+                    if events:
+                        start=c.execute("SELECT created FROM ingest_events WHERE run_id=? AND stage=? AND status='running' ORDER BY id DESC LIMIT 1",(rid,events[-1]['stage'])).fetchone()
+                        run['step_started']=start[0] if start else events[-1]['created']
+                    failure=c.execute("SELECT error FROM ingest_events WHERE run_id=? AND status='failed' ORDER BY id DESC LIMIT 1",(rid,)).fetchone()
+                    run['error']=failure[0] if failure else ''
+        plans=[dict(r) for r in c.execute('SELECT book_id,state FROM process_plan')]
+        processed=[dict(r) for r in c.execute('SELECT book_id FROM processed')]
+        return dict(latest=latest,runs=runs,plans=plans,processed=processed)
+    finally:c.close()
+
+
+def run_book_id(run_id):
+    c=db.connect()
+    try:
+        row=c.execute('SELECT book_id FROM ingest_runs WHERE id=?',(run_id,)).fetchone()
+        if row is None:raise ValueError('no such ingest run')
+        return row[0]
+    finally:c.close()
+
+
+def source_summary(book_id):
+    """Extract only source names/count from the latest saved inventory."""
+    rid=latest_id(book_id)
+    if not rid:return None
+    c=db.connect()
+    try:
+        row=c.execute("""SELECT json_extract(data,'$.root') AS root,json_array_length(data,'$.files') AS count,
+            json_extract(data,'$.files[0].path') AS first,json_extract(data,'$.files[1].path') AS second,
+            json_extract(data,'$.files[2].path') AS third,json_extract(data,'$.work_hint.grouping_notes') AS notes
+            FROM ingest_events WHERE run_id=? AND stage='inventory' AND status='done' ORDER BY id DESC LIMIT 1""",(rid,)).fetchone()
+        return dict(root=row['root'],count=row['count'],paths=[row[k] for k in ('first','second','third') if row[k]],grouping=json.loads(row['notes'] or '[]')) if row else None
+    finally:c.close()
+
+
+def projection_get(key):
+    c=db.connect()
+    try:
+        row=c.execute('SELECT body FROM match_cache WHERE key=?',(key,)).fetchone()
+        return json.loads(row[0]) if row else None
+    finally:c.close()
+
+
+def projection_save(key,value):
+    c=db.connect()
+    try:
+        with c:c.execute('INSERT OR REPLACE INTO match_cache(key,fetched,body) VALUES (?,?,?)',(key,now(),json.dumps(value,allow_nan=False)))
+    finally:c.close()
+
+
+def run_summary(run_id):
+    """Explicit evidence view uses event headers; provider/audio payloads remain archived."""
+    c=db.connect()
+    try:
+        row=c.execute('SELECT id,book_id,created,state FROM ingest_runs WHERE id=?',(run_id,)).fetchone()
+        if row is None:raise ValueError('no such ingest run')
+        events=[dict(e) for e in c.execute('SELECT id,stage,status,created,elapsed,error,metrics FROM ingest_events WHERE run_id=? ORDER BY id DESC LIMIT 100',(run_id,))][::-1]
+        for event in events:event['metrics']=json.loads(event['metrics'])
+        return dict(row,events=events)
+    finally:c.close()
+
+
+def page_headers(limit=50,offset=0):
+    c=db.connect()
+    try:return [dict(r,events=[]) for r in c.execute('SELECT r.id,r.book_id,r.created,r.state,b.title FROM ingest_runs r JOIN books b ON b.id=r.book_id ORDER BY r.created DESC LIMIT ? OFFSET ?',(max(1,min(limit,200)),max(0,offset)))]
+    finally:c.close()
+
+
+def plan_exists(book_id):
+    c=db.connect()
+    try:return c.execute('SELECT 1 FROM process_plan WHERE book_id=?',(book_id,)).fetchone() is not None
     finally:c.close()
