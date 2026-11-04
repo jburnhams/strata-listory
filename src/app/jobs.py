@@ -125,7 +125,7 @@ class JobQueue:
                     AND ((j.domain='ingest' AND j.kind='match_review' AND ?<1)
                         OR (NOT (j.domain='ingest' AND j.kind='match_review') AND ?<?))
                     AND NOT EXISTS (SELECT 1 FROM jobs active,json_each(active.resources) a,json_each(j.resources) b WHERE active.state='running' AND a.value=b.value)
-                    ORDER BY CASE WHEN j.domain='ingest' AND j.kind='match_review' THEN 0 ELSE 1 END,j.created,j.id LIMIT 1""",(active[0],active[1],self.workers)).fetchone()
+                    ORDER BY CASE WHEN j.domain='ingest' AND j.kind='match_review' THEN 0 WHEN j.domain='system' AND j.kind='training_features' THEN 2 ELSE 1 END,j.created,j.id LIMIT 1""",(active[0],active[1],self.workers)).fetchone()
                 if row is None:return None
                 c.execute("UPDATE jobs SET state='running',started=?,owner_pid=? WHERE id=?",(now(),os.getpid(),row['id']))
         finally:c.close()

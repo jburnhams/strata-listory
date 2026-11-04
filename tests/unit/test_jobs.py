@@ -346,3 +346,12 @@ def test_training_feature_cache_work_does_not_lock_out_same_book_review():
     c.close()
     review=q.submit('ingest','match_review',book_id=15,action='confirm')
     assert q.run_one() and q.get(review)['state']=='done'
+
+
+def test_background_training_backfill_yields_to_requested_ingest_work():
+    q=JobQueue(lambda *args:dict(saved=True),workers=1)
+    cache=q.submit('system','training_features',run_id='old',revision=1)
+    requested=q.submit('ingest','run',ids=[25])
+    assert q.run_one() and q.get(requested)['state']=='done'
+    assert q.get(cache)['state']=='queued'
+    assert q.run_one() and q.get(cache)['state']=='done'

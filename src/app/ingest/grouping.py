@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 from app import contributors, matcher, merge, scan
 
-VERSION=7
+VERSION=8
 GENERIC={'','audio','audiobook','audiobooks','book','books','unknown','unknown album','untitled'}
 
 DISC_LABEL=re.compile(r'\b(?:cd|disc|disk)\s*[._-]*\s*(\d+)(?:\s*(?:of|o|/)\s*(\d+))?\b',re.I)
@@ -84,13 +84,17 @@ def title_hint(value):
     return text
 
 
-def folder_hint(path,root):
-    parent=Path(path).parent;root=Path(root)
+def folder_identity(path):
+    parent=Path(path).parent
     while parent!=parent.parent and (scan.DISC.search(parent.name) or merge.norm(parent.name) in GENERIC):parent=parent.parent
-    return title_hint(scan.parse_name(parent.name)['title'])
+    return dict(scan.parse_name(parent.name),path=str(parent))
 
 
-CODED=re.compile(r'^([A-Za-z]{2,12})[._ -]?(\d{2,5})[._ -]+.+$')
+def folder_hint(path,root):
+    return title_hint(folder_identity(path)['title'])
+
+
+CODED=re.compile(r'^([A-Za-z]{2,12})[._ -]*(\d{2,5})[._ -]+.+$')
 
 
 def coded_parts(paths):
@@ -237,6 +241,8 @@ def partition(files,root):
             use_title=True;conflict=False
         anthology=anthologies.get(h['file']['path'])
         author=anthology['author'] if anthology else h['author'] or (part or {}).get('author','')
+        folder=folder_identity(path)
+        if not anthology and not author and matcher.norm(title_hint(folder['title']))==matcher.norm(title):author=folder['author']
         if author and merge.norm(author) in merge.norm(title):author=''
         key=matcher.norm(title);who=contributors.name_key(author)
         matching=[g for g in groups if g['key']==key and (sequence and sequence['shared'] and g.get('shared_parent')==str(path.parent.parent) or not who or not g['author'] or any(contributors.same_author(a,b,True) for a in contributors.authors(author) for b in contributors.authors(g['author'])))]

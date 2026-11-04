@@ -349,3 +349,30 @@ def test_mixed_disc_labels_make_one_ordered_recording_without_changing_track_tag
     # The total still catches a missing disc rather than splitting the book.
     [incomplete]=I.represent([f for f in files if '/CD04/' not in f['path']])
     assert incomplete['missing_tracks']==1
+
+
+@pytest.mark.parametrize('author,title',[('Mara K. Vale','Winter Harbour'),('Leon Brooks','The Ascent')])
+def test_explicit_folder_author_survives_untagged_disc_tracks(author,title):
+    root=f'/books/{author} - {title}'
+    files=[file(f'{root}/CD {disc}/{n:02} Track {n:02}.mp3',title=f'Track {n:02}',track=f'{n}/2') for disc in (1,2) for n in (1,2)]
+    [group]=G.partition(files,root)
+    assert (group['title'],group['author'])==(title,author)
+    identity,metrics=I.recover(dict(title=title,author=author,asin='',locked=[]),dict(root=root,files=files,sidecars=[],work_hint=group))
+    assert identity['book']['author']==author and metrics['identity.conflicts']==0
+    assert dict(source='folder',path=root,title=title,author=author) in identity['evidence']
+
+
+def test_blank_group_credit_preserves_same_work_author_but_not_collection_author():
+    inv=dict(root='/books/Novel',files=[file('/books/Novel/01.mp3')],sidecars=[],work_hint=dict(title='Novel',author=''))
+    book=dict(title='Novel',author='Known Writer',asin='',locked=[])
+    assert I.recover(book,inv)[0]['book']['author']=='Known Writer'
+    assert I.recover(dict(book,title='Collection'),inv)[0]['book']['author']==''
+
+
+def test_folder_author_conflict_is_visible_in_identity_gate():
+    root='/books/Local Writer - Novel'
+    files=[file(root+'/01.mp3','Novel','Other Writer')]
+    [group]=G.partition(files,root)
+    identity,metrics=I.recover(dict(title='Novel',author='Local Writer',asin='',locked=[]),dict(root=root,files=files,sidecars=[],work_hint=group))
+    assert identity['book']['author']=='Other Writer' and metrics['identity.conflicts']==1
+    assert any(e['source']=='folder' and e['author']=='Local Writer' for e in identity['evidence'])
