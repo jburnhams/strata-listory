@@ -42,6 +42,8 @@ def filter_chain(plan: dict, ch: dict, rate: int) -> str:
 
 
 def build_chapter(book: dict, plan: dict, ch: dict, n: int, out_path: str, cover: str | None):
+    damaged={f['path'] for f in plan.get('source_diagnostics',[]) if f.get('requires_reencode')}
+    if ch['mode']=='copy' and any(p in damaged for p,_,_ in ch['segments']):raise probe.ToolError('source requires re-encoding; rebuild this processing plan')
     with tempfile.TemporaryDirectory() as td:
         cmd = ['ffmpeg', '-hide_banner', '-v', 'error', '-y', *probe.input_args([tuple(s) for s in ch['segments']], td)]
         if cover: cmd += ['-i', cover]
@@ -118,6 +120,8 @@ def execute(book: dict, plan: dict, force: bool = False) -> dict:
         if os.path.exists(out_dir):
             old = out_dir + '.old'; shutil.rmtree(old, ignore_errors=True); os.replace(out_dir, old); os.replace(partial, out_dir); shutil.rmtree(old, ignore_errors=True)
         else: os.makedirs(os.path.dirname(out_dir), exist_ok=True); os.replace(partial, out_dir)
+        from app import read_models
+        with open(os.path.join(out_dir,'metadata.json'),encoding='utf8') as f:read_models.save('output',book['id'],json.load(f))
         return summary
     except BaseException:
         shutil.rmtree(partial, ignore_errors=True); raise

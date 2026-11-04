@@ -3,9 +3,10 @@ import re
 from difflib import SequenceMatcher
 from app import merge
 
-ROLES = r'foreword|introduction|afterword|translator|translation|editor|illustrator'
+ROLES = r'forewords?|introductions?|afterwords?|translator|translation|editor|illustrator|narrator|reader'
 SUFFIX = re.compile(rf'^(.*?)\s*(?:\s[-–—]\s*({ROLES})|\(({ROLES})\))\s*$', re.I)
 PREFIX = re.compile(rf'^({ROLES})\s+by\s+(.+)$', re.I)
+READ_BY = re.compile(r'^(?:narrated|read)\s+by\s*:?\s+(.+)$', re.I)
 
 
 def name_key(value):
@@ -38,9 +39,20 @@ def same_person(a,b):
     return all(given(x,y) for x,y in zip(a[:-1],b[:-1]))
 
 
+def omitted_middle_initial(a,b):
+    """Only one initial may be missing; both full outer names must be exact."""
+    a=name_key(a).split();b=name_key(b).split()
+    if sorted((len(a),len(b)))==[2,3]:
+        short,long=sorted((a,b),key=len)
+        if min(map(len,short))>1 and short==[long[0],long[-1]] and len(long[1])==1 and long[1].isalpha():return True
+    return False
+
+
 def same_author(a,b,strong_title=False):
     """A strong book-title match supplies context absent from a bare person name."""
     if same_person(a,b):return True
+    # Do not combine an omitted initial with spelling changes or nicknames.
+    if strong_title and omitted_middle_initial(a,b):return True
     a=name_key(a).split();b=name_key(b).split()
     if not strong_title or len(a)<2 or len(a)!=len(b) or a[1:]!=b[1:]:return False
     x,y=a[0],b[0]
@@ -49,13 +61,17 @@ def same_author(a,b,strong_title=False):
 
 def parse(value):
     values = re.split(r'\s*(?:,|;|&|\band\b)\s*', value or '') if isinstance(value, str) else [part for credit in value or [] for part in re.split(r'\s*(?:;|&|\band\b)\s*',credit)]
+    # Some audiobook artist tags join a writer and reader with '/'. Retain both
+    # credits; only corroborating providers decide the primary work authors.
+    values=[part for credit in values for part in (credit.split('/') if '://' not in credit and all(len(name_key(p).split())>=2 for p in credit.split('/')) else [credit])]
     out = []
     for raw in values:
         raw = raw.strip()
         if not raw: continue
+        if narrator := READ_BY.match(raw):out.append(dict(name=narrator[1].strip(),role='narrator'));continue
         suffix = SUFFIX.match(raw); prefix = PREFIX.match(raw)
         name, role = (suffix[1].strip(), (suffix[2] or suffix[3]).lower()) if suffix else (prefix[2].strip(), prefix[1].lower()) if prefix else (raw, 'author')
-        if name: out.append(dict(name=name, role='translator' if role == 'translation' else role))
+        if name: out.append(dict(name=name, role='translator' if role == 'translation' else role.rstrip('s') if role in ('forewords','introductions','afterwords') else role))
     return out
 
 

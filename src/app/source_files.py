@@ -1,23 +1,17 @@
-"""Small source-location summaries without probing or decoding audio."""
+"""Saved source-location summaries, without touching the source filesystem."""
 from pathlib import Path
-from app import details, fs, scan
-from app.ingest import pipeline, store
+from app import scan
+from app.ingest import store
 
 
 def describe(book):
     path=book.get('path') or ''
     if not path:return dict(folder='',files=[],count=0,available=False)
-    run=store.latest(book['id']);inv=pipeline.stage_data(run,'inventory') if run else None
-    if inv:
-        root=Path(inv['root']);folder=root.parent if root.suffix.lower() in scan.AUDIO else root
-        paths=[Path(f['path']) for f in inv['files']]
-    else:
-        root=Path(path);folder=root.parent if root.suffix.lower() in scan.AUDIO else root
-        if not fs.reachable(path):return dict(folder=str(folder),files=[],count=book.get('file_count'),available=False)
-        try:paths=[Path(p) for p in details.audio_files(path)]
-        except OSError:return dict(folder=str(folder),files=[],count=book.get('file_count'),available=False)
-    names=[str(p.relative_to(folder)) for p in paths[:3]]
-    result=dict(folder=str(folder),files=names,count=len(paths),available=True)
-    notes=(inv.get('work_hint') or {}).get('grouping_notes',[]) if inv else []
-    if notes:result['grouping']=notes
+    inv=store.source_summary(book['id'])
+    root=Path(inv['root'] if inv and inv['root'] else path)
+    folder=root.parent if root.suffix.lower() in scan.AUDIO else root
+    paths=[Path(p) for p in inv['paths']] if inv else []
+    names=[str(p.relative_to(folder)) if p.is_relative_to(folder) else str(p) for p in paths]
+    result=dict(folder=str(folder),files=names,count=inv['count'] if inv else book.get('file_count'),available=bool(inv))
+    if inv and inv['grouping']:result['grouping']=inv['grouping']
     return result

@@ -2,6 +2,8 @@
 
 A book is a dict: id, title, author, narrator, series, series_position, duration_seconds, path (where the audio lives, optional), status (one of STATUSES), added (UTC ISO time); from scanning also asin, kind (KINDS), review (REVIEWS), file_count, and while matching suggestion (see matcher.py) and match_score."""
 import json, os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 
 from app import db, mirror, scan
@@ -64,9 +66,22 @@ def _one(c, book_id):
     return _row(r)
 
 
+_MIRROR_QUEUE=ContextVar('catalogue_mirror_queue',default=None)
+
+
+@contextmanager
+def deferred_mirrors(submit):
+    token=_MIRROR_QUEUE.set(submit)
+    try:yield
+    finally:_MIRROR_QUEUE.reset(token)
+
+
 def _mirrored(book: dict) -> dict:
     """Keep the on-disk mirror (mirror.py) current for books that are part of the catalogue proper (not just scanned); never fails the change."""
-    if book['review'] == 'confirmed': mirror.forget_missing_cover(book); mirror.write(book)
+    if book['review'] == 'confirmed':
+        submit=_MIRROR_QUEUE.get()
+        if submit:submit(book['id'])
+        else:mirror.forget_missing_cover(book);mirror.write(book)
     return book
 
 
@@ -256,6 +271,13 @@ def processed_summary() -> dict:
 PLAN_STATES = ('planning', 'proposed', 'approved', 'rejected', 'running', 'done', 'failed')       # the processing queue: a plan is proposed, a person approves or rejects it, only approved plans run
 
 
+def _save_plan_summary(c,book_id,plan):
+    from app.process.queue import summary
+    try:value=summary(plan) if plan else None
+    except KeyError:value=None
+    c.execute('INSERT OR REPLACE INTO read_models(kind,owner,data,updated) VALUES (?,?,?,?)',('plan',str(book_id),json.dumps(value),datetime.now(timezone.utc).isoformat()))
+
+
 def set_plan(book_id: int, state: str, plan: dict | None = None, error: str = '', keep_plan: bool = False):
     """Create or update a book's processing proposal. `keep_plan` changes only the state (and error)."""
     if state not in PLAN_STATES: raise CatalogueError(f'state must be one of {", ".join(PLAN_STATES)}')
@@ -267,6 +289,7 @@ def set_plan(book_id: int, state: str, plan: dict | None = None, error: str = ''
                 c.execute('UPDATE process_plan SET state=?, error=?, updated=? WHERE book_id=?', (state, error, now, book_id))
             else:
                 c.execute('INSERT OR REPLACE INTO process_plan (book_id, state, plan, error, created, updated) VALUES (?, ?, ?, ?, COALESCE((SELECT created FROM process_plan WHERE book_id=?), ?), ?)', (book_id, state, json.dumps(plan) if plan is not None else None, error, book_id, now, now))
+                _save_plan_summary(c,book_id,plan)
     finally: c.close()
 
 
@@ -331,5 +354,6 @@ def enqueue_ingest_plan(book_id,members,plan):
             if c.execute("SELECT 1 FROM processed WHERE book_id=? AND status='done'",(bid,)).fetchone():raise CatalogueError('group already processed')
         now=datetime.now(timezone.utc).isoformat()
         c.execute('INSERT INTO process_plan(book_id,state,plan,error,created,updated) VALUES (?,?,?,?,?,?)',(book_id,'proposed',json.dumps(plan),'',now,now))
+        _save_plan_summary(c,book_id,plan)
         c.commit()
     finally:c.close()

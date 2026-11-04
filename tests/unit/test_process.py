@@ -35,6 +35,78 @@ def test_parsers():
     assert sorted(['10 b', '2 a', '1 c'], key=probe.natural_key) == ['1 c', '2 a', '10 b']
 
 
+def test_split_mp3_duration_uses_sample_count_and_keeps_only_decoder_diagnostics(monkeypatch):
+    calls=[]
+    def run(cmd,timeout):
+        calls.append((cmd,timeout))
+        return subprocess.CompletedProcess(cmd,0,'out_time_us=0\nprogress=continue\nout_time_us=12000000\nprogress=end\n','[info] title: metadata is not a decode error\n[mp3 @ 0x1] [error] Header missing at split boundary\n[Parsed_astats_1 @ 0x2] [info] Number of samples: 600000\n')
+    monkeypatch.setattr(probe,'run',run)
+    assert probe.decoded_duration('split.mp3')==dict(duration=12.5,decode_messages='[mp3 @ 0x1] [error] Header missing at split boundary')
+    assert calls[0][1]==900 and 'aresample=48000' in calls[0][0][calls[0][0].index('-af')+1] and calls[0][0][calls[0][0].index('-i')+1]=='split.mp3'
+
+
+@pytest.mark.parametrize('code,stdout,samples',[(1,'progress=end','48000'),(0,'progress=continue','48000'),(0,'progress=end','N/A'),(0,'progress=end','0')])
+def test_incomplete_or_invalid_decoded_duration_fails_closed(monkeypatch,code,stdout,samples):
+    monkeypatch.setattr(probe,'run',lambda *a:subprocess.CompletedProcess(a[0],code,stdout,f'[Parsed_astats_1 @ 0x2] [info] Number of samples: {samples}'))
+    with pytest.raises(probe.ToolError,match='cannot measure decoded duration'):probe.decoded_duration('split.mp3')
+
+
+@pytest.mark.parametrize('diagnostic,decoded,damaged',[
+    ('filesize and duration do not match (growing file?)',60,True),
+    ('Estimating duration from bitrate, this may be inaccurate',30,True),
+    ('Estimating duration from bitrate, this may be inaccurate',59.98,False),
+])
+def test_header_diagnostics_measure_duration_and_force_encoding_only_when_damaged(monkeypatch,diagnostic,decoded,damaged):
+    import json
+    raw=dict(format=dict(duration='60'),streams=[dict(codec_type='audio',codec_name='mp3',channels=1,sample_rate='22050',bit_rate='64000')])
+    monkeypatch.setattr(probe,'run',lambda *a:subprocess.CompletedProcess(a[0],0,json.dumps(raw),diagnostic))
+    monkeypatch.setattr(probe,'decoded_duration',lambda path:dict(duration=decoded,decode_messages=''))
+    info=probe.probe_file('source.mp3')
+    assert info['duration']==decoded and info['reported_duration']==60 and info['requires_reencode']==damaged
+    assert P.copyable([('source.mp3',0,None)],{'source.mp3':info})==(not damaged)
+
+
+def test_decoder_errors_require_encoding_even_when_reported_duration_is_close():
+    info=dict(path='source.mp3',duration=60,codec='mp3',channels=1,bit_rate=64,sample_rate=22050)
+    measured=probe.apply_decoded_duration(info,dict(duration=60,decode_messages='Header missing'))
+    assert measured['requires_reencode'] and measured['duration_decode_messages']=='Header missing'
+    assert not P.copyable([('source.mp3',0,None)],{'source.mp3':measured})
+
+
+def test_long_book_cannot_hide_a_bad_header_behind_a_percentage_tolerance():
+    info=dict(path='long.mp3',duration=36000,codec='mp3',channels=1,bit_rate=64,sample_rate=22050)
+    measured=probe.apply_decoded_duration(info,dict(duration=35999,decode_messages=''))
+    assert measured['requires_reencode'] and not P.copyable([('long.mp3',0,None)],{'long.mp3':measured})
+
+
+def test_damaged_source_is_encoded_despite_copy_eligibility_and_normal_loudness(tmp_path,monkeypatch):
+    src=tmp_path/'source.mp3';src.write_bytes(b'source');book=catalogue.add_book(title='Example',author='Writer',path=str(src))
+    info=dict(path=str(src),duration=60,reported_duration=600,codec='mp3',channels=1,sample_rate=22050,bit_rate=64,chapters=[],tags={},requires_reencode=True,reencode_reasons=['Bad duration header'])
+    monkeypatch.setattr(probe,'probe_file',lambda path:info)
+    monkeypatch.setattr(probe,'spectrum',lambda *a:dict(hf_db=-40,pause_frac=.2))
+    measurements=dict(I=-18,TP=-6,LRA=3,silences=[],peak_p99=-8)
+    plan=P.make_plan(book,str(tmp_path/'final'),measurements=measurements)
+    assert plan['duration']==60 and all(c['mode']=='encode' for c in plan['chapters'])
+    assert plan['loudness']['apply_db']==0
+    [diagnostic]=plan['source_diagnostics']
+    assert diagnostic['path']==str(src) and diagnostic['requires_reencode']
+    assert diagnostic['reasons']==['Bad duration header'] and diagnostic['reported_duration']==600 and diagnostic['decoded_duration']==60
+    assert any('Bad duration header' in a for a in plan['advisories'])
+    # Verified ingest measurements survive planning rather than being replaced
+    # by a fresh read of the damaged header.
+    monkeypatch.setattr(probe,'probe_file',lambda path:pytest.fail('verified source facts should be reused'))
+    same=P.make_plan(book,str(tmp_path/'other'),input_paths=[str(src)],input_facts=[info],measurements=measurements)
+    assert same['duration']==60 and same['source_diagnostics']==plan['source_diagnostics']
+    with pytest.raises(probe.ToolError,match='source facts must match'):P.make_plan(book,str(tmp_path/'other'),input_paths=[str(src)],input_facts=[],measurements=measurements)
+
+
+def test_execution_refuses_to_copy_a_source_diagnosed_with_a_bad_header(tmp_path):
+    plan=dict(source_diagnostics=[dict(path='source.mp3',requires_reencode=True)])
+    chapter=dict(mode='copy',segments=[('source.mp3',0,None)])
+    with pytest.raises(probe.ToolError,match='requires re-encoding'):R.build_chapter({},plan,chapter,1,str(tmp_path/'out.mp3'),None)
+    assert not (tmp_path/'out.mp3').exists()
+
+
 def test_input_args_single_and_concat(tmp_path):
     assert probe.input_args([('/a.mp3', 0.0, None)], str(tmp_path)) == ['-i', '/a.mp3']
     assert probe.input_args([('/a.mp3', 5.0, 15.0)], str(tmp_path)) == ['-ss', '5.000', '-t', '10.000', '-i', '/a.mp3']

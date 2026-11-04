@@ -1,5 +1,4 @@
 """Listening preview selection, caching, freshness and failure boundaries."""
-from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
@@ -17,31 +16,29 @@ def preview(tmp_path):
     return rid,path
 
 
-def test_preview_positions_are_stable_distributed_and_do_not_decode(preview,monkeypatch):
+def test_preview_positions_are_stable_and_reads_do_not_inspect_source(preview,monkeypatch):
     rid,path=preview
     monkeypatch.setattr(V.probe,'run',lambda *a:pytest.fail('listing must not decode'))
-    a=V.status(rid);assert a==V.status(rid)
-    assert len(a['samples'])==5 and all(s['status']=='generating' for s in a['samples'])
-    assert all(i*200<=s['start_seconds']<=i*200+200-30 for i,s in enumerate(a['samples']))
+    assert V.status(rid)==dict(samples=[])
+    ctx=V.context(rid);a=V.status(rid,ctx)
+    assert a==V.status(rid,ctx) and len(a['samples'])==5
+    assert all(i*200<=s['start_seconds']<=i*200+170 for i,s in enumerate(a['samples']))
     assert not (Path(settings.data_dir())/'listening-previews').exists()
     path.write_bytes(b'changed')
-    with pytest.raises(ValueError,match='changed'):V.status(rid)
+    with pytest.raises(ValueError,match='changed'):V.context(rid)
     with pytest.raises(ValueError,match='No such'):V.audio(rid,-1)
-    with pytest.raises(ValueError,match='not ready'):V.status(store.create(1,{}))
+    with pytest.raises(ValueError,match='not ready'):V.context(store.create(1,{}))
 
 
-def test_prepare_is_nonblocking_deduplicated_and_retries_failures(preview,monkeypatch):
-    rid,_=preview;calls=[];future=Future()
-    def submit(fn,ctx):calls.append((fn,ctx));return future
-    monkeypatch.setattr(V,'POOL',SimpleNamespace(submit=submit));monkeypatch.setattr(V,'JOBS',{})
-    assert all(s['status']=='generating' for s in V.prepare(rid)['samples'])
-    V.prepare(rid);assert len(calls)==1
-    with pytest.raises(ValueError,match='not ready'):V.audio(rid,0)
+def test_worker_preparation_records_failures_and_retries(preview,monkeypatch):
+    rid,_=preview
     monkeypatch.setattr(V.probe,'run',lambda *args:SimpleNamespace(returncode=1))
-    calls[0][0](calls[0][1]);future.set_result(None)
-    assert all(s['status']=='failed' for s in V.status(rid)['samples'])
-    V.prepare(rid);assert len(calls)==2
-    assert all(s['status']=='generating' for s in V.status(rid)['samples'])
+    assert all(s['status']=='failed' for s in V.prepare(rid)['samples'])
+    def encode(cmd,timeout):Path(cmd[-1]).write_bytes(b'mp3');return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(V.probe,'run',encode)
+    assert all(s['status']=='ready' for s in V.prepare(rid)['samples'])
+    monkeypatch.setattr(V,'context',lambda *a:pytest.fail('GET must not stat or load source evidence'))
+    assert len(V.status(rid)['samples'])==5 and V.audio(rid,0).read_bytes()==b'mp3'
 
 
 def test_preview_normalizes_and_caches_atomically(preview,monkeypatch):
@@ -49,14 +46,11 @@ def test_preview_normalizes_and_caches_atomically(preview,monkeypatch):
     def encode(cmd,timeout):
         calls.append(cmd);Path(cmd[-1]).write_bytes(b'mp3');return SimpleNamespace(returncode=0)
     monkeypatch.setattr(V.probe,'run',encode)
-    ctx=V.context(rid);V.generate_all(ctx)
+    V.prepare(rid)
     assert len(calls)==5 and all('loudnorm=I=-20:TP=-1.5:LRA=11' in c for c in calls)
     assert all(s['status']=='ready' for s in V.status(rid)['samples'])
-    V.generate_all(ctx);assert len(calls)==5
+    V.prepare(rid);assert len(calls)==5
     assert V.audio(rid,0).read_bytes()==b'mp3'
-    monkeypatch.setattr(V,'JOBS',{})
-    monkeypatch.setattr(V,'POOL',SimpleNamespace(submit=lambda *a:pytest.fail('cached previews must not queue')))
-    assert all(s['status']=='ready' for s in V.prepare(rid)['samples'])
 
 
 @pytest.mark.parametrize('failure',[V.probe.ToolError('timeout'),OSError('disk'),None])

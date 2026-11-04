@@ -91,3 +91,19 @@ def test_an_unreachable_backup_folder_falls_back_to_the_local_one_and_never_stop
     assert [b['path'] for b in backup.list_backups()] == [p]                                                # and is still listed and restorable
     monkeypatch.setattr(db, '_checked', set()); monkeypatch.setattr(backup, 'maybe_backup', lambda: (_ for _ in ()).throw(OSError('Host is down')))
     assert [b['title'] for b in catalogue.list_books()] == ['Dune']                                          # opening the database survives a failing backup
+
+
+def test_queue_resource_migration_preserves_existing_schema_nine_jobs():
+    import sqlite3
+    from app import db
+    c=sqlite3.connect(db.path())
+    for migration in db.SCHEMA[:9]:c.executescript(migration)
+    c.execute('PRAGMA user_version=9')
+    c.execute("INSERT INTO jobs(id,domain,kind,options,dedupe,state,created,owner_pid) VALUES ('saved','ingest','restore','{}','saved','queued','now',123)")
+    c.commit();c.close()
+    c=db.connect()
+    try:
+        row=c.execute("SELECT state,owner_pid,resources FROM jobs WHERE id='saved'").fetchone()
+        assert tuple(row)==('queued',123,'[]')
+        assert c.execute('PRAGMA user_version').fetchone()[0]==len(db.SCHEMA)
+    finally:c.close()

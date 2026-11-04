@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app import catalogue, db, details, providers, sources
+from app import catalogue, contributors, db, details, providers, sources
 from app.ingest import audio, inventory as I, metadata as M, pipeline as P, policy, store
 from app.ingest.observe import capture
 from app.ingest.worker import Worker
@@ -342,6 +342,77 @@ def test_numbered_filenames_do_not_combine_distinct_titles_or_whole_copies(book,
     # Distinct sibling titles prevent expanding a loose file to this folder.
     single,_=I.discover(part)
     assert single['root']==part['path'] and len(single['files'])==1
+
+
+@pytest.mark.parametrize('style',['total','counter','bytes'])
+def test_reingesting_one_legacy_fragment_reunites_members_without_reusing_approvals(book,monkeypatch,style):
+    from app.ingest import grouping as G
+    root=Path(book['path']).parent/'Example';root.mkdir();count=5 if style=='bytes' else 3
+    names=[f'Writer Person - Example {n:02} of 3.mp3' if style=='total' else f'1 ({n}).mp3' if style=='counter' else f'Example {n}.mp3' for n in range(1,count+1)]
+    if style=='counter':names.append('Example by Writer Person - Listen Online.mp3')
+    paths=[root/name for name in names]
+    for i,path in enumerate(paths):path.write_bytes(bytes([65+i])*(6000 if style=='bytes' and i==count-1 else 8192))
+    before={str(p):p.read_bytes() for p in paths}
+    parent=catalogue.add_book(title='Example',path=str(root));aliases=[];old=[];measured=[]
+    original=I.probe.probe_file
+    def probe(path):
+        info=original(path);info.update(tags={},codec='mp3',duration=999)
+        return info
+    monkeypatch.setattr(I.probe,'probe_file',probe)
+    monkeypatch.setattr(I.probe,'decoded_duration',lambda path:(measured.append(path) or dict(duration=10,decode_messages='')))
+    for path in paths:
+        alias=catalogue.add_book(title='Old fragment',path=str(path));aliases.append(alias)
+        catalogue.set_extra(alias['id'],'source_group',dict(version=G.VERSION-1,root=str(root),paths=[str(path)],scope_paths=[str(p) for p in paths]))
+        catalogue.set_extra(alias['id'],'source_group_ref',dict(primary_id=alias['id']))
+        rid=store.create(alias['id'],{});store.event(rid,'metadata_approval','done',data=dict(signature='old fragment consent',automatic=False));store.finish(rid,'metadata_review');old.append(rid)
+    # A batch of all old entries still analyses the repaired work exactly once.
+    runs=P.run([a['id'] for a in aliases]+[parent['id']],limit=len(aliases)+1,online=False)
+    assert len(runs)==1 and runs[0]['state']=='metadata_review'
+    run=runs[0];inv=P.stage_data(run,'inventory')
+    assert inv['primary_id']==parent['id'] and {m['id'] for m in inv['members']}=={parent['id'],*(a['id'] for a in aliases)}
+    assert {f['path'] for f in inv['files']}==set(before)
+    assert sorted(len(r['files']) for r in inv['representations'])==([1,3] if style=='counter' else [count])
+    assert all(store.latest_id(a['id'])==run['id'] for a in aliases)
+    assert all(not P.approval_valid(run,phase) for phase in P.REVIEW_STAGES)
+    assert all(store.get(rid)['state']=='metadata_review' for rid in old)
+    assert all(catalogue.get_extras(a['id'])['source_group_ref']['data']['primary_id']==parent['id'] for a in aliases)
+    if style=='bytes':
+        assert set(measured)==set(before) and inv['representations'][0]['duration']==50
+        assert all(f['probe']['reported_duration']==999 and f['probe']['duration_method']=='decoded audio clock' for f in inv['files'])
+    else:assert measured==[]
+    assert {str(p):p.read_bytes() for p in paths}==before
+
+
+def test_split_mp3_duration_failure_keeps_files_but_blocks_automatic_book_consent(book,monkeypatch):
+    root=Path(book['path']).parent/'Example';root.mkdir()
+    for n,size in enumerate((8192,8192,8192,6000),1):(root/f'Example {n}.mp3').write_bytes(b'a'*size)
+    original=I.probe.probe_file
+    def probe(path):
+        info=original(path);info.update(tags={},codec='mp3');return info
+    monkeypatch.setattr(I.probe,'probe_file',probe)
+    def fail(path):raise I.probe.ToolError('Cannot establish decoded timeline')
+    monkeypatch.setattr(I.probe,'decoded_duration',fail)
+    selected=catalogue.add_book(title='Example',path=str(root))
+    inv,metrics=I.discover(selected)
+    assert len(inv['files'])==4 and metrics['inventory.probe_errors']==4
+    assert all('Cannot establish decoded timeline' in e['error'] for e in inv['errors'])
+
+
+def test_input_change_during_split_duration_measurement_is_reported(book,monkeypatch):
+    root=Path(book['path']).parent/'Example';root.mkdir()
+    for n,size in enumerate((8192,8192,8192,6000),1):(root/f'Example {n}.mp3').write_bytes(b'a'*size)
+    original=I.probe.probe_file
+    def probe(path):
+        info=original(path);info.update(tags={},codec='mp3');return info
+    def measure(path):
+        p=Path(path);p.write_bytes(p.read_bytes()+b'changed')
+        return dict(duration=10,decode_messages='')
+    monkeypatch.setattr(I.probe,'probe_file',probe);monkeypatch.setattr(I.probe,'decoded_duration',measure)
+    selected=catalogue.add_book(title='Example',path=str(root))
+    inv,metrics=I.discover(selected)
+    assert metrics['inventory.probe_errors']==4
+    assert all(e['error']=='input changed during duration measurement' for e in inv['errors'])
+    assert not I.snapshot_unchanged(inv)
 
 
 def test_anniversary_metadata_selects_the_complete_recording_and_links_the_work(book,monkeypatch,tmp_path):
@@ -816,6 +887,58 @@ def test_partial_in_mixed_folder_does_not_pull_in_unrelated_books(book,monkeypat
     assert inv['root']==str(part) and len(inv['files'])==1
 
 
+@pytest.mark.parametrize('unrelated_sibling',[True,False])
+def test_file_track_total_cannot_recursively_inventory_a_library(book,monkeypatch,unrelated_sibling):
+    folder=Path(book['path']).parent;selected=Path(book['path'])
+    nested=folder/'Other Book';nested.mkdir();(nested/'01.mp3').write_bytes(b'unrelated audio');(nested/'other.metadata.json').write_text('invalid JSON must never be read')
+    if unrelated_sibling:(folder/'Unrelated Title.m4b').write_bytes(b'unrelated sibling')
+    original=I.probe.probe_file;seen=[]
+    def probe(path):
+        assert Path(path)==selected
+        seen.append(path);info=original(path);info['tags']['track']='1/20';return info
+    monkeypatch.setattr(I.probe,'probe_file',probe)
+    monkeypatch.setattr(details,'_ffprobe',lambda path:dict(format=dict(tags={})))
+    inv,metrics=I.discover(book)
+    assert {f['path'] for f in inv['files']}=={str(selected)}
+    assert not inv['errors'] and not inv['sidecars'] and metrics['inventory.files']==1
+    assert set(seen)=={str(selected)}
+
+
+@pytest.mark.parametrize('tag',['track','disc'])
+def test_corrupt_uint32_sequence_totals_do_not_allocate_a_range(book,monkeypatch,tag):
+    inv,_=I.discover(book);inv['files'][0]['probe']['tags']={tag:'1/4294967295'}
+    def bounded_range(*args):
+        values=range(*args)
+        assert len(values)<=10000, 'untrusted sequence totals must not expand into a numeric range'
+        return values
+    monkeypatch.setattr(I,'range',bounded_range,raising=False)
+    representations=I.represent(inv['files'])
+    assert len(representations)==1 and representations[0]['missing_tracks']==4294967294
+
+
+def test_missing_sequence_count_ignores_duplicates_zero_and_out_of_range_numbers(book):
+    inv,_=I.discover(book);sample=inv['files'][0];files=[]
+    for i,n in enumerate((0,1,1,3,5)):
+        f=deepcopy(sample);f['path']=str(Path(book['path']).parent/f'part{i}.mp3');f['probe']['tags']=dict(album='Dune',track=f'{n}/4');files.append(f)
+    representation=I.represent(files)[0]
+    assert representation['missing_tracks']==2 and representation['duplicate_tracks']==1
+
+
+def test_selected_byte_split_file_keeps_its_explicit_sibling_family(book,monkeypatch):
+    root=Path(book['path']).parent/'Example';root.mkdir();paths=[]
+    for n in range(1,5):
+        p=root/f'Example {n}.mp3';p.write_bytes(bytes([n])*(6000 if n==4 else 8192));paths.append(p)
+    original=I.probe.probe_file
+    def probe(path):
+        info=original(path);info.update(codec='mp3',tags={},duration=999);return info
+    monkeypatch.setattr(I.probe,'probe_file',probe)
+    monkeypatch.setattr(I.probe,'decoded_duration',lambda path:dict(duration=10,decode_messages=''))
+    chosen=catalogue.add_book(title='Example',path=str(paths[0]))
+    inv,_=I.discover(chosen)
+    assert [f['path'] for f in inv['files']]==[str(p) for p in paths]
+    assert inv['representations'][0]['duration']==40 and not inv['errors']
+
+
 def test_whole_file_and_part_sequence_are_one_group(book):
     folder=Path(book['path']).parent/'Hitchens-Hitch 22';folder.mkdir();whole=folder/'Christopher Hitchens-Hitch-22.m4b';part=folder/'Hitch-22-Part05.mp3';whole.write_bytes(b'whole');part.write_bytes(b'part')
     b=catalogue.add_book(title='Hitch22 part',path=str(part));inv,_=I.discover(b)
@@ -1137,6 +1260,103 @@ def test_shared_author_counts_as_work_agreement_and_preserves_additional_credits
     assert data['providers']['openlibrary']['candidates'][0]['authors']==['Frank Herbert','Additional Credited Person']
 
 
+@pytest.mark.parametrize('author,title,passes',[
+    ('Frank A. Herbert','Dune',True),
+    ('Franc A. Herbert','Dune',False),
+    ('Frank Alan Herbert','Dune',False),
+    ('Frank A. Herbert','Dune: Another Work',True),
+    ('Frank A. Herbert','Another Work',False),
+])
+def test_middle_initial_work_agreement_keeps_approval_gates(pipeline_fakes,monkeypatch,author,title,passes):
+    original=M.collect
+    def collect(*args):
+        data,metrics=original(*args)
+        data['providers']['openlibrary']['candidates'][0].update(authors=[author],title=title)
+        return data,metrics
+    monkeypatch.setattr(M,'collect',collect)
+    value=policy.current();value['auto_approve_metadata']=True;policy.save(value)
+    run=P.run([pipeline_fakes['id']])[0]
+    assert P.review_evaluation(run,'metadata')['eligible']==passes
+    assert run['state']==('audiobook_review' if passes else 'metadata_review')
+    assert P.approval_valid(run,'metadata')==passes
+    assert not P.approval_valid(run,'audiobook') and not P.approval_valid(run,'quality')
+    assert P.stage_data(run,'alignment') is None and catalogue.get_plan(pipeline_fakes['id']) is None
+    meta=P.stage_data(run,'metadata')
+    assert meta['work']['families']==(2 if passes else 1)
+    if passes:assert meta['work']['records']['openlibrary']['authors']==[author]
+
+
+def test_saved_middle_initial_review_is_reprojected_before_automatic_approval(pipeline_fakes,monkeypatch):
+    original=M.collect
+    def collect(*args):
+        data,metrics=original(*args)
+        data['providers']['openlibrary']['candidates'][0]['authors']=['Frank A. Herbert']
+        return data,metrics
+    monkeypatch.setattr(M,'collect',collect)
+    value=policy.current();value['auto_approve_metadata']=True;policy.save(value)
+    with monkeypatch.context() as old:
+        old.setattr(M,'VERSION',10)
+        old.setattr(contributors,'same_author',lambda a,b,strong_title=False:contributors.same_person(a,b))
+        run=P.run([pipeline_fakes['id']])[0]
+        assert run['state']=='metadata_review' and not P.review_evaluation(run,'metadata')['eligible']
+    assert P.raw_stage(store.get(run['id']),'metadata')['version']==10
+    assert P.approve_passing_metadata()==[run['id']]
+    approved=store.get(run['id'])
+    assert P.stage_data(approved,'metadata')['version']==M.VERSION
+    assert P.approval_valid(approved,'metadata')
+    assert not P.approval_valid(approved,'audiobook') and not P.approval_valid(approved,'quality')
+
+
+@pytest.mark.parametrize('local,credit,other,other_title,accepted',[
+    ('Frank Herbert','Frank A. Herbert','Frank B. Herbert','Dune',False),
+    ('Frank A. Herbert','Frank Herbert','Frank B. Herbert','Dune',False),
+    ('Frank A. Herbert','Frank A. Herbert','Frank B. Herbert','Dune',True),
+    ('Frank Herbert','Frank A. Herbert','Frank B. Herbert','Another Work',True),
+    ('Frank Herbert','Frank A. Herbert','Frank A. Herbert','Dune',True),
+])
+def test_omitted_initial_cannot_bridge_competing_authors_of_same_title(local,credit,other,other_title,accepted):
+    book=dict(title='Dune',author=local)
+    found=candidate('openlibrary',title='Dune',authors=[credit])
+    alternative=candidate('hardcover',title=other_title,authors=[other])
+    assert M.compatible_work(book,found,[found,alternative])==accepted
+
+
+def test_competing_middle_initials_do_not_supply_two_independent_work_sources(book):
+    inv,_=I.discover(book);identity,_=I.recover(book,inv)
+    data=dict(providers=dict(
+        hardcover=dict(candidates=[candidate('hardcover',title='Dune',authors=['Frank Herbert'])]),
+        openlibrary=dict(candidates=[candidate('openlibrary',title='Dune',authors=[name]) for name in ('Frank A. Herbert','Frank B. Herbert')]),
+    ))
+    result,metrics=M.resolve(identity,inv,data)
+    assert metrics['metadata.work_families']==1
+    assert set(result['work']['records'])=={'catalogue','hardcover'}
+
+
+@pytest.mark.parametrize('same_work',[True,False])
+def test_attached_edition_subtitles_approve_only_original_work(pipeline_fakes,monkeypatch,same_work):
+    original=M.collect
+    def collect(*args):
+        data,metrics=original(*args)
+        english=data['providers']['openlibrary']['candidates'][0]
+        english.update(subtitle='Desert World',subtitle_edition='/books/OL1M')
+        translated=dict(english,subtitle='Mundo del desierto',subtitle_edition='/books/OL2M',id='/works/OL1W' if same_work else '/works/OL2W')
+        data['providers']['openlibrary']['candidates'].append(translated)
+        return data,metrics
+    monkeypatch.setattr(M,'collect',collect)
+    value=policy.current();value['auto_approve_metadata']=True;policy.save(value)
+    run=P.run([pipeline_fakes['id']])[0]
+    assert P.review_evaluation(run,'metadata')['eligible']==same_work
+    assert run['state']==('audiobook_review' if same_work else 'metadata_review')
+    assert P.approval_valid(run,'metadata')==same_work
+    assert not P.approval_valid(run,'audiobook') and not P.approval_valid(run,'quality')
+    assert P.stage_data(run,'alignment') is None and catalogue.get_plan(pipeline_fakes['id']) is None
+    if same_work:
+        meta=P.stage_data(run,'metadata')
+        assert meta['work']['families']==2
+        assert meta['work']['records']['openlibrary']['title_match']=='main title; linked editions of original work'
+        assert meta['work']['resolved']['year']==1965
+
+
 def test_current_projection_preserves_recording_evidence_when_upgrading_book_rules(pipeline_fakes):
     run=finish_reviews(P.run([pipeline_fakes['id']])[0])
     raw=P.raw_stage(run,'recording');raw['version']=3
@@ -1147,9 +1367,16 @@ def test_current_projection_preserves_recording_evidence_when_upgrading_book_rul
     assert projected['work']==P.raw_stage(run,'metadata')['work']
 
 
-def test_anniversary_book_search_uses_work_title_and_retains_recording_edition(book,monkeypatch,tmp_path):
+@pytest.mark.parametrize('title',[
+    'American Gods 10th Anniversary Edition',
+    'American Gods (Anniversary Edition)',
+    'American Gods: The Anniversary Edition',
+    'American Gods [10th-anniversary edition]',
+    'American Gods: The Tenth Anniversary Edition',
+])
+def test_anniversary_book_search_uses_work_title_and_retains_recording_edition(book,monkeypatch,tmp_path,title):
     inv,_=I.discover(book);identity,_=I.recover(book,inv)
-    identity['book'].update(title='American Gods 10th Anniversary Edition',author='Neil Gaiman');calls=[]
+    identity['book'].update(title=title,author='Neil Gaiman');calls=[]
     class Provider:
         def __init__(self,name):self.name=name
         def unavailable(self):return ''
@@ -1162,9 +1389,284 @@ def test_anniversary_book_search_uses_work_title_and_retains_recording_edition(b
     result,metrics=M.resolve(identity,inv,collected)
     assert calls==[('hardcover','American Gods','Neil Gaiman'),('openlibrary','American Gods','Neil Gaiman')]
     assert metrics['metadata.work_families']==2 and result['work']['resolved']['year']==2001
-    assert identity['book']['title']=='American Gods 10th Anniversary Edition'
-    assert M.approved_identity(identity,result)['book']['recording_title']=='American Gods 10th Anniversary Edition'
+    assert identity['book']['title']==title
+    assert M.approved_identity(identity,result)['book']['recording_title']==title
     assert not M.compatible_work(identity['book'],candidate('openlibrary',title='Anansi Boys',authors=['Neil Gaiman']))
+
+
+@pytest.mark.parametrize('title',[
+    'The Anniversary','The Anniversary Man',
+    'Stories Volume 2','A Guide: Revised and Expanded Edition',
+])
+def test_anniversary_normalisation_preserves_real_titles_and_other_edition_evidence(title):
+    assert M.work_title(title)==title
+
+
+def test_edition_labels_inside_a_full_title_preserve_the_work_subtitle():
+    assert M.work_title('A Guide (20th Anniversary Edition): A New World')=='A Guide: A New World'
+    assert M.work_title('A Guide: 20th Anniversary Edition, 2nd Edition')=='A Guide'
+    assert M.work_title('A Guide: Second Edition: A New World')=='A Guide: A New World'
+
+
+def revision_work_evidence():
+    return dict(archives=[],providers=dict(
+        hardcover=dict(candidates=[candidate('hardcover',id='99',title='Dune: Old World',subtitle='Desert World',authors=['Frank Herbert'],original_year=1965)]),
+        openlibrary=dict(candidates=[candidate('openlibrary',id='/works/OL1W',title='Dune',authors=['Frank Herbert'])],edition_work_key='/works/OL1W',publisher_editions=[
+            dict(key='/books/OL1M',work_key='/works/OL1W',title='Dune',subtitle='Old World',year=1965,publish_date='1965',publishers=['Original Press']),
+            dict(key='/books/OL2M',work_key='/works/OL1W',title='Dune',subtitle='Desert World, 20th Anniversary Edition',year=2019,publish_date='2019',publishers=['Revision Press']),
+        ]),
+    ))
+
+
+def test_revised_subtitle_links_to_original_work_and_retains_recording_identity(book):
+    inv,_=I.discover(book);identity,_=I.recover(book,inv)
+    identity['book']['title']='Dune: 20th Anniversary Edition, 2nd Edition: Desert World'
+    data=revision_work_evidence();before=deepcopy(data)
+    meta,metrics=M.resolve(identity,inv,data)
+    assert metrics['metadata.work_families']==2 and metrics['work.conflicts']==0 and metrics['work.score']>=.9
+    assert meta['work']['resolved']['year']==1965 and meta['work']['resolved']['publisher']=='Original Press'
+    assert meta['work']['records']['openlibrary']['publisher_edition']=='/books/OL1M'
+    assert meta['work']['records']['hardcover']['title_match']=='linked editions of the same original work'
+    approved=M.approved_identity(identity,meta)
+    assert approved['book']['recording_title']==identity['book']['title']
+    assert not meta['performance']['matched'] and data==before
+
+
+@pytest.mark.parametrize('field,value',[
+    ('work_key','/works/OL2W'),('key','unverified'),('title','Another Work'),
+    ('title','Dune Volume 2'),('subtitle','Unrelated Subtitle'),
+])
+def test_revised_subtitle_bridge_requires_valid_attached_title_evidence(book,field,value):
+    inv,_=I.discover(book);identity,_=I.recover(book,inv)
+    identity['book']['title']='Dune: Second Edition: Desert World'
+    data=revision_work_evidence();data['providers']['openlibrary']['publisher_editions'][1][field]=value
+    _,metrics=M.resolve(identity,inv,data)
+    assert metrics['metadata.work_families']<2
+
+
+def test_work_edition_title_evidence_deduplicates_existing_variants_and_preserves_archive():
+    data=revision_work_evidence();entry=data['providers']['openlibrary']
+    entry['candidates'].append(dict(entry['candidates'][0],subtitle='Old World',subtitle_edition='/books/OL1M'))
+    before=deepcopy(data);expanded=M.work_edition_evidence(data)
+    assert len(expanded['providers']['openlibrary']['candidates'])==3
+    assert expanded['providers']['openlibrary']['candidates'][-1]['subtitle_edition']=='/books/OL2M'
+    assert data==before
+
+
+def test_linked_revision_titles_do_not_resolve_conflicting_original_years(book):
+    inv,_=I.discover(book);identity,_=I.recover(book,inv)
+    identity['book']['title']='Dune: Second Edition: Desert World'
+    data=revision_work_evidence();data['providers']['hardcover']['candidates'][0]['original_year']=1966
+    meta,metrics=M.resolve(identity,inv,data)
+    assert metrics['metadata.work_families']==2 and metrics['work.conflicts']==1
+    assert meta['work']['resolved']['year']==1965
+    assert meta['work']['resolved']['year_note']=='Hardcover says 1966'
+
+
+def test_revision_work_automation_stops_at_audiobook_identification(pipeline_fakes,monkeypatch):
+    original=I.recover
+    def recover(*args):
+        identity,metrics=original(*args);identity['book']['title']='Dune: 20th Anniversary Edition, 2nd Edition: Desert World'
+        return identity,metrics
+    monkeypatch.setattr(I,'recover',recover)
+    monkeypatch.setattr(M,'collect',lambda *args:(revision_work_evidence(),{}))
+    value=policy.current();value['auto_approve_metadata']=True;policy.save(value)
+    run=P.run([pipeline_fakes['id']])[0]
+    assert run['state']=='audiobook_review' and P.review_evaluation(run,'metadata')['eligible']
+    assert P.approval_valid(run,'metadata')
+    assert not P.approval_valid(run,'audiobook') and not P.approval_valid(run,'quality')
+    assert P.stage_data(run,'alignment') is None and catalogue.get_plan(pipeline_fakes['id']) is None
+
+
+@pytest.mark.parametrize('credit',['','Narrated by: Frank Herbert'])
+@pytest.mark.parametrize('corroborated',[True,False])
+def test_provisional_work_lookup_requires_independent_confirmation_before_approval(book,monkeypatch,credit,corroborated):
+    original=I.recover;calls=[]
+    def recover(*args):
+        identity,metrics=original(*args)
+        identity['book'].update(title='Dune Desert World',author=credit,locked=[])
+        metrics['identity.author_known']=int(bool(credit))
+        return identity,metrics
+    class Provider:
+        def __init__(self,name):self.name=name
+        def unavailable(self):return None
+        def by_asin(self,asin):return None
+        def search(self,title,author):
+            calls.append((self.name,title,author))
+            if self.name=='hardcover':return [candidate(self.name,id='99',title='Dune: Desert World',authors=['Frank Herbert'],original_year=1965)]
+            if self.name=='openlibrary':
+                assert title=='Dune: Desert World' and author in ('Frank Herbert','')
+                return [candidate(self.name,id='/works/OL1W',title='Dune',authors=['Frank Herbert'],original_year=1965)] if corroborated else []
+            return []
+        def details(self,identifier):return None
+    monkeypatch.setattr(I,'recover',recover);monkeypatch.setattr(providers,'get',lambda name:Provider(name))
+    value=policy.current();value['auto_approve_metadata']=True;policy.save(value)
+    run=P.run([book['id']])[0]
+    assert run['state']==('audiobook_review' if corroborated else 'metadata_review')
+    assert P.approval_valid(run,'metadata')==corroborated
+    assert P.review_evaluation(run,'metadata')['eligible']==corroborated
+    assert not P.approval_valid(run,'audiobook') and not P.approval_valid(run,'quality')
+    assert P.stage_data(run,'alignment') is None and catalogue.get_plan(book['id']) is None
+    assert P.stage_data(run,'identity')['book']['author']==credit
+    assert ('openlibrary','Dune: Desert World','Frank Herbert') in calls
+    if corroborated:assert P.stage_data(run,'metadata')['work']['resolved']['authors']==['Frank Herbert']
+
+
+@pytest.mark.parametrize('case,accepted', [('asin',True),('unknown_author',True),('measured',True),('wrong_author',False),('wrong_volume',False),('wrong_narrator',False),('wrong_runtime',False),('ambiguous',False)])
+def test_audiobook_discovery_supplies_work_search_without_approving_recording(book,monkeypatch,tmp_path,case,accepted):
+    inv,_=I.discover(book);identity,_=I.recover(book,inv)
+    identity['book'].update(title='Dune: 20th Anniversary Edition',author='Frank Herbert, Reader - introductions',narrator='Reader',asin='B000000001' if case=='asin' else '')
+    if case=='unknown_author':identity['book'].update(author='',asin='B000000001')
+    identity['_work_discovery_providers']=['audible'];calls=[]
+    audio_candidate=recording()
+    if case=='wrong_author':audio_candidate['authors']=['Other Writer']
+    if case=='wrong_volume':audio_candidate['title']='Dune Volume 2'
+    if case=='wrong_narrator':audio_candidate['narrators']=['Other Reader']
+    if case=='wrong_runtime':audio_candidate['runtime_minutes']=30
+    class Provider:
+        def __init__(self,name):self.name=name
+        def unavailable(self):return None
+        def by_asin(self,asin):
+            calls.append((self.name,'asin',asin))
+            return audio_candidate if self.name=='audible' else None
+        def search(self,title,author):
+            calls.append((self.name,title,author))
+            if self.name=='audible':return [audio_candidate,dict(audio_candidate,asin='B000000002')] if case=='ambiguous' else [audio_candidate]
+            return [candidate(self.name,id='99',title='Dune',authors=['Frank Herbert'],original_year=1965)] if accepted else []
+        def details(self,identifier):return None
+    monkeypatch.setattr(providers,'get',lambda name:Provider(name))
+    data,_=M.collect(identity,inv,tmp_path,['hardcover','openlibrary'])
+    meta,metrics=M.resolve(identity,inv,data)
+    assert bool(data['providers']['audible']['candidates'])==accepted
+    if accepted:
+        assert ('hardcover','Dune','Frank Herbert') in calls
+        assert meta['work']['resolved']['authors']==['Frank Herbert'] and meta['work']['resolved']['year']==1965
+        assert metrics['metadata.work_families']>=2
+        audio_only=dict(providers={name:entry for name,entry in data['providers'].items() if name not in ('hardcover','openlibrary')})
+        _,audio_metrics=M.resolve(identity,inv,audio_only)
+        assert audio_metrics['metadata.original_work_link']==0 and audio_metrics['metadata.work_families']<=1
+    assert identity['book']['title']=='Dune: 20th Anniversary Edition'
+
+
+def test_work_stage_enables_configured_audiobook_discovery_and_retains_separate_consent(pipeline_fakes,monkeypatch):
+    collect=M.collect;seen=[]
+    def tracked(identity,*args):
+        seen.append(identity)
+        return collect(identity,*args)
+    monkeypatch.setattr(M,'collect',tracked)
+    run=P.run([pipeline_fakes['id']])[0]
+    assert seen[0]['_work_discovery_providers']==['audible','audnexus','audiobookdb','applebooks']
+    assert '_work_discovery_providers' not in P.stage_data(run,'identity')
+    assert P.stage_data(run,'recording_providers') is None
+    assert not P.approval_valid(run,'audiobook') and not P.approval_valid(run,'quality')
+
+
+@pytest.mark.parametrize('title,author,candidates',[
+    ('(14)','',[candidate('hardcover',title='14',authors=['Wrong Writer'])]),
+    ('History','',[candidate('hardcover',title='History',authors=['First Writer']),candidate('hardcover',title='History',authors=['Second Writer'])]),
+    ('Dune','Frank Herbert',[candidate('hardcover',title='Dune',authors=['Other Writer'])]),
+    ('Dune','',[candidate('hardcover',title='Another Work',authors=['Frank Herbert'])]),
+    ('Stories Volume 1','',[candidate('hardcover',title='Stories Volume 2',authors=['Frank Herbert'])]),
+])
+def test_lookup_hints_reject_fragment_numbers_ambiguous_people_and_conflicts(title,author,candidates):
+    assert M.work_lookup_hint(dict(title=title,author=author),dict(providers=dict(hardcover=dict(candidates=candidates)))) is None
+
+
+def test_numeric_fragment_cannot_gain_an_invented_author_from_catalogue_coincidence(book):
+    inv,_=I.discover(book);identity,_=I.recover(book,inv);identity['book'].update(title='(14)',author='')
+    data=dict(providers={name:dict(candidates=[candidate(name,title='14',authors=['Unrelated Writer'])]) for name in ('hardcover','openlibrary')})
+    meta,metrics=M.resolve(identity,inv,data)
+    assert M.inferred_work_identity(identity,data)==(identity,False)
+    assert metrics['identity.author_known']==0 and metrics['metadata.work_families']==0
+    assert meta['work']['resolved']['authors']==[]
+
+
+@pytest.mark.parametrize('case,passes', [('distinctive',True),('one_source',False),('collision',False),('locked',False),('generic',False),('missing_subtitle',False),('different_volume',False),('coauthor_conflict',False),('competing_initials',False)])
+def test_distinctive_full_title_can_correct_an_unlocked_artist_credit(book,case,passes):
+    inv,im=I.discover(book);identity,identity_metrics=I.recover(book,inv)
+    title='Sherlock Holmes: The Definitive Collection' if case!='generic' else 'History'
+    identity['book'].update(title=title,author='Stephen Fry',locked=['author'] if case=='locked' else [])
+    original=deepcopy(identity)
+    entries={name:dict(candidates=[candidate(name,id=name,title=title,authors=['Arthur Conan Doyle'],original_year=2017)]) for name in ('hardcover','openlibrary')}
+    if case=='one_source':entries.pop('openlibrary')
+    if case=='collision':entries['hardcover']['candidates'].append(candidate('hardcover',title=title,authors=['Another Writer']))
+    if case=='missing_subtitle':
+        for entry in entries.values():entry['candidates'][0]['title']='Sherlock Holmes'
+    if case=='different_volume':
+        for entry in entries.values():entry['candidates'][0]['title']=title+' Part Two'
+    if case=='coauthor_conflict':entries['openlibrary']['candidates'][0]['authors'].append('Another Writer')
+    if case=='competing_initials':
+        entries['hardcover']['candidates'][0]['authors']=['Charles Murray']
+        entries['openlibrary']['candidates'][0]['authors']=['Charles A Murray']
+        entries['openlibrary']['candidates'].append(candidate('openlibrary',title=title,authors=['Charles B Murray']))
+    data=dict(providers=entries);meta,metrics=M.resolve(identity,inv,data)
+    checks=[c for c in policy.evaluate({**im,**identity_metrics,**metrics},identity['kind'],policy.current())['checks'] if c['metric'].startswith(('inventory.','identity.','metadata.original_work_link','metadata.work_families','work.'))]
+    assert all(c['passed'] for c in checks)==passes
+    assert identity==original
+    if passes:
+        assert meta['work']['resolved']['authors']==['Arthur Conan Doyle']
+        assert meta['work']['records']['catalogue']['unverified_authors']==['Stephen Fry']
+        assert meta['performance']['matched'] is False
+
+
+def test_distinctive_title_lookup_uses_provider_author_before_final_consensus(book,monkeypatch,tmp_path):
+    inv,_=I.discover(book);identity,_=I.recover(book,inv)
+    title='Sherlock Holmes: The Definitive Collection';identity['book'].update(title=title,author='Stephen Fry',locked=[]);calls=[]
+    class Provider:
+        def __init__(self,name):self.name=name
+        def unavailable(self):return None
+        def by_asin(self,asin):return None
+        def search(self,query,author):
+            calls.append((self.name,query,author))
+            if self.name=='hardcover' or author=='Arthur Conan Doyle':return [candidate(self.name,id=self.name,title=title,authors=['Arthur Conan Doyle'],original_year=2017)]
+            return []
+        def details(self,ident):return None
+    monkeypatch.setattr(providers,'get',lambda name:Provider(name))
+    data,_=M.collect(identity,inv,tmp_path,['hardcover','openlibrary'])
+    assert ('openlibrary',title,'Arthur Conan Doyle') in calls
+    assert M.resolve(identity,inv,data)[0]['work']['resolved']['authors']==['Arthur Conan Doyle']
+    one_source=dict(providers=dict(hardcover=data['providers']['hardcover']))
+    assert M.inferred_work_identity(identity,one_source)==(identity,False)
+
+
+@pytest.mark.parametrize('case,passes', [('english',True),('unknown_language',False),('foreign_language',False),('wrong_link',False),('manual_title',False),('chapter_titles',False)])
+def test_english_edition_and_consistent_full_title_tags_resolve_translation_ambiguity(book,case,passes):
+    inv,_=I.discover(book);identity,_=I.recover(book,inv)
+    inv['files'][0]['probe']['tags']['title']='Dune: Desert World (Unabridged)'
+    identity['book'].update(title='Dune',locked=['title'] if case=='manual_title' else [])
+    if case=='chapter_titles':
+        inv['files'].append(deepcopy(inv['files'][0]));inv['files'][-1]['probe']['tags']['title']='Chapter Two'
+    english=candidate('openlibrary',id='/works/OL1W',title='Dune',authors=['Frank Herbert'],original_year=1965)
+    english.update(subtitle='Desert World',subtitle_edition='/books/OL1M')
+    translated=candidate('openlibrary',id='/works/OL2W',title='Dune',subtitle='Mundo del desierto',authors=['Frank Herbert','Translator Person'])
+    edition=dict(key='/books/OL1M',work_key='/works/OL9W' if case=='wrong_link' else '/works/OL1W',title='Dune',subtitle='Desert World',year=1965,publish_date='1965',publishers=['Publisher'],languages=[] if case=='unknown_language' else ['/languages/spa'] if case=='foreign_language' else ['/languages/eng'])
+    data=dict(providers=dict(openlibrary=dict(candidates=[english,translated],edition_work_key='/works/OL1W',publisher_editions=[edition]),hardcover=dict(candidates=[candidate('hardcover',title='Dune: Desert World',authors=['Frank Herbert'],original_year=1965)])))
+    before=deepcopy(data);meta,metrics=M.resolve(identity,inv,data)
+    assert (metrics['metadata.work_families']==2)==passes
+    assert data==before and identity['book']['title']=='Dune'
+    if passes:
+        assert meta['work']['resolved']['authors']==['Frank Herbert'] and meta['work']['resolved']['year']==1965
+        assert metrics['work.conflicts']==0 and not meta['performance']['matched']
+
+
+def test_english_work_entry_is_preferred_over_popular_translation_but_not_another_volume(book):
+    inv,_=I.discover(book);identity,_=I.recover(book,inv)
+    english=candidate('openlibrary',id='/works/OL1W',title='Dune',authors=['Frank Herbert'],language='eng',original_year=1965,url='english')
+    french=dict(english,id='/works/OL2W',language='fr',url='french',edition_count=100000,ratings_count=100000)
+    unknown=dict(english,id='/works/OL3W',language='',url='unknown',edition_count=100000)
+    other_volume=dict(english,id='/works/OL4W',title='Dune Volume 2',url='volume two')
+    meta,metrics=M.resolve(identity,inv,dict(providers=dict(openlibrary=dict(candidates=[french,unknown,other_volume,english]))))
+    assert meta['work']['records']['openlibrary']['url']=='english'
+    assert metrics['metadata.work_families']==1
+
+
+def test_slash_artist_credits_need_agreeing_work_sources_and_preserve_reader_alternative(book):
+    inv,_=I.discover(book);identity,_=I.recover(book,inv);identity['book'].update(author='Frank Herbert / Alice Reader',locked=[])
+    data=dict(providers={name:dict(candidates=[candidate(name,title='Dune',authors=['Frank Herbert'],original_year=1965)]) for name in ('hardcover','openlibrary')})
+    meta,metrics=M.resolve(identity,inv,data)
+    assert metrics['metadata.work_families']==2 and metrics['work.conflicts']==0
+    assert meta['work']['resolved']['authors']==['Frank Herbert']
+    assert meta['work']['records']['catalogue']['authors']==['Frank Herbert','Alice Reader']
 
 
 @pytest.fixture
@@ -1233,7 +1735,7 @@ def test_book_author_can_be_recovered_from_two_agreeing_book_catalogues(book):
     data['providers']['openlibrary']['candidates'].append(source('openlibrary',['Another Writer']))
     data['providers']['hardcover']['candidates'].append(source('hardcover',['Another Writer']))
     result,metrics=M.resolve(identity,inv,data)
-    assert 'identity.author_known' not in metrics and result['work']['resolved']['authors']==[]
+    assert metrics['identity.author_known']==0 and result['work']['resolved']['authors']==[]
 
 
 def test_scoped_reingest_picks_up_new_chapters_but_rejects_changed_book_boundaries(mixed_source,monkeypatch):

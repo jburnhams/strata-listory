@@ -36,6 +36,7 @@ def is_part(path,tags):
 def numbered_parts(paths):
     """Infer chapter prefixes only from siblings sharing a title and starting at 1."""
     paths=list(paths);groups={};parts={path:value['number'] for path,value in grouping.coded_parts(paths).items()}
+    parts.update({path:value['number'] for path,value in grouping.filename_parts(paths).items() if value['kind']!='bytes'})
     for path in paths:
         p=Path(path);m=re.fullmatch(r'(\d{1,4})(?:[ ._-]+(.*))?',p.stem)
         if m:groups.setdefault((str(p.parent),p.suffix.lower(),merge.norm(m[2] or '')),[]).append((str(path),int(m[1])))
@@ -65,20 +66,25 @@ def embedded_asins(tags):
 def discover(book):
     path=Path(book['path']).resolve()
     if not fs.reachable(str(path)) or not path.exists(): raise ValueError('audio path unavailable')
-    root=path
+    root=path;sibling_paths=None
     if path.is_file():
         try:first=probe.probe_file(str(path))
         except (OSError,ValueError,probe.ToolError):first=dict(tags={})
         siblings=[p for p in path.parent.iterdir() if p.is_file() and scan.is_audio(p.name)]
+        filename_parts=grouping.filename_parts(siblings);selected_part=filename_parts.get(str(path))
         hint=grouping.title_hint(scan.parse_name(path.name)['title'])
         def related(p):
+            if selected_part and (filename_parts.get(str(p)) or {}).get('key')==selected_part['key']:return True
             other=grouping.title_hint(scan.parse_name(p.name)['title'])
             a,b=matcher.norm(hint),matcher.norm(other)
             return not other or matcher.title_score(hint,dict(title=other,subtitle=''))>=.9 or min(len(a),len(b))>=6 and (a.endswith(b) or b.endswith(a))
         other_formats=bool(hint) and any(p.suffix.lower()!=path.suffix.lower() and related(p) for p in siblings)
-        if is_part(path,first['tags']) or str(path) in numbered_parts(siblings) or other_formats and all(related(p) for p in siblings):
-            root=path.parent
-    paths=[root] if root.is_file() else sorted((p for p in root.rglob('*') if p.is_file() and scan.is_audio(p.name) and not any(x.startswith(('.', '@')) for x in p.relative_to(root).parts)),key=lambda p:probe.natural_key(str(p)))
+        # A stale track total on a loose whole-book file is not permission to
+        # inventory a library directory. File expansion is a sibling operation;
+        # only explicit directory selections recursively discover collections.
+        if (is_part(path,first['tags']) or str(path) in numbered_parts(siblings) or selected_part or other_formats) and all(related(p) for p in siblings):
+            root=path.parent;sibling_paths=siblings
+    paths=[root] if root.is_file() else sorted(sibling_paths if sibling_paths is not None else (p for p in root.rglob('*') if p.is_file() and scan.is_audio(p.name) and not any(x.startswith(('.', '@')) for x in p.relative_to(root).parts)),key=lambda p:probe.natural_key(str(p)))
     if not paths: raise ValueError('no audio files')
     extras=catalogue.get_extras(book['id']);scope=(extras.get('source_group') or {}).get('data')
     reference=(extras.get('source_group_ref') or {}).get('data')
@@ -100,8 +106,18 @@ def discover(book):
             correction=overrides.get(str(p))
             if correction and correction.get('sha256')==sha:files[-1]['grouping_hint']=correction
         except (OSError,ValueError,probe.ToolError) as e: errors.append(dict(path=str(p),error=str(e)))
+    for file_path,part in grouping.filename_layout(files).items():
+        if part['kind']!='bytes':continue
+        f=next(f for f in files if f['path']==file_path)
+        if f['probe'].get('duration_method')=='decoded audio clock':continue
+        report(f'Measuring decoded duration of split MP3 {Path(file_path).name}',stage='inventory')
+        try:
+            measured=probe.decoded_duration(file_path);stat=Path(file_path).stat()
+            if (stat.st_size,stat.st_mtime_ns)!=(f['size'],f['mtime_ns']):raise ValueError('input changed during duration measurement')
+            f['probe']=probe.apply_decoded_duration(f['probe'],measured)
+        except (OSError,ValueError,probe.ToolError) as error:errors.append(dict(path=file_path,error=str(error)))
     sidecars=[]
-    names=set(root.rglob('*.metadata.json')) if root.is_dir() else {root.with_suffix('.metadata.json')}
+    names=set(root.glob('*.metadata.json') if sibling_paths is not None else root.rglob('*.metadata.json')) if root.is_dir() else {root.with_suffix('.metadata.json')}
     for p in sorted(names):
         if p.exists():
             try: sidecars.append(dict(path=str(p),sha256=digest(p),raw=json.loads(p.read_text(encoding='utf8'))))
@@ -166,7 +182,7 @@ def disc_number(file):
 
 
 def represent(files):
-    reps={};numbered=numbered_parts(f['path'] for f in files);coded=grouping.coded_parts(f['path'] for f in files);layout=grouping.sequence_layout(files)
+    reps={};numbered=numbered_parts(f['path'] for f in files);coded=grouping.coded_parts(f['path'] for f in files);layout=grouping.sequence_layout(files);named=grouping.filename_layout(files)
     def disc_info(f):
         info=layout.get(f['path'])
         return (info['disc'],info['total']) if info else disc_number(f)
@@ -178,6 +194,7 @@ def represent(files):
         if disc:key=str(parent)+'|'+path.suffix.lower()+'|'+matcher.norm(grouping.album_parts(tags.get('album',''))[0])
         if f['path'] in coded:key=str(parent)+'|'+path.suffix.lower()+'|code:'+coded[f['path']]['prefix']
         elif f['path'] in numbered and not disc:key+='|'+merge.norm(re.sub(r'^\d+[ ._-]*','',path.stem))
+        if f['path'] in named:key='filename:'+named[f['path']]['key']
         if sequence:key=str(path.parent.parent if sequence['shared'] else path.parent)+'|'+path.suffix.lower()+'|'+sequence['key']
         reps.setdefault(key,[]).append(f)
     result=[]
@@ -187,16 +204,19 @@ def represent(files):
         for f in items:discs.setdefault(disc_info(f)[0],[]).append(f)
         disc_total=max((disc_info(f)[1] or 0 for f in items),default=0)
         if discs and all(discs):disc_total=max(disc_total,max(discs))
-        missing+=len(set(range(1,disc_total+1))-set(discs)) if disc_total else 0
+        # Untrusted tags sometimes contain uint32 sentinel totals. Count the
+        # complement arithmetically instead of materialising billions of IDs.
+        missing+=disc_total-len({n for n in discs if 1<=n<=disc_total}) if disc_total else 0
         for values in discs.values():
             numbers=[];total=0
             for f in values:
                 number,expected=track(f['probe']['tags'])
                 suffix=re.search(r'(?:chapter|part|track)[ _-]*(\d+)\s*$',Path(f['path']).stem,re.I)
-                number=number or numbered.get(f['path']) or (int(suffix[1]) if suffix else None)
+                number=number or (named.get(f['path']) or {}).get('number') or numbered.get(f['path']) or (int(suffix[1]) if suffix else None)
+                expected=expected or (named.get(f['path']) or {}).get('total') or 0
                 numbers.append(number);total=max(total,expected or 0)
             if not total and numbers and all(n is not None for n in numbers) and min(numbers)==1:total=max(numbers)
-            if total:known=True;missing+=len(set(range(1,total+1))-set(numbers))
+            if total:known=True;missing+=total-len({n for n in numbers if n is not None and 1<=n<=total})
             if all(n is not None for n in numbers):duplicates+=len(numbers)-len(set(numbers))
         result.append(dict(id=hashlib.sha256(key.encode()).hexdigest()[:16],files=[f['path'] for f in items],duration=sum(f['probe']['duration'] for f in items),bytes=sum(f['size'] for f in items),missing_tracks=missing if known or disc_total else None,duplicate_tracks=duplicates))
     return result

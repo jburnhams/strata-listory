@@ -1,7 +1,7 @@
 """Decide what to do with one book, without changing anything: its chapters, how each is produced and the loudness gain for the whole book.
 
 Chapters, first source that exists wins: chapters embedded in a single file; the chapter list of the Audible metadata file (when it matches the audio length); the files themselves; or, for one long file without chapters, equal-ish parts cut at pauses. Then the size rules: a chapter under 10 minutes is combined with a neighbour if the two stay within 30 minutes (credits-length pieces always join one, up to an hour); a chapter over 60 minutes is split into parts of about 45 minutes at the longest pause near each ideal cut; the parts keep the chapter's number with a letter (30a, 30b, 30c). Nothing else is split or combined.
-Each chapter is then `copy` (mono mp3 source at or below COPY_MAX_KBPS: cut on frame boundaries and re-gained losslessly, never re-encoded) or `encode` (LAME VBR, mono, with a tier chosen from how much high-frequency content the chapter really has).
+Each chapter is then `copy` (healthy mono mp3 source at or below COPY_MAX_KBPS: cut on frame boundaries and re-gained losslessly) or `encode` (LAME VBR, mono, with a tier chosen from how much high-frequency content the chapter really has). Diagnosed header/decoder faults always require encoding.
 Loudness is one gain per book towards TARGET_LUFS (so chapters keep their level relative to each other), only when the book is outside a tolerance band, and never at the price of clipping: a book may stay slightly quiet."""
 import math, os, re
 
@@ -181,7 +181,7 @@ def pick_tier(hf_db: float, pause_frac: float) -> str:
 
 def copyable(segs: list[tuple], by_path: dict) -> bool:
     fs = [by_path[p] for p, _, _ in segs]
-    return all(f['codec'] == 'mp3' and f['channels'] == 1 and f['bit_rate'] <= COPY_MAX_KBPS for f in fs) and len({f['sample_rate'] for f in fs}) == 1
+    return all(f['codec'] == 'mp3' and f['channels'] == 1 and f['bit_rate'] <= COPY_MAX_KBPS and not f.get('requires_reencode') for f in fs) and len({f['sample_rate'] for f in fs}) == 1
 
 
 def decide_gain(i: float, tp: float, any_copy: bool, p99: float | None = None) -> dict:
@@ -205,7 +205,7 @@ def out_dir_for(book: dict, final_dir: str, year: int | None = None) -> str:
     return os.path.join(final_dir, author, f'[{year}] {title}' if year else title)
 
 
-def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: dict | None = None, records: dict | None = None, *, input_paths: list[str] | None = None, measurements: dict | None = None) -> dict:
+def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: dict | None = None, records: dict | None = None, *, input_paths: list[str] | None = None, measurements: dict | None = None, input_facts: list[dict] | None = None) -> dict:
     """Everything needed to process the book, as plain data (JSON-serialisable)."""
     r = sources.resolve(book, records if records is not None else sources.local_records(book, audible, extras)); year, year_src, year_note = r['year'], r['year_source'], r['year_note']
     title, author = r['title'], ', '.join(r['authors']); naming = dict(book, title=title, author=author)
@@ -215,7 +215,10 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: d
     advisories=[f'year: {year_note}; using the explicit first-publication year'] if year_note and not r['year_note_requires_review'] else []
     paths = list(input_paths) if input_paths is not None else sorted(details.audio_files(book['path']), key=probe.natural_key)
     if not paths: raise probe.ToolError(f"no audio files in {book['path']}")
-    files = [probe.probe_file(p) for p in paths]; by_path = {f['path']: f for f in files}; tl = timeline(files)
+    if input_facts is not None and [f['path'] for f in input_facts]!=paths:raise probe.ToolError('source facts must match the selected input paths')
+    files = [dict(f) for f in input_facts] if input_facts is not None else [probe.probe_file(p) for p in paths]; by_path = {f['path']: f for f in files}; tl = timeline(files)
+    source_diagnostics=[dict(path=f['path'],requires_reencode=True,reasons=f.get('reencode_reasons') or ['Source requires re-encoding'],reported_duration=f.get('reported_duration'),decoded_duration=f['duration'],header_diagnostics=f.get('header_diagnostics',''),decoder_messages=f.get('duration_decode_messages','')) for f in files if f.get('requires_reencode')]
+    advisories.extend('Re-encoding '+os.path.basename(f['path'])+': '+'; '.join(f['reasons']) for f in source_diagnostics)
     warnings = list(warnings_pre)
     if (w := order_warning(files)): warnings.append(w)
     m = measurements if measurements is not None else probe.measure_book([(f['path'], 0.0, None) for f in files], max(f['channels'] for f in files))
@@ -246,4 +249,4 @@ def make_plan(book: dict, final_dir: str, audible: dict | None = None, extras: d
     in_bytes = sum(os.path.getsize(f['path']) for f in files); est = sum(c['duration'] * c['kbps'] * 1000 / 8 for c in chapters)
     return dict(book_id=book['id'], title=title, author=author, out_dir=out_dir_for(naming, final_dir, year), year=year, year_source=year_src, metadata=sources.rows(book, r), narrator=', '.join(r['narrators']), series=r['series'], series_position=r['series_position'], publisher=r['publisher'], genres=r['genres'][:6], chapter_source=source, downmix=downmix, duration=round(sum(f['duration'] for f in files), 1),
                 loudness=dict(I=m['I'], normalisation_I=normalisation_i, TP=m['TP'], LRA=m['LRA'], target=TARGET_LUFS, gain_db=g['db'], apply_db=g['apply_db'], gain_steps=g['steps'], decision=g['why'], reencoded=g['reencode'], peak_p99=m.get('peak_p99')), chapters=chapters, warnings=warnings, advisories=advisories,
-                in_bytes=in_bytes, est_bytes=int(est), in_files=len(files), channels=max(f['channels'] for f in files))
+                in_bytes=in_bytes, est_bytes=int(est), in_files=len(files), channels=max(f['channels'] for f in files),source_diagnostics=source_diagnostics)

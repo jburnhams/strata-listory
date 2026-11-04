@@ -24,15 +24,42 @@ def natural_key(s: str):
 
 def probe_file(path: str) -> dict:
     """Facts about one audio file: duration, codec, channels, sample_rate, bit_rate (kbps), embedded chapters, tags."""
-    r = run(['ffprobe', '-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', '-show_chapters', path], 120)
+    r = run(['ffprobe', '-v', 'warning', '-print_format', 'json', '-show_format', '-show_streams', '-show_chapters', path], 120)
     if r.returncode or not r.stdout.strip(): raise ToolError(f'cannot read {path}: {r.stderr.strip()[:200]}')
     d = json.loads(r.stdout); a = next((s for s in d.get('streams', []) if s.get('codec_type') == 'audio'), None)
     if not a: raise ToolError(f'no audio stream in {path}')
     fmt = d.get('format', {}); dur = float(fmt.get('duration') or a.get('duration') or 0)
     br = int(a.get('bit_rate') or fmt.get('bit_rate') or 0) / 1000 or (os.path.getsize(path) * 8 / 1000 / dur if dur else 0)
-    return dict(path=path, duration=dur, codec=a.get('codec_name', ''), channels=int(a.get('channels') or 1), sample_rate=int(a.get('sample_rate') or 0), bit_rate=round(br, 1),
+    info=dict(path=path, duration=dur, codec=a.get('codec_name', ''), channels=int(a.get('channels') or 1), sample_rate=int(a.get('sample_rate') or 0), bit_rate=round(br, 1),
                 chapters=[dict(start=float(c['start_time']), end=float(c['end_time']), title=(c.get('tags') or {}).get('title', '')) for c in d.get('chapters') or []],
                 tags={k.lower(): v for k, v in (fmt.get('tags') or {}).items()})
+    bad_header=bool(re.search(r'filesize and duration do not match|invalid.*(?:xing|vbri|header)|header missing',r.stderr,re.I))
+    if bad_header or 'estimating duration from bitrate' in r.stderr.lower():
+        info=apply_decoded_duration(info,decoded_duration(path),header_warning=r.stderr.strip() if bad_header else '')
+    return info
+
+
+def decoded_duration(path: str) -> dict:
+    """Byte-split MP3s can retain a whole-book VBR header; measure actual samples."""
+    # Older FFmpeg progress clocks report the last packet's start, losing one
+    # frame per split. Count samples at a fixed rate instead; no PCM is buffered.
+    filters='aresample=48000,astats=metadata=0:reset=0:measure_perchannel=none:measure_overall=Number_of_samples'
+    r=run(['ffmpeg','-nostdin','-hide_banner','-loglevel','level+info','-nostats','-progress','pipe:1','-i',path,'-map','0:a:0','-af',filters,'-f','null','-'],900)
+    values=re.findall(r'^\[Parsed_astats_[^\]]+\]\s+\[info\] Number of samples:\s*(\d+)',r.stderr,re.M)
+    duration=max(map(int,values),default=0)/48000
+    if r.returncode or 'progress=end' not in r.stdout or duration<=0:raise ToolError(f'cannot measure decoded duration of {path}: {r.stderr.strip()[-200:]}')
+    diagnostics='\n'.join(line for line in r.stderr.splitlines() if re.search(r'\[(?:error|fatal|panic|warning)\]',line))
+    return dict(duration=duration,decode_messages=diagnostics)
+
+
+def apply_decoded_duration(info: dict, measured: dict, header_warning: str = '') -> dict:
+    """Retain the bad header as evidence and make copying a damaged source ineligible."""
+    reported=info.get('reported_duration',info['duration']);duration=measured['duration'];reasons=list(info.get('reencode_reasons') or [])
+    if abs(reported-duration)>.25:reasons.append('Source duration header differs from decoded audio')
+    if header_warning:reasons.append('Probe reported an invalid audio header')
+    if measured['decode_messages']:reasons.append('Decoder reported source errors')
+    reasons=list(dict.fromkeys(reasons))
+    return dict(info,reported_duration=reported,duration=duration,duration_method='decoded audio clock',duration_decode_messages=measured['decode_messages'],header_diagnostics=header_warning or info.get('header_diagnostics',''),requires_reencode=bool(reasons) or info.get('requires_reencode',False),reencode_reasons=reasons)
 
 
 def _q(path: str) -> str:

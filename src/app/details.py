@@ -4,7 +4,7 @@ Cover order: an image file in the book's folder (cover/folder/front, then any pi
 import glob, html, json, os, re, shutil, subprocess, time, urllib.request
 from datetime import datetime, timedelta, timezone
 
-from app import db, fs, mirror, providers, scan, settings
+from app import db, fs, mirror, providers, scan, settings, read_models
 
 IMAGES = ('.jpg', '.jpeg', '.png', '.webp')
 COVER_NAMES = ('cover', 'folder', 'front', 'albumart', 'albumartsmall', 'artwork')
@@ -217,7 +217,8 @@ def describe(book: dict) -> dict:
     if path and not fs.reachable(path): out['share_down'] = True; return out           # the share is down: say so instead of hanging
     out['path_exists'] = bool(path) and os.path.exists(path)
     if not out['path_exists']: return out
-    try: return _describe(book, path, out)
+    try:
+        result=_describe(book,path,out);read_models.save('details',book['id'],result);return result
     except OSError: out.update(path_exists=False, share_down=True, files=None, probe=None, audible=None); return out
 
 
@@ -229,10 +230,38 @@ def _describe(book: dict, path: str, out: dict) -> dict:
     return out
 
 
-def available_cover_ids(books):
-    """Known local covers only: no source-share traversal, probing or provider requests."""
-    from pathlib import Path
-    legacy=Path(settings.data_dir())/'covers';root=Path(mirror.root())
-    cached={int(p.stem) for p in legacy.glob('*') if p.stem.isdigit() and p.suffix.lower() in IMAGES and p.is_file()}
-    folders={str(p.parent) for p in root.rglob('cover.*') if p.suffix.lower() in IMAGES and p.is_file()}
-    return [book['id'] for book in books if book['id'] in cached or mirror.dir_for(book,probe_source=False) in folders]
+def available_cover_ids(books=None):
+    return [int(owner) for owner in read_models.owners('cover')]
+
+
+def saved_cover(book: dict) -> str | None:
+    return (read_models.get('cover',book['id']) or {}).get('path')
+
+
+def saved_description(book: dict) -> dict:
+    """Read archived facts only, even when the audio share is slow or unavailable."""
+    from app.ingest import store
+    cached=read_models.get('details',book['id'])
+    if cached is not None:return cached
+    out=dict(path_exists=False,share_down=False,files=None,probe=None,audible=read_models.get('audible',book['id']))
+    path=book.get('path') or ''
+    if not path:return out
+    c=db.connect()
+    try:
+        # Legacy technical summaries remain usable without restatting all their inputs.
+        prefix=f'probe:{path}:'
+        row=c.execute('SELECT body FROM match_cache WHERE substr(key,1,?)=? ORDER BY fetched DESC LIMIT 1',(len(prefix),prefix)).fetchone()
+        if row:out['probe']=json.loads(row[0])
+        rid=store.latest_id(book['id'])
+        if rid:
+            event=c.execute("SELECT id FROM ingest_events WHERE run_id=? AND stage='inventory' AND status='done' ORDER BY id DESC LIMIT 1",(rid,)).fetchone()
+            if event:
+                total=c.execute("SELECT count(*),COALESCE(sum(json_extract(f.value,'$.size')),0),sum(json_extract(f.value,'$.probe.duration')) FROM ingest_events e,json_each(e.data,'$.files') f WHERE e.id=?",(event[0],)).fetchone()
+                files=[];root=path if os.path.splitext(path)[1].lower() not in scan.AUDIO else os.path.dirname(path)
+                for row in c.execute("SELECT json_extract(f.value,'$.path') AS path,json_extract(f.value,'$.size') AS size FROM ingest_events e,json_each(e.data,'$.files') f WHERE e.id=? LIMIT 200",(event[0],)):
+                    files.append(dict(name=os.path.relpath(row['path'],root),bytes=row['size']))
+                out['files']=dict(count=total[0],total_bytes=total[1],truncated=total[0]>200,list=files)
+                out['path_exists']=True
+                if not out['probe'] and total[2]:out['probe']=dict(available=True,files_probed=total[0],complete=True,duration_seconds=total[2])
+    finally:c.close()
+    return out

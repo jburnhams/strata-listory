@@ -1,7 +1,7 @@
 import os
 import pytest
 import uvicorn
-from fastapi.testclient import TestClient
+from job_client import JobClient as TestClient
 from app.server import app as server_app
 from app.server.app import create_app
 
@@ -93,29 +93,39 @@ def test_scan_match_confirm_endpoints(client, tmp_path, monkeypatch):
 
     def broken(limit, plist): raise matcher.MatchError('no AudiobookDB API key')
     monkeypatch.setattr(matcher, 'match_pending', broken)
-    r = client.post('/api/match'); assert r.status_code == 502 and 'API key' in r.json()['detail']
+    r = client.post('/api/match'); assert r.status_code == 400 and 'API key' in r.json()['detail']
     monkeypatch.undo()
     assert client.post('/api/match', params=dict(providers='nope')).status_code == 400
+    from app.server.tasks import bootstrap
+    bootstrap()
     assert [p['name'] for p in client.get('/api/providers').json()] == ['audnexus', 'audible', 'hardcover', 'audiobookdb', 'openlibrary', 'applebooks', 'googlebooks']
 
 
-def test_book_details_and_cover_endpoints(client, tmp_path, monkeypatch):
-    from app import details
+def test_book_details_and_cover_endpoints_are_saved_lookups(client, tmp_path, monkeypatch):
+    from app import details, mirror
+    from app.ingest import store
     d = tmp_path / 'Book'; d.mkdir(); (d / '01.mp3').write_bytes(b'x'); (d / 'cover.jpg').write_bytes(b'\xff\xd8\xff\xe0' + b'0' * 10)
-    monkeypatch.setattr(details, 'probe', lambda files: dict(available=True, files_probed=1, complete=True, duration_seconds=3700))
     b = client.post('/api/books', json=dict(title='Book', path=str(d))).json()
-    r = client.get(f"/api/books/{b['id']}/details").json()
-    assert r['book']['duration_seconds'] == 3700 and r['files']['count'] == 1 and r['path_exists'] is True       # the duration is filled in from the probe
-    img = client.get(f"/api/books/{b['id']}/cover")
-    assert img.status_code == 200 and img.content.startswith(b'\xff\xd8\xff') and 'max-age' in img.headers['cache-control']
-    manual = client.post('/api/books', json=dict(title='By hand')).json()
+    def forbidden(*a,**kw):raise AssertionError('GET must not inspect audio or download artwork')
+    monkeypatch.setattr(details,'describe',forbidden)
+    monkeypatch.setattr(details,'cover',forbidden)
+    monkeypatch.setattr(details,'audio_files',forbidden)
+    monkeypatch.setattr(details,'_ffprobe',forbidden)
+    # A real source exists but GET does not discover it or update the catalogue.
+    assert client.get(f"/api/books/{b['id']}/details").json()['files'] is None
+    assert client.get(f"/api/books/{b['id']}/cover").status_code==404
+    rid=store.create(b['id'],{})
+    store.event(rid,'inventory','done',data=dict(root=str(d),files=[dict(path=str(d/'01.mp3'),size=1,probe=dict(duration=3700))]))
+    r=client.get(f"/api/books/{b['id']}/details").json()
+    assert r['book']['duration_seconds'] is None and r['probe']['duration_seconds']==3700
+    assert r['files']['count']==1 and r['files']['list']==[dict(name='01.mp3',bytes=1)]
+    mirror.save_cover(b,b'\xff\xd8\xff\xe0'+b'0'*10,'.jpg','test')
+    img=client.get(f"/api/books/{b['id']}/cover")
+    assert img.status_code==200 and img.content.startswith(b'\xff\xd8\xff') and 'max-age' in img.headers['cache-control']
+    manual=client.post('/api/books',json=dict(title='By hand')).json()
     assert client.get(f"/api/books/{manual['id']}/details").json()['path_exists'] is False
-    assert client.get(f"/api/books/{manual['id']}/cover").status_code == 404
-    monkeypatch.setattr(details, 'probe', lambda files: dict(available=True, files_probed=0))
-    d2 = tmp_path / 'Book2'; d2.mkdir(); (d2 / '01.mp3').write_bytes(b'x'); (d2 / 'x.metadata.json').write_text('{"runtime_length_min": 2}')
-    b2 = client.post('/api/books', json=dict(title='Book2', path=str(d2))).json()
-    assert client.get(f"/api/books/{b2['id']}/details").json()['book']['duration_seconds'] == 120               # no usable probe: Audible's runtime
-    assert client.get('/api/books/999/details').status_code == 404 and client.get('/api/books/999/cover').status_code == 404
+    assert client.get(f"/api/books/{manual['id']}/cover").status_code==404
+    assert client.get('/api/books/999/details').status_code==404 and client.get('/api/books/999/cover').status_code==404
 
 
 def test_enrich_endpoints_and_extras_in_details(client, monkeypatch):
@@ -140,7 +150,7 @@ def test_enrich_endpoints_and_extras_in_details(client, monkeypatch):
     assert client.post('/api/enrich', params=dict(limit=5)).json() == dict(tried=1, enriched=0, not_found=1, remaining=0)      # 'Other' is not on Hardcover
     monkeypatch.setattr(providers, 'enabled', lambda names=None: [])
     monkeypatch.setattr(enrich_mod, 'enrich_openlibrary', lambda book, ol=None: (_ for _ in ()).throw(matcher.MatchError('Open Library down')))
-    assert client.post(f"/api/books/{other['id']}/enrich").status_code == 502
+    assert client.post(f"/api/books/{other['id']}/enrich").status_code == 400
 
 
 def test_scan_reports_a_down_share_with_503(client, tmp_path, monkeypatch):
@@ -148,10 +158,10 @@ def test_scan_reports_a_down_share_with_503(client, tmp_path, monkeypatch):
     from app import fs, scan
     lib = tmp_path / 'lib'; lib.mkdir()
     monkeypatch.setattr(fs, 'reachable', lambda p: False)
-    r = client.post('/api/scan', json=dict(folder=str(lib))); assert r.status_code == 503 and 'not reachable' in r.json()['detail']
+    r = client.post('/api/scan', json=dict(folder=str(lib))); assert r.status_code == 400 and 'not reachable' in r.json()['detail']
     monkeypatch.setattr(fs, 'reachable', lambda p: True)
     monkeypatch.setattr(scan, 'scan', lambda root: (_ for _ in ()).throw(OSError(errno.EHOSTDOWN, 'Host is down')))
-    r = client.post('/api/scan', json=dict(folder=str(lib))); assert r.status_code == 503 and 'interrupted' in r.json()['detail']
+    r = client.post('/api/scan', json=dict(folder=str(lib))); assert r.status_code == 400 and 'Host is down' in r.json()['detail']
 
 
 def test_processing_queue_endpoints(client, monkeypatch, tmp_path):
@@ -164,27 +174,31 @@ def test_processing_queue_endpoints(client, monkeypatch, tmp_path):
     monkeypatch.setattr(pq, '_plan_one', lambda book, final: plan)
     monkeypatch.setattr(R, 'execute', lambda book, p, force=False: dict(status='done', out_dir=p['out_dir'], finished='2026-10-30T00:00:00+00:00', in_bytes=100, out_bytes=50, loudness_after=-18.2))
     assert client.get('/api/process').json()['rows'] == [] and client.post('/api/process/run').status_code == 400                    # nothing approved yet
-    v = client.post('/api/process/propose', params=dict(limit=3)).json()
+    client.post('/api/process/propose', params=dict(limit=3))
+    v=client.get('/api/process').json()
     assert [r['state'] for r in v['rows']] == ['proposed'] and v['rows'][0]['summary']['chapters'] == 1 and v['worker']['last']['propose']['planned'] == 1
-    from app import catalogue
+    from app import catalogue,read_models
     catalogue.set_plan(b['id'],'failed',error='Transient failure',keep_plan=True)
     assert client.post('/api/process/repropose',json=dict(ids=[b['id']])).json()==dict(changed=[b['id']])
+    client.drain()
     assert client.get('/api/process').json()['rows'][0]['state']=='proposed'
     assert client.post('/api/process/reject', json=dict(ids=[b['id']])).json() == dict(changed=[b['id']])
     assert client.post('/api/process/approve', json=dict(ids=[b['id']])).json() == dict(changed=[b['id']]) and client.post('/api/process/approve', json=dict(ids=[999])).json() == dict(changed=[])
-    v = client.post('/api/process/run').json()
+    client.post('/api/process/run')
+    v=client.get('/api/process').json()
     assert v['rows'][0]['state'] == 'done' and v['result'][str(b['id'])]['out_bytes'] == 50 and v['worker']['counts'] == {'done': 1}
     assert client.get(f"/api/books/{b['id']}/details").json()['processed']['status'] == 'done'
-    assert client.post('/api/process/repropose', json=dict(ids=[b['id']])).json() == dict(changed=[]) and client.post('/api/process/propose').json()['rows'][0]['state'] == 'done'      # done work is kept and not proposed again
+    assert client.post('/api/process/repropose', json=dict(ids=[b['id']])).json() == dict(changed=[]) and client.post('/api/process/propose').status_code==200 and client.get('/api/process').json()['rows'][0]['state']=='done'      # done work is kept and not proposed again
 
 
 def test_finished_metadata_and_audio_are_served_from_the_verified_output(client,tmp_path):
     import json
-    from app import catalogue
+    from app import catalogue,read_models
     book=catalogue.add_book(title='Verified book',author='Writer')
     folder=tmp_path/'output';folder.mkdir();(folder/'01.mp3').write_bytes(b'chapter audio')
     metadata=dict(book=dict(title='Verified book',author='Writer',year=2017),chapters=[dict(file='01.mp3',title='One',duration=60)])
     (folder/'metadata.json').write_text(json.dumps(metadata))
+    read_models.save('output',book['id'],metadata)
     catalogue.set_processed(book['id'],dict(status='done',finished='now',out_dir=str(folder),chapters=1))
     assert client.get('/api/finished').json()[0]['title']=='Verified book'
     assert client.get(f"/api/books/{book['id']}/output").json()==metadata
@@ -195,7 +209,7 @@ def test_finished_metadata_and_audio_are_served_from_the_verified_output(client,
 
 
 def test_finished_metadata_requires_a_completed_and_readable_output(client,tmp_path):
-    from app import catalogue
+    from app import catalogue,read_models
     book=catalogue.add_book(title='Pending')
     assert client.get('/api/finished').json()==[]
     assert client.get(f"/api/books/{book['id']}/output").status_code==404
@@ -210,17 +224,17 @@ def test_finished_metadata_requires_a_completed_and_readable_output(client,tmp_p
 
 def test_finished_audio_rejects_paths_outside_the_output_and_missing_files(client,tmp_path):
     import json
-    from app import catalogue
+    from app import catalogue,read_models
     book=catalogue.add_book(title='Output')
     folder=tmp_path/'output';folder.mkdir();(tmp_path/'private.mp3').write_bytes(b'private')
     catalogue.set_processed(book['id'],dict(status='done',finished='now',out_dir=str(folder)))
     for name in ('../private.mp3','missing.mp3','other.wav',''):
-        (folder/'metadata.json').write_text(json.dumps(dict(chapters=[dict(file=name)])))
+        read_models.save('output',book['id'],dict(chapters=[dict(file=name)]))
         assert client.get(f"/api/books/{book['id']}/audio/0").status_code==404
 
 
 def test_finished_list_uses_resolved_output_identity(client):
-    from app import catalogue
+    from app import catalogue,read_models
     b=catalogue.add_book(title='Folder title')
     catalogue.set_processed(b['id'],dict(status='done',finished='2026-11-01',title='Resolved title',author='Resolved Author'))
     row=client.get('/api/finished').json()[0]

@@ -42,6 +42,82 @@ def test_part_filename_gaps_remain_visible_after_work_splitting():
     assert rep['missing_tracks']==1
 
 
+def test_untagged_named_parts_share_work_author_and_declared_sequence_gaps():
+    files=[file(f"/John Mortimer Summer's Lease/John Mortimer - Summer's Lease {n:02} of 16.mp3") for n in range(1,17)]
+    [group]=G.partition(files,"/John Mortimer Summer's Lease")
+    assert (group['title'],group['author'],len(group['paths']))==("Summer's Lease",'John Mortimer',16)
+    [rep]=I.represent(files)
+    assert rep['files']==[f['path'] for f in files] and rep['duration']==960 and rep['missing_tracks']==0
+    # Both leading and trailing omissions remain visible from the declared total.
+    [rep]=I.represent(files[1:-1])
+    assert rep['missing_tracks']==2 and len(rep['files'])==14
+
+
+def test_numeric_copy_counter_chapters_keep_the_preview_as_an_audio_alternative():
+    files=[file(f'/Reborn.on.the.run/1 ({n}).mp3') for n in range(1,24)]
+    preview=file('/Reborn.on.the.run/Reborn on the Run by Catra Corbett, Dan England, and Allyson Ryan - Listen Online.mp3')
+    preview['probe']['duration']=5;files.append(preview)
+    [group]=G.partition(files,'/Reborn.on.the.run')
+    assert len(group['paths'])==24 and G.partition(files,'/Reborn.on.the.run')==[group]
+    reps=I.represent(files)
+    assert sorted(len(r['files']) for r in reps)==[1,23]
+    chapters=next(r for r in reps if len(r['files'])==23)
+    assert chapters['files']==[f['path'] for f in files[:-1]] and chapters['missing_tracks']==0
+    assert next(r for r in reps if len(r['files'])==1)['files']==[preview['path']]
+    del files[9]
+    assert next(r for r in I.represent(files) if len(r['files'])==22)['missing_tracks']==1
+
+
+def test_bare_numbered_mp3_files_require_fixed_size_chunk_evidence():
+    files=[file(f'/Ego Is the Enemy/Ego Is the Enemy {n}.mp3') for n in range(1,6)]
+    for f,size in zip(files,[99000,100000,100000,100000,80000]):f['size']=size
+    [group]=G.partition(files,'/Ego Is the Enemy')
+    assert (group['title'],len(group['paths']))==('Ego Is the Enemy',5)
+    [rep]=I.represent(files)
+    assert rep['files']==[f['path'] for f in files] and rep['missing_tracks']==0
+    # Unequal chapter sizes cannot establish that bare suffix numbers are parts.
+    files[2]['size']=95000
+    assert len(G.partition(files,'/Ego Is the Enemy'))==5
+    assert len(I.represent(files))==5
+
+
+@pytest.mark.parametrize('names',[
+    ['Novel 1 of 3.mp3','Novel 2 of 4.mp3'],
+    ['Novel 01 of 3.mp3','Novel 1 of 3.mp3','Novel 2 of 3.mp3'],
+    ['1 (1).mp3','1 (01).mp3','1 (2).mp3'],
+    ['1 (2).mp3','1 (3).mp3','1 (4).mp3'],
+    ['Stories Volume 1.mp3','Stories Volume 2.mp3','Stories Volume 3.mp3','Stories Volume 4.mp3'],
+    ['Stories Volume 1 of 3.mp3','Stories Volume 2 of 3.mp3','Stories Volume 3 of 3.mp3'],
+])
+def test_ambiguous_numbering_does_not_establish_a_filename_sequence(names):
+    files=[file('/Novel/'+name) for name in names]
+    assert G.filename_layout(files)=={}
+
+
+def test_filename_sequences_respect_tagged_work_boundaries_and_generic_containers():
+    files=[file(f'/mixed collection/1 ({n}).mp3') for n in (1,2,3)]
+    assert G.filename_layout(files)=={}
+    files=[file(f'/Novel/Novel {n:02} of 3.mp3','Another Work') for n in (1,2,3)]
+    assert G.filename_layout(files)=={}
+    # Similar file sizes alone do not combine independently numbered volumes.
+    files=[file(f'/Stories/Stories Volume {n}.mp3') for n in (1,2,3,4)]
+    for f,size in zip(files,[99000,100000,100000,80000]):f['size']=size
+    assert G.filename_layout(files)=={} and len(G.partition(files,'/Stories'))==4
+
+
+def test_explicit_part_word_before_the_declared_total_is_packaging_not_work_title():
+    files=[file(f'/Novel/Novel Part {n:02} of 3.mp3') for n in (1,2,3)]
+    [group]=G.partition(files,'/Novel');[rep]=I.represent(files)
+    assert group['title']=='Novel' and rep['missing_tracks']==0
+
+
+def test_copy_counters_do_not_concatenate_whole_book_formats_or_identical_downloads():
+    files=[file(f'/Novel/1 ({n}).m4b') for n in (1,2,3)]
+    assert G.filename_layout(files)=={} and len(I.represent(files))==3
+    files=[dict(file(f'/Novel/1 ({n}).mp3'),sha256='same recording') for n in (1,2,3)]
+    assert G.filename_layout(files)=={} and len(I.represent(files))==3
+
+
 def test_coded_chapters_share_a_work_and_remain_a_separate_audio_alternative():
     files=[file('/American Psycho/01.m4b','American Psycho','Bret Easton Ellis',track='1/2'),file('/American Psycho/02.m4b','American Psycho','Bret Easton Ellis',track='2/2')]
     files += [file('/American Psycho/'+name) for name in ('APS000 Dedication.mp3','APS301 April Fools.mp3','APS302 Morning.mp3','APS303 At Lunch.mp3')]

@@ -8,7 +8,7 @@ import uuid
 from app import book_titles, contributors, matcher, merge, providers, sources
 from app.ingest.observe import capture,report
 
-VERSION=10
+VERSION=18
 
 
 def names(value): return {contributors.name_key(v) for v in value or [] if v}
@@ -60,9 +60,13 @@ def authors(book,c):
 
 
 def work_title(value):
-    """Anniversary wording identifies an edition of a work, not a different book."""
-    title=re.sub(r'\b(?:the\s+)?(?:\d+(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+anniversary(?:\s+edition)?\b','',value or '',flags=re.I)
-    return re.sub(r'\s+',' ',title).strip(' :–—-()')
+    """Edition labels identify a version of a work; retain the raw recording title."""
+    title=re.sub(r'\b(?:the\s+)?(?:(?:\d+(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)[\s–—-]+anniversary(?:[\s–—-]+edition)?|anniversary[\s–—-]+edition)\b','',value or '',flags=re.I)
+    title=re.sub(r'\b(?:the\s+)?(?:\d+(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)[\s–—-]+edition\b','',title,flags=re.I)
+    title=re.sub(r'\(\s*\)|\[\s*\]','',title)
+    title=re.sub(r'(?:\s*[:,]\s*){2,}',': ',title)
+    title=re.sub(r'\s*:\s*',': ',title)
+    return re.sub(r'\s+',' ',title).strip(' :,–—-()')
 
 
 def primary_credits(book,record):
@@ -79,7 +83,7 @@ def primary_credits(book,record):
 
 
 def language(value):
-    text=str(value or '').strip().lower()
+    text=str(value or '').strip().lower().rsplit('/',1)[-1].replace('_','-')
     return {'en':'english','eng':'english','en-us':'english','en-gb':'english'}.get(text,text)
 
 
@@ -94,13 +98,15 @@ def corroboration(records,field,value,normalise):
 def collect(identity,inv,output,provider_names):
     output=Path(output);output.mkdir(parents=True,exist_ok=True);archives=[];results={};book=identity['book'];duration=max(r['duration'] for r in inv['representations']);anchor=book.get('asin') or ''
     book_only=all(name in merge.WORK for name in provider_names)
+    discovery=[n for n in identity.get('_work_discovery_providers',[]) if n in ('audible','audnexus','audiobookdb','applebooks')] if book_only else []
     search_book=dict(book,title=work_title(book['title']) if book_only else book['title'],author=', '.join(contributors.authors(book.get('author',''))));recording_anchor=None
     def archive(e):
         e=dict(e,observed_at=datetime.now(timezone.utc).isoformat());p=output/(uuid.uuid4().hex+'.json')
         with p.open('x',encoding='utf8') as f:json.dump(e,f,indent=2,ensure_ascii=False,allow_nan=False)
         archives.append(str(p))
     with capture(archive):
-        for name in provider_names:
+        for name in discovery+list(provider_names):
+            if name in discovery and recording_anchor:continue
             p=providers.get(name)
             report(f'Looking up {p.label if hasattr(p, "label") else name}',stage='providers' if book_only else 'recording_providers')
             try:
@@ -108,6 +114,24 @@ def collect(identity,inv,output,provider_names):
                 if reason:results[name]=dict(status='unavailable',reason=reason,candidates=[]);continue
                 found=p.by_asin(anchor) if anchor and name in ('audible','audnexus','audiobookdb','hardcover') else None
                 cs=[found] if found else p.search(search_book['title'],search_book['author'])
+                if name in discovery:
+                    # A recording supplies discovery terms, never a licence to
+                    # discard a conflicting local author, volume or performance.
+                    accepted=[]
+                    for c in cs:
+                        people=contributors.authors(c.get('authors'),contributors.parse(book.get('author','')))
+                        compatible=(compatible_work(book,c) or distinctive_title_match(book,c)) if contributors.authors(book.get('author','')) else title_match(book,c,cs)['score']>=.95
+                        exact=bool(anchor and c.get('asin')==anchor)
+                        measured=work_candidate_score(book,c)>=.9 and rank(book,c,duration,identity)[:2]==(1,1) and local_cast_agreement(book.get('narrator',''),c.get('narrators'))==1
+                        if people and compatible and (exact or measured):accepted.append(c)
+                    # Multiple distinct recordings cannot silently choose the
+                    # title/author used to discover the written work.
+                    unique={recording_key(c) for c in accepted}
+                    results[name]=dict(status='ok',candidates=accepted if len(unique)==1 else [],discovery_candidates=cs)
+                    if len(unique)==1:
+                        recording_anchor=accepted[0]
+                        search_book.update(title=work_title(recording_anchor['title']),author=', '.join(contributors.authors(recording_anchor['authors'],contributors.parse(book.get('author','')))))
+                    continue
                 # Local tags may use an unfamiliar spelling or nickname. A
                 # title-only retry broadens discovery; acceptance still checks
                 # the complete author identity and recording evidence below.
@@ -116,8 +140,8 @@ def collect(identity,inv,output,provider_names):
                     cs=cs+[c for c in extra if not any(c.get('id')==old.get('id') and c.get('source')==old.get('source') for old in cs)]
                 results[name]=dict(status='ok',candidates=cs)
                 if book_only:
-                    compatible=[c for c in cs if compatible_work(book,c,cs)]
-                    if compatible:search_book['title']=work_title(max(compatible,key=lambda c:matcher.score(book,c))['title'])
+                    hint=work_lookup_hint(book,dict(providers=results))
+                    if hint:search_book.update(hint)
                 if name=='audible' and not anchor:
                     ranked=sorted(cs,key=lambda c:rank(book,c,duration,identity),reverse=True)
                     if ranked and matcher.score(book,ranked[0])>=.9:anchor=ranked[0].get('asin','')
@@ -141,7 +165,7 @@ def collect(identity,inv,output,provider_names):
             if name not in results:continue
             compatible=[c for c in results[name]['candidates'] if compatible_work(search_book,c,results[name]['candidates'])]
             if compatible:
-                selected=max(compatible,key=lambda c:c.get('ratings_count') or 0) if name=='hardcover' else max(compatible,key=lambda c:(bool((recording_anchor or {}).get('release_date')) and c.get('release_date','')[:10]==recording_anchor['release_date'][:10],matcher.score(book,c)))
+                selected=max(compatible,key=lambda c:work_preference(search_book,c,compatible)) if name=='hardcover' else max(compatible,key=lambda c:(bool((recording_anchor or {}).get('release_date')) and c.get('release_date','')[:10]==recording_anchor['release_date'][:10],matcher.score(book,c)))
                 details=getattr(providers.get(name),'details',None)
                 if not callable(details):continue
                 try:
@@ -152,7 +176,7 @@ def collect(identity,inv,output,provider_names):
             p=providers.get('openlibrary');lookup=getattr(p,'publication_editions',None)
             compatible=[c for c in results['openlibrary']['candidates'] if compatible_work(search_book,c,results['openlibrary']['candidates'])]
             if callable(lookup) and compatible:
-                selected=max(compatible,key=lambda c:(matcher.score(book,c),c.get('ratings_count') or 0))
+                selected=max(compatible,key=lambda c:work_preference(search_book,c,compatible))
                 report('Looking up publishers of the matched book’s editions',stage='providers' if book_only else 'recording_providers')
                 try:
                     years=[sources._year(c.get('original_year')) for source,entry in results.items() if source in merge.WORK for c in entry['candidates'] if compatible_work(search_book,c)]
@@ -170,9 +194,24 @@ def title_match(book,c,candidates=()):
 def work_candidate_score(book,c,candidates=()):return round(.7*title_match(book,c,candidates)['score']+.3*matcher.author_score(book.get('author',''),c),3)
 
 
+def work_preference(book,c,candidates=()):
+    score=title_match(book,c,candidates)['score'];lang=language(c.get('language'))
+    return (score>=.95,1 if lang=='english' else -1 if lang else 0,work_candidate_score(book,c,candidates),c.get('edition_count') or 0,c.get('ratings_count') or 0)
+
+
 def compatible_work(book,c,candidates=()):
     wanted=names(contributors.authors(book.get('author','')))
-    return bool(wanted) and title_match(book,c,candidates)['score']>=.85 and bool(authors(book,c) & wanted)
+    if not wanted or title_match(book,c,candidates)['score']<.85 or not authors(book,c) & wanted:return False
+    # A shortened credit cannot bridge two explicitly different initials for
+    # the same title. Keep exact credits usable, but withhold ambiguous support.
+    for a in wanted:
+        for b in contributors.authors(c.get('authors') or c.get('author','')):
+            if not contributors.omitted_middle_initial(a,b):continue
+            short=min((a,b),key=lambda value:len(contributors.name_key(value).split()))
+            expanded={contributors.name_key(name) for other in [c,*candidates] if title_match(book,other)['score']>=.95 for name in contributors.authors(other.get('authors') or other.get('author','')) if contributors.omitted_middle_initial(short,name)}
+            if len(contributors.name_key(a).split())==3:expanded.add(contributors.name_key(a))
+            if len(expanded)>1:return False
+    return True
 
 
 def rank(book,c,duration,identity):
@@ -330,20 +369,55 @@ def plan_sections(plan):
     return rows,audio
 
 
+def distinctive_title_match(book,c):
+    """Full-title evidence only; generic labels and missing subtitles cannot override an author."""
+    title=work_title(book['title']);words=merge.norm(title).split()
+    informative=[w for w in words if w not in {'a','an','the','of','and','complete','definitive','collection','collected','works','edition','unabridged'}]
+    if 'author' in (book.get('locked') or []) or len(words)<4 or len(informative)<2 or len(''.join(words))<24:return False
+    target=book_titles.compact(title)
+    return any(target==book_titles.compact(work_title(value)) for value in (c.get('title',''),' '.join(v for v in (c.get('title'),c.get('subtitle')) if v)))
+
+
+def title_author_consensus(book,collected,minimum_families):
+    """An observed title collision vetoes inference, even if another author has more votes."""
+    matches=[]
+    for name,entry in collected['providers'].items():
+        if name not in merge.WORK and 'discovery_candidates' not in entry:continue
+        for candidate in entry.get('candidates',[]):
+            if not distinctive_title_match(book,candidate):continue
+            record=entry.get('details') if name=='hardcover' and (entry.get('details') or {}).get('id')==candidate.get('id') else candidate
+            people=contributors.authors(record.get('authors'),contributors.parse(book.get('author','')))
+            if not people:return None
+            matches.append((name,candidate,people))
+    if not matches or len({family(name) for name,_,_ in matches})<minimum_families or not any(name in merge.WORK for name,_,_ in matches):return None
+    for _,_,reference in matches:
+        if any(len(people)!=len(reference) or not all(any(contributors.same_author(a,b,True) for b in people) for a in reference) for _,_,people in matches):return None
+    return dict(title=work_title(matches[0][1]['title']),author=', '.join(matches[0][2]))
+
+
 def inferred_work_identity(identity,collected):
     from copy import deepcopy
-    if identity['book'].get('author'):return identity,False
+    if contributors.authors(identity['book'].get('author','')):
+        hint=title_author_consensus(identity['book'],collected,2)
+        if not hint:return identity,False
+        result=deepcopy(identity);result['book']['author']=hint['author']
+        return result,result['book']['author']!=identity['book']['author']
     book=identity['book'];people=[];candidates=[]
+    if not re.search(r'[^\W\d_]',book['title']):return identity,False
+    # Accepted discovery recordings may corroborate an otherwise unknown writer;
+    # Audible and its mirrors still constitute only one independent family.
+    discovery={name for name,entry in collected['providers'].items() if 'discovery_candidates' in entry}
+    cohort=[c for name,entry in collected['providers'].items() if name in merge.WORK or name in discovery for c in entry.get('candidates',[])]
     for name,entry in collected['providers'].items():
-        if name not in merge.WORK:continue
+        if name not in merge.WORK and name not in discovery:continue
         for c in entry.get('candidates',[]):
-            if title_match(book,c,entry.get('candidates',[]))['score']<.95:continue
+            if title_match(book,c,cohort)['score']<.95:continue
             candidates.append((name,c))
             for person in contributors.authors(c.get('authors') or c.get('author','')):
                 found=next((p for p in people if contributors.same_author(person,p['name'],True)),None)
                 if found:found['sources'].add(name)
                 else:people.append(dict(name=person,sources={name}))
-    agreed=[p['name'] for p in people if len(p['sources'])>=2]
+    agreed=[p['name'] for p in people if len({family(s) for s in p['sources']})>=2 and p['sources'].intersection(merge.WORK)]
     if not agreed:return identity,False
     # Distinct books sharing a title must not become invented coauthors.
     families={name for name,c in candidates if all(any(contributors.same_author(w,a,True) for a in contributors.authors(c.get('authors') or c.get('author',''))) for w in agreed)}
@@ -352,12 +426,70 @@ def inferred_work_identity(identity,collected):
     return result,True
 
 
+def work_lookup_hint(book,collected):
+    """Improve discovery with one unambiguous hit; acceptance still needs consensus."""
+    if not re.search(r'[^\W\d_]',book['title']):return None
+    cohort=[c for name,entry in collected['providers'].items() if name in merge.WORK for c in entry.get('candidates',[])]
+    strong=[c for c in cohort if contributors.authors(c.get('authors')) and title_match(book,c,cohort)['score']>=.95 and (not contributors.authors(book.get('author','')) or compatible_work(book,c,cohort))]
+    groups=[]
+    for c in strong:
+        people=contributors.authors(c['authors'])
+        if not any(len(people)==len(g) and all(any(contributors.same_author(a,b,True) for b in g) for a in people) for g in groups):groups.append(people)
+    if len(groups)!=1:return title_author_consensus(book,collected,1)
+    chosen=max(strong,key=lambda c:(title_match(book,c,cohort)['score'],c.get('ratings_count') or 0))
+    return dict(title=work_title(chosen['title']),author=', '.join(contributors.authors(chosen['authors'])))
+
+
+def work_edition_evidence(collected):
+    """Use archived attached editions as title evidence, never as new providers."""
+    from app.providers.openlibrary import edition_language
+    entry=collected['providers'].get('openlibrary',{});aliases=[]
+    seen={(c.get('id'),c.get('subtitle_edition')) for c in entry.get('candidates',[]) if c.get('subtitle_edition')}
+    for c in entry.get('candidates',[]):
+        key=c.get('id') or ''
+        if not re.fullmatch(r'/works/OL\d+W',key) or entry.get('edition_work_key')!=key:continue
+        main=book_titles.parts(work_title(c.get('title','')))[0]
+        for edition in entry.get('publisher_editions',[]):
+            if (key,edition.get('key')) in seen:continue
+            if edition.get('work_key')!=key or not re.fullmatch(r'/books/OL\d+M',edition.get('key') or ''):continue
+            if not book_titles.similar(main,book_titles.parts(work_title(edition.get('title','')))[0]):continue
+            aliases.append(dict(c,title=edition['title'],subtitle=edition.get('subtitle') or '',subtitle_edition=edition['key'],language=edition_language(edition)))
+            seen.add((key,edition['key']))
+    hydrated=[]
+    for c in entry.get('candidates',[])+aliases:
+        linked=next((e for e in entry.get('publisher_editions',[]) if e.get('work_key')==c.get('id')==entry.get('edition_work_key') and e.get('key')==c.get('subtitle_edition') and re.fullmatch(r'/books/OL\d+M',e.get('key') or '')),None)
+        hydrated.append(dict(c,language=edition_language(linked)) if linked and edition_language(linked) else c)
+    if hydrated==entry.get('candidates',[]):return collected
+    return dict(collected,providers=dict(collected['providers'],openlibrary=dict(entry,candidates=hydrated)))
+
+
+def full_title_identity(identity,inv,collected):
+    """A verified English edition can explain a full title tag beside a short album tag."""
+    from copy import deepcopy
+    book=identity['book']
+    if 'title' in (book.get('locked') or []):return identity
+    tags={book_titles.compact(work_title(f['probe']['tags'].get('title',''))) for f in inv['files'] if f['probe']['tags'].get('title')}
+    if len(tags)!=1:return identity
+    matches={}
+    for name,entry in collected['providers'].items():
+        if name not in merge.WORK:continue
+        for c in entry.get('candidates',[]):
+            full=': '.join(v for v in book_titles.parts(c.get('title',''),c.get('subtitle','')) if v)
+            if language(c.get('language'))!='english' or book_titles.compact(full) not in tags or not compatible_work(book,c):continue
+            matches[book_titles.compact(full)]=full
+    if len(matches)!=1:return identity
+    result=deepcopy(identity);result['book']['title']=next(iter(matches.values()));return result
+
+
 def resolve(identity,inv,collected):
     """Identify the written work independently of any recording candidate."""
-    catalogue_book=identity['book'];identity,inferred=inferred_work_identity(identity,collected)
+    collected=work_edition_evidence(collected)
+    catalogue_book=identity['book'];identity=full_title_identity(identity,inv,collected);identity,inferred=inferred_work_identity(identity,collected)
     evidence,measure=_recording_evidence(identity,inv,collected);book=identity['book'];known_roles=contributors.parse(book.get('author',''))
     work_scores=[]
     work_records={'catalogue':{k:v for k,v in sources.from_catalogue(catalogue_book).items() if k in WORK_FIELDS}}
+    if inferred and contributors.authors(catalogue_book.get('author','')):
+        work_records['catalogue']['unverified_authors']=work_records['catalogue']['authors'];work_records['catalogue']['authors']=[]
     work_book=dict(book)
     compatible=[e for e in evidence['candidates'] if compatible_work(book,e['candidate'])]
     if compatible:
@@ -369,7 +501,7 @@ def resolve(identity,inv,collected):
         if entry.get('details') and name!='hardcover':candidates.insert(0,entry['details'])
         candidates=[c for c in candidates if compatible_work(book,c,cohort) and compatible_work(work_book,c,cohort)]
         if not candidates:continue
-        c=max(candidates,key=lambda c:(work_candidate_score(book,c,cohort),c.get('edition_count') or 0,c.get('ratings_count') or 0))
+        c=max(candidates,key=lambda c:work_preference(book,c,cohort))
         work_scores.append(work_candidate_score(book,c,cohort))
         if name=='hardcover' and entry.get('details') and entry['details']['id']==c['id']:record=sources.from_hardcover(entry['details'],known_roles)
         else:record=sources.from_candidate(c,known_roles)
@@ -395,7 +527,10 @@ def resolve(identity,inv,collected):
             record.update(publisher=' / '.join(edition['publishers']),publisher_year=original_year,publisher_edition=edition['key'])
     work_resolved=sources.resolve(book,work_records,field_sources={'publisher':merge.WORK})
     work_conflicts=int(not authors(book,dict(title=work_resolved['title'],subtitle='',authors=work_resolved['authors'])) & names(contributors.authors(book.get('author',''))))
-    work_conflicts+=int(bool(work_resolved['year_note']) and work_resolved['year_note_requires_review'])
+    # Attached editions can bridge a revised/adapted subtitle, but cannot settle
+    # conflicting original-publication years accepted by earliest-year selection.
+    linked_titles=any('linked editions' in record.get('title_match','') for record in work_records.values())
+    work_conflicts+=int(bool(work_resolved['year_note']) and (work_resolved['year_note_requires_review'] or linked_titles))
     work_score=max(work_scores,default=None)
     candidate=evidence['recording'];runtime=measure['recording.runtime_error']
     recording_conflicts=measure['metadata.critical_conflicts']
@@ -422,6 +557,7 @@ def resolve(identity,inv,collected):
         if not any(r['field']==field for r in performance_rows):performance_rows.append(dict(field=field,value='unknown',source='No supporting source',note=''))
 
     if inferred:measure['identity.author_known']=1
+    elif not contributors.authors(book.get('author','')):measure['identity.author_known']=0
     measure.update({'work.score':work_score,'work.conflicts':work_conflicts,'recording.conflicts':recording_conflicts,'recording.matched':int(matched),'metadata.work_families':len({family(s) for s in work_records if s!='catalogue'})})
     return dict(evidence,version=VERSION,records=records,resolved=resolved,recording=candidate if matched else None,recording_candidate=candidate,work=dict(records=work_records,resolved=work_resolved,rows=scoped_rows(book,work_resolved,'work'),score=work_score,families=len({family(s) for s in work_records if s!='catalogue'})),performance=dict(records=performance_records,rows=performance_rows,matched=matched,choices=evidence['choices'],selected_choice=evidence['selected_choice'],local=dict(title=book['title'],narrators=sources._names(book.get('narrator','')),language=identity['language'],abridged=identity['abridged'],duration_seconds=max(r['duration'] for r in inv['representations']),dates=sorted({str(f['probe']['tags']['date']) for f in inv['files'] if f['probe']['tags'].get('date')})),candidate=candidate,corroboration=evidence['corroboration']),analysis_metrics=measure),measure
 

@@ -125,11 +125,14 @@ def run_approved(jobs: int = 2, ids: list[int] | None = None) -> dict:
 class Worker:
     """One background thread for the server: runs proposals and approved plans one task at a time so long jobs never block a request. `inline` (tests) runs tasks on the spot."""
     inline = False
+    jobs = None
+    domain = 'process'
 
     def __init__(self):
         self.q: _queue.Queue = _queue.Queue(); self.busy: str | None = None; self.active=None; self.last: dict = {}; self._thread: threading.Thread | None = None; self._lock = threading.Lock()
 
     def submit(self, kind: str, **kw):
+        if self.jobs is not None:return self.jobs.submit(self.domain,kind,**kw)
         if self.inline: self._do(kind, kw); return
         self.q.put((kind, kw))
         with self._lock:
@@ -143,6 +146,7 @@ class Worker:
         finally: self.busy = None; self.active=None
 
     def tasks(self):
+        if self.jobs is not None:return self.jobs.tasks(self.domain)
         with self.q.mutex:pending=[dict(kind=kind,options=kw,state='queued',started='') for kind,kw in self.q.queue]
         active=self.active
         return ([active] if active else [])+pending
@@ -154,4 +158,5 @@ class Worker:
             self._do(kind, kw)
 
     def status(self) -> dict:
+        if self.jobs is not None:return dict(self.jobs.status(self.domain),counts=catalogue.plan_counts())
         return dict(busy=self.busy, queued=self.q.qsize(), last=self.last, counts=catalogue.plan_counts())

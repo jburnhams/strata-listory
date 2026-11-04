@@ -161,6 +161,7 @@ export const handlers = [
 ]
 
 export const server = setupServer(
+  http.get('/api/jobs/:id', () => HttpResponse.json({ state: 'done', result: {}, error: '' })),
   http.get('/api/ingest', () => HttpResponse.json(ingestFixture())),
   http.post('/api/ingest/run', () => HttpResponse.json({ queued: true })),
   http.get('/api/ingest/runs/:id', () => HttpResponse.json({ evidence: 'preserved' })),
