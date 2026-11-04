@@ -1,5 +1,11 @@
 # Progress log
 
+## 2026-11-04: searchable failure details
+
+Processing exposes labelled, multiline failure reasons and the last step for stopped work. Missing error text falls back to the last failed activity entry, or explicitly states that no reason was recorded. The Failed tab can be combined with search across titles, IDs, stages, errors and activity messages. Status tabs wrap on smaller screens. Search filters the existing saved API response without adding backend work. Rebuilt and verified the live frontend without restarting active jobs.
+
+Validation: full web suite and coverage gate passed, along with typecheck/build and whitespace checks. The new UI regression covers mixed job/plan failures, timeout search, failed activity fallback, absent reasons, exclusion of queued work and clearing search.
+
 ## 2026-11-04: background job scheduling priority
 
 Isolated workers lower their CPU priority before importing processing code (POSIX nice 19, Windows idle priority class). Linux workers request idle I/O priority through ionice when available; an absent/unsupported tool does not fail the job. Child tools inherit those settings. Applied CPU nice 19 and idle I/O to the current job, FFmpeg and their existing threads without restarting or interrupting the job. Verified the web-server process remains nice 0.

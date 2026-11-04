@@ -159,3 +159,30 @@ it('keeps failed jobs stopped until Retry job is clicked', async () => {
   expect(retries).toBe(1)
   expect(await screen.findByText('No operations in this view.')).toBeInTheDocument()
 })
+
+it('filters failed work and searches failure reasons without showing queued work', async () => {
+  mock.queue = [{ book_id: 4, title: 'Broken plan', author: 'B', state: 'failed', error: 'Source files missing', updated: '', summary: null }]
+  server.use(http.get('/api/operations', () => HttpResponse.json({ busy: false, rows: [
+    { id: 'timeout', job_id: 'timeout', book_id: 2, run_id: null, title: 'Slow analysis', stage: 'Measure audio quality', state: 'failed', phase: null, error: 'Job exceeded its time limit\nStopped after 1800 seconds' },
+    { id: 'pending', book_id: 3, title: 'Queued book', stage: 'inventory', state: 'queued', error: '' },
+    { id: 'unknown', book_id: 5, title: 'Old failure', stage: 'inventory', state: 'failed', error: '' },
+    { id: 'logged', book_id: 6, title: 'Logged failure', stage: 'inventory', state: 'failed', error: '', logs: [{ created: '2026-11-04T00:00:00Z', status: 'failed', message: 'Decoder could not open audio' }] },
+  ] })))
+  const { user } = setup(<ProcessPage />)
+  await user.click(await screen.findByRole('tab', { name: 'Failed (4)' }))
+  expect(screen.queryByText('Queued book')).toBeNull()
+  expect(screen.getByText('Source files missing')).toBeInTheDocument()
+  expect(screen.getByText('No failure reason was recorded.')).toBeInTheDocument()
+  expect(screen.getByText('Decoder could not open audio', { selector: 'p' })).toBeInTheDocument()
+  expect(screen.getByText('Last step: Measure audio quality')).toBeInTheDocument()
+  const search = screen.getByRole('searchbox', { name: 'Search operations' })
+  await user.type(search, 'time limit')
+  expect(screen.getByText('Slow analysis')).toBeInTheDocument()
+  expect(screen.queryByText('Broken plan')).toBeNull()
+  expect(screen.queryByText('Old failure')).toBeNull()
+  await user.clear(search)
+  await user.type(search, 'no such error')
+  expect(screen.getByText('No operations in this view.')).toBeInTheDocument()
+  await user.clear(search)
+  expect(screen.getByText('Broken plan')).toBeInTheDocument()
+})
