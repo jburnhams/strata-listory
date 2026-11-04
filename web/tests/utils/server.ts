@@ -50,6 +50,9 @@ export const resetMock = () => {
 
 // Every endpoint the app calls has a handler here; one without a handler fails the test (setup.ts: onUnhandledFrame 'error').
 export const handlers = [
+  http.get('/api/match-reviews', ({ request }) => { const mode = new URL(request.url).searchParams.get('mode') === 'automatic' ? 'automatic' : 'shortlist'; return HttpResponse.json({ rows: [matchReviewFixture(mode)], total: 1, offset: 0, limit: 10 }) }),
+  http.get('/api/match-reviews/:id', () => HttpResponse.json(matchReviewFixture())),
+  http.post('/api/match-reviews/:id/:action', () => HttpResponse.json({ changed: true })),
   http.post('/api/jobs/:id/retry', () => HttpResponse.json({ queued: true })),
   http.get('/api/operations', () => HttpResponse.json({ rows: [], busy: false })),
   http.get('/api/finished', () => HttpResponse.json([])),
@@ -176,3 +179,17 @@ export const server = setupServer(
   http.post('/api/ingest/runs/:id/enqueue', () => HttpResponse.json({ book_id: 1, approved: false })),
   http.put('/api/ingest/policy', async ({ request }) => HttpResponse.json(await request.json())),
 ...handlers)
+
+export function matchReviewFixture(mode: 'automatic' | 'shortlist' = 'shortlist'): import('../../src/api').MatchReview {
+  return {
+    id: 'review1', book_id: 1, created: '2026-11-04T12:00:00Z', state: mode === 'automatic' ? 'audiobook_review' : 'metadata_review', basis: 'a'.repeat(64), automatic: mode === 'automatic', approved: mode === 'automatic', held: false, shortlisted: mode === 'shortlist', blocked: '', approved_at: mode === 'automatic' ? '2026-11-04T12:00:00Z' : null, cover: true, complete: true,
+    approval: mode === 'automatic' ? { automatic: true, policy_revision: 1, checks: [] } : null,
+    local: { title: 'Dune', author: 'Frank Herbert', narrator: 'Reader', path: '/inbox/Dune', asin: 'B000000001', kind: 'book', locked: [] },
+    match: { title: 'Dune', authors: ['Frank Herbert'], year: 1965, publisher: 'Original Press', rows: [{ field: 'Title', value: 'Dune', source: 'Hardcover + Open Library', note: '' }], sources: ['hardcover','openlibrary'] },
+    recording: { matched: false, rows: [{ field: 'Narrator', value: 'Reader', source: 'Local tags', note: 'Recording not approved' }] },
+    suggestion: mode === 'shortlist' ? { candidate: { source: 'openlibrary', id: '/works/OL1W', title: 'Dune', subtitle: '', authors: ['Frank Herbert'], original_year: 1965, publisher: 'Original Press', url: 'https://openlibrary.org/works/OL1W', narrators: [], abridged: false, runtime_minutes: 60, language: 'english', isbns: ['1234'], genres: ['Science fiction'], description: 'Desert planet.', rating: 0, ratings_count: 0 }, score: .97, features: { title_edit: 1, author_edit: .99, supporting_families: 2 }, model: 'xgboost_depth2', candidate_key: 'chosen' } : null,
+    source: { folder: '/inbox/Dune', count: 4, files: ['01.mp3','02.mp3','03.mp3'], hours: 1 },
+    checks: [{ metric: 'metadata.work_families', passed: true, value: 2, threshold: { min: 2 }, reason: '' }],
+    evidence: { records: { hardcover: { title: 'Dune', authors: ['Frank Herbert'], original_year: 1965 } }, tags: { album: ['Dune'], artist: ['Frank Herbert'] }, providers: { openlibrary: { status: 'ok', candidates: [{ source: 'openlibrary', id: '/works/OL1W', title: 'Dune', authors: ['Frank Herbert'], original_year: 1965, url: 'https://openlibrary.org/works/OL1W' }] } } },
+  }
+}

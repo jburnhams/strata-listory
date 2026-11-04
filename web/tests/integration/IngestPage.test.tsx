@@ -42,19 +42,23 @@ describe('staged ingest', () => {
   it('waits for a slow initial page before polling again', async () => {
     let poll = () => {}; let finish!: () => void; let requests = 0
     const ready = new Promise<void>(resolve => { finish = resolve })
-    let started!: () => void; const firstRequest = new Promise<void>(resolve => { started = resolve })
-    let repeated!: () => void; const secondRequest = new Promise<void>(resolve => { repeated = resolve })
-    vi.spyOn(window, 'setInterval').mockImplementation(cb => { poll = cb as () => void; return {} as ReturnType<typeof window.setInterval> })
-    vi.spyOn(window, 'clearInterval').mockImplementation(() => {})
-    server.use(http.get('/api/ingest', async () => { requests++; if (requests === 1) started(); else repeated(); await ready; return HttpResponse.json(ingestFixture()) }))
-    setup(<IngestPage />)
-    await act(async () => { await firstRequest })
-    act(() => { poll(); poll(); poll() })
-    expect(requests).toBe(1)
-    finish()
-    expect(await screen.findByRole('button', { name: 'Approve book and identify audiobook' })).toBeEnabled()
-    act(() => poll())
-    await act(async () => { await secondRequest }); expect(requests).toBe(2)
+    const realInterval = window.setInterval.bind(window)
+    // Testing Library also uses intervals: only capture the app's polling timer.
+    vi.spyOn(window, 'setInterval').mockImplementation((cb, delay, ...args) => {
+      if (delay !== 3000) return realInterval(cb, delay, ...args) as unknown as ReturnType<typeof window.setInterval>
+      poll = cb as () => void; return {} as ReturnType<typeof window.setInterval>
+    })
+    server.use(http.get('/api/ingest', async () => { requests++; await ready; return HttpResponse.json(ingestFixture()) }))
+    try {
+      setup(<IngestPage />)
+      await waitFor(() => expect(requests).toBe(1))
+      act(() => { poll(); poll(); poll() })
+      expect(requests).toBe(1)
+      finish()
+      expect(await screen.findByRole('button', { name: 'Approve book and identify audiobook' })).toBeEnabled()
+      act(() => poll())
+      await waitFor(() => expect(requests).toBe(2))
+    } finally { finish() }
   })
 
   it('toggles metadata automation without changing quality or processing approval', async () => {

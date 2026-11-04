@@ -107,3 +107,25 @@ def test_policy_refresh_and_recovered_approval_keep_durable_consent(monkeypatch)
     queue=SimpleNamespace(submit=lambda *a,**kw:submitted.append((a,kw)))
     tasks.execute(queue,'ingest','approve',dict(run_id=rid,phase='metadata',_recovered=True))
     assert store.get(rid)['state']=='running' and submitted==[(('ingest','continue'),dict(run_id=rid))]
+
+
+@pytest.mark.parametrize('action',['accept','unapprove','confirm','reject'])
+def test_match_review_actions_are_queued_and_only_acceptance_schedules_continuation(monkeypatch,action):
+    from app.ingest import match_review
+    calls=[]
+    jobs=SimpleNamespace(submit=lambda *args,**kwargs:calls.append((args,kwargs)))
+    monkeypatch.setattr(match_review,'accept',lambda **kw:dict(changed=True,**kw))
+    monkeypatch.setattr(match_review,'revoke',lambda **kw:dict(changed=True,**kw))
+    monkeypatch.setattr(match_review,'confirm',lambda **kw:dict(changed=True,**kw))
+    monkeypatch.setattr(match_review,'reject',lambda **kw:dict(changed=True,**kw))
+    result=tasks.execute(jobs,'ingest','match_review',dict(run_id='r',expected='basis',action=action))
+    assert result['expected']=='basis'
+    assert calls==[(('ingest','continue'),dict(run_id='r'))] if action=='accept' else not calls
+
+
+def test_queued_continuation_cannot_undo_withdrawn_book_consent(monkeypatch):
+    monkeypatch.setattr(store,'get',lambda rid:{})
+    monkeypatch.setattr(pipeline,'book_review_held',lambda run:True)
+    calls=[];monkeypatch.setattr(pipeline,'publish_run',lambda rid:calls.append(rid))
+    assert tasks.execute(None,'ingest','continue',dict(run_id='held'))==dict(held_for_manual_book_review=True)
+    assert calls==['held']

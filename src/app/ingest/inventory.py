@@ -230,10 +230,13 @@ def recover(book,inv):
         t=f['probe']['tags'];hint=inv.get('work_hint') or {};title=hint.get('title') if hint.get('use_title') else t.get('album') or hint.get('title') or t.get('title') or ''
         if not grouping.title_hint(title):title=hint.get('title') or t.get('title') or ''
         title=re.sub(r'\s*\((?:un)?abridged\)\s*','',title,flags=re.I).strip()
-        add(votes,title);who=t.get('album_artist') or t.get('artist') or ''
+        add(votes,title);who=grouping.author_credit(t)
         if '/' in who and len(set(who.split('/')))==1: who=who.split('/')[0]
         if hint and who and merge.norm(who) in merge.norm(hint.get('title','')):who=''
-        add(authors,who);add(narrators,t.get('narratedby') or t.get('narrator') or t.get('composer') or '')
+        reader=t.get('narratedby') or t.get('narrator') or t.get('composer') or ''
+        credits=contributors.parse(reader or t.get('album_artist',''))
+        if credits and all(c['role'] in ('narrator','reader') for c in credits):reader=', '.join(c['name'] for c in credits)
+        add(authors,who);add(narrators,reader)
         asins.update(embedded_asins(t))
         if t.get('language'): languages.add(t['language'].lower())
         if re.search(r'\bunabridged\b',t.get('album',''),re.I): formats.add(False)

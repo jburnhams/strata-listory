@@ -4,11 +4,16 @@ from pathlib import Path
 import re
 from app import contributors, matcher, merge, scan
 
-VERSION=4
+VERSION=5
 GENERIC={'','audio','audiobook','audiobooks','book','books','unknown','unknown album','untitled'}
 
 DISC_LABEL=re.compile(r'\b(?:cd|disc|disk)\s*[._-]*\s*(\d+)(?:\s*(?:of|/)\s*(\d+))?\b',re.I)
 NUMBERS={word:str(n) for n,word in enumerate(('zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve'))}
+
+
+def author_credit(tags):
+    """A labelled reader/auxiliary credit is not a work-author assertion."""
+    return next((value for key in ('album_artist','artist') if (value:=tags.get(key)) and contributors.authors(value)),'')
 
 
 def album_parts(value):
@@ -171,7 +176,7 @@ def partition(files,root):
             anchors=albums.get(str(path.parent),set())
             filename=''
             fallback=coded[f['path']]['prefix'] if len(prefixes[str(path.parent)])>1 else next(iter(anchors)) if len(anchors)==1 else fallback
-        author=tags.get('album_artist') or tags.get('artist') or ''
+        author=author_credit(tags)
         hints.append(dict(file=f,album=album,filename=filename,folder=fallback,author=author))
     repeated=Counter(merge.norm(h['filename']) for h in hints if h['filename'])
     sequences={name for name,count in repeated.items() if name and count>1}

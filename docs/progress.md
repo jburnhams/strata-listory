@@ -378,3 +378,184 @@ Grouping validation passed: 563 backend unit tests, 95.30% coverage; six real-au
 Live Just William regroup complete: parent 53d4195d44f54b548f4067349321c824, ten metadata-review children covering 395 files once each. All 207 old story entries are linked to the new volume runs; source evidence and publisher-backed tag repairs are visible through the live API. Each volume re-partitions into one work and has one ordered audio representation. All ten book-identification lookups completed and await review; no quality/final approvals were granted.
 
 PR #10 review follow-up: existing runs now use the current policy at each new stage-approval gate while preserving their original execution/provider policy. Replanning queues only selected replacement proposals and supports failed ingest-backed plans with valid approvals and unchanged inputs. Review pagination clamps when approvals shrink the queue. Regression tests reproduce these cases. Local validation: 567 backend tests, 95.32% coverage; 91 web tests with coverage gate and production build; 18 integration tests in parallel; lint and whitespace checks passed.
+
+## 2026-11-04 — Bulk identification and match features
+
+Audited 355 current book-identification reviews against saved evidence. Separated
+recording marketing subtitles from competing written-work assertions, preserving
+explicit full-local-title context and all book-catalogue conflicts. Added bounded
+English edition-link discovery and canonical main-title retries. Four existing
+reviews pass after the scope fix; a 15-book Open Library discovery pass identified
+three more candidates. The local dump and cache were used first.
+
+Added a read-only candidate-feature exporter: 6,415 pairs, with unknown labels,
+source margins, author/title edit distances and explicit negative/missing evidence.
+Eight current manual approvals are insufficient independent training labels for
+high-precision model deployment; automatic approvals were not recycled as truth.
+See `bulk-identification-20261104.md` for replay results, grouped validation and
+logistic/boosted-tree experiment requirements.
+
+Applied eight new book-only automatic approvals after live invariant checks; the
+other replay-passing work, Better than Sex, retains its existing legacy consent
+and is at Quality review. Five approvals use fresh runs with archived local-dump
+replay evidence. All earlier runs and a pre-write SQLite backup are retained.
+No new recording/quality consent or processing was granted. Validation: 796 unit
+tests, 95.71% coverage; nine ingest integration tests; Ruff and whitespace checks.
+
+A final dump-only pass over missing-author entries also recovered Losing the
+Signal and Build through unambiguous catalogue hints and independent work
+corroboration. Total: nine replay-passing works, eight newly recorded book
+approvals and one existing legacy consent restored by projection.
+
+## 2026-11-04 — Train from trusted automatic approvals
+
+The user explicitly designated existing automatic approvals as ground truth.
+Implemented an offline supervised matching experiment using accepted catalogue
+candidates frozen at approval time, with uncertain editions left unknown and
+same-author/wrong-work negatives mined within disjoint work-group partitions.
+The models exclude the five features that directly encode the current resolver.
+
+295 approved queries supplied 2,784 positive candidate pairs across 240 work
+groups, including 2,782 automatic-approval positives. Compared three logistic
+regressions and three shallow XGBoost classifiers using calibration-only selection.
+The selected depth-two XGBoost model recovered 48/52 held-out work groups, with
+zero observed false positives on 203 labelled negative test pairs. It shortlisted
+52 current book-identification reviews at a calibrated cutoff of 0.90; no
+model-generated approvals were written. These metrics measure agreement with the
+trusted teacher and derived wrong-work labels, not independent field accuracy.
+
+Optional packages remain in `requirements-model.txt`; artifacts are retained in
+`data/match-model-20261104/`. See `match-model-20261104.md` for the method,
+reproduction commands and results. Validation: 804 unit tests, 95.75% coverage,
+focused final pending-filter tests, Ruff and whitespace checks.
+
+## 2026-11-04 — Quick review pages for automatic and model matches
+
+Added Automatic approvals and Match shortlist pages with source/match comparisons,
+search, pagination, check warnings, publication notes and lazy full evidence.
+Indexed 314 automatic approvals and imported 52 current model recommendations.
+Explicit accepts freeze the displayed candidate, not an unrelated current resolver
+choice, and continue to separate recording identification. Unapproval appends a
+revocation, invalidates dependent consent, rejects pending processing approval
+and holds the run against automatic reconciliation; metadata refresh retains the
+hold. Existing completed outputs remain intact. Stale/superseded, changed-source,
+locked-field and active-work safeguards run in the existing durable job queue.
+
+All page reads use persisted cards; no source inspection, provider lookup or
+resolver projection runs on GET. Verified the real layout in headless Chromium
+and started the built app on its usual localhost port. Validation: 816 backend
+unit tests, 95.60% coverage; nine ingest integration tests; web tests and coverage
+gate, typecheck/build, Ruff and whitespace checks passed.
+
+## 2026-11-04 — Firm approval and rejection on both review pages
+
+Added Approve and Reject to each quick-review card. Firm approval of an automatic
+match records explicit human book consent and suppresses the entry on subsequent
+page loads and reindexing. It binds the existing approval and work signature
+without rewriting the approval event, preserving downstream consent and frozen
+plan signatures. Replaced/changed matches require new confirmation. Human book
+consent survives changes to automatic threshold policy.
+
+Reject on either page dismisses the entry and holds the book for manual review;
+reimporting the identical rejected candidate does not restore it. All decisions
+remain in append-only events, and compact workflow headers retain the decision
+needed to classify consent correctly.
+
+Validation: 821 backend unit tests passed at 95.61% coverage; 105 web tests and the
+unchanged coverage gate passed, along with typecheck/build, Ruff and whitespace
+checks. The running app was updated after draining its current analysis job;
+queued work was retained and normal workers resumed after restart.
+
+
+## 2026-11-04 — Ten-card review batches with preloading
+
+Both quick-review queues now use fixed batches of ten. Completed decisions remove
+only their own card; they do not refill or refetch the current batch. The next
+page and available covers preload, and finishing a batch swaps in those prepared
+cards immediately and scrolls to the top. Stable created/id cursors survive queue
+removals while requests are in flight, avoiding skipped entries. Search/refresh
+invalidate old preloads, failed preloads retry on demand, and completed decisions
+remain hidden even when the next load fails. Manual navigation and the final
+partial batch retain earlier unreviewed entries.
+
+Validation: 822 backend unit tests passed with 95.61% coverage; 112 web tests and
+the unchanged coverage gate passed. Typecheck/build, Ruff and whitespace checks
+passed. The running app was upgraded after its current background job completed,
+with queued work preserved.
+
+## 2026-11-04 — Correct the managed-service deployment target
+
+The user's actual site is `http://100.78.82.80/strata-listory/`, routed by Caddy to
+`strata-listory.service` on `127.0.0.1:8364`. Earlier verification incorrectly used
+a temporary `./app serve` instance on default port 8360; that did not update the
+managed backend, which continued returning 404 for both new review APIs.
+
+Drained its current job, stopped and started the actual user service, and retained
+queued work. Verified both review endpoints return HTTP 200 with ten cards per
+page on port 8364. The Caddy snippet correctly strips `/strata-listory/` and targets
+8364; unauthenticated requests through the public URL correctly redirect to the
+existing login service. Future deployments on this machine must update the
+managed service, not launch a separate default-port development server.
+
+## 2026-11-04 — Keep narrator credits out of chapter grouping
+
+Lords of Finance had 30 numbered chapter files sharing the same album and artist
+(Liaquat Ahamed), but an album-artist credit of “Narrated by Stephen Hoye”. The
+partitioner treated that auxiliary credit as a writer assertion and failed to
+match even identical credits, producing 30 separate books. Grouping and identity
+recovery now prefer a contributor field containing an actual author; explicit
+reader credits supply narrator identity instead. Plain album-artist author
+assertions and conflicting actual writers retain their existing boundaries.
+Grouping version 5 also reconsiders old fragment scopes against their siblings.
+
+Repaired the live book by verifying all 30 original file hashes, taking a SQLite
+backup, and linking the parent and 30 historical chapter aliases to one current
+run, with one representation. Reused only verified archived work-provider
+responses; recomputed identity and work approval, carrying over no fragment
+recording or quality consent. Original runs, the existing human decision, and
+all source audio remain intact. The repaired identity is Liaquat Ahamed, narrated
+by Stephen Hoye. The existing managed service remains the sole server.
+
+PR validation also adds NumPy to the test dependencies: the offline model tests
+exercise real array operations with deterministic estimator doubles, while
+scikit-learn and XGBoost remain optional research-only dependencies. This keeps
+those tests collectable in CI's clean test environment.
+
+Final combined validation: 829 backend unit tests passed at 95.58% coverage;
+all nine real-audio ingest integration tests passed. All 112 web tests and the
+unchanged coverage gate passed, along with typecheck/production build, Ruff and
+whitespace checks. Both review endpoints on the managed backend returned HTTP
+200 with ten cards. The automatic review search for Lords of Finance returns
+exactly one current entry containing 30 files; follow-up recording analysis is
+queued on the existing worker.
+
+## 2026-11-04 — Bind shortlist decisions and training labels to current consent
+
+Addressed PR review findings by recording each validated shortlist import as an
+append-only revision included in the card's review token. Importing a replacement
+candidate invalidates both Approve and Reject on an already open card, preserving
+the exact candidate the user reviewed. Trusted training rows now exclude an
+approval followed by revocation or rejection; a later explicit approval can
+provide fresh supervision. Added regressions for both stale decision actions and
+both forms of withdrawn consent.
+
+## 2026-11-04 — Stop the old service and prepare the Omarchy migration
+
+Stopped and disabled the single managed `strata-listory.service`. Created a
+consistent SQLite backup with no running jobs, verified its full integrity,
+and copied it to `~/data/strata-listory/migration-20261104/` on `//server/Omarchy`.
+The snapshot retains 5,706 entries, 1,745 ingest runs and all review history;
+one unattempted 113-entry ingest batch remains queued. Automatic output
+processing remains off. All 15,563 referenced provider archive paths exist and
+are preserved in a separate support archive, together with model/audit results.
+Private app settings, provider key files, the three configured app environment
+variables and service/proxy reference configuration are in a private archive,
+never committed to Git. Transfer files are verified after copying with SHA-256.
+
+The user will recreate `~/audio-local` from the audio mount on Omarchy. Retaining
+the original home/repository/source paths preserves signed inventory and evidence
+references. SQLite must be restored to local disk, rather than run on the SMB
+transfer share. Downloaded dumps, tool environments/caches, listening previews
+and output audio are omitted; generated state stays in the database as history.
+See `docs/omarchy-migration-20261104.md` for complete restore commands, required
+configuration, queued-work behavior, output rebuilding and the proxy/auth boundary.

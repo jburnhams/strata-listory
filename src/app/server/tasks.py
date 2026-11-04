@@ -11,6 +11,15 @@ from app.process import queue as pq
 def execute(jobs,domain,kind,options):
     if domain=='ingest':
         options=dict(options);recovered=options.pop('_recovered',False)
+        if kind=='match_review':
+            from app.ingest import match_review
+            action=options.pop('action')
+            result={'accept':match_review.accept,'unapprove':match_review.revoke,'confirm':match_review.confirm,'reject':match_review.reject}[action](**options)
+            if action=='accept' and result.get('changed'):jobs.submit('ingest','continue',run_id=options['run_id'])
+            return result
+        if kind in ('continue','resume','restore') and pipeline.book_review_held(pipeline.store.get(options['run_id'])):
+            pipeline.publish_run(options['run_id'])
+            return dict(held_for_manual_book_review=True)
         if kind=='approve':
             result=pipeline.approve_review(options['run_id'],options['phase'])
             continue_needed=result['changed']
@@ -59,6 +68,8 @@ def execute(jobs,domain,kind,options):
             found=list(scan.scan(folder))
             result=dict(found=len(found),**catalogue.add_scanned(found))
             from app import db
+            # Queue only uninspected source paths from this scan. Rescans retain
+            # saved negative results and never inspect audio on the HTTP thread.
             c=db.connect()
             try:
                 for offset in range(0,len(found),200):

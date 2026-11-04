@@ -31,6 +31,17 @@ def raw_stage(run,stage):
     return next((e['data'] for e in reversed(run['events']) if e['stage']==stage and e['status']=='done'),None)
 
 
+def book_review_held(run):
+    latest=lambda stage:max((e['id'] for e in run['events'] if e['stage']==stage and e['status']=='done'),default=0)
+    return latest('metadata_revocation')>latest('metadata_approval')
+
+
+def book_confirmed(run):
+    decision=raw_stage(run,'match_review_decision') or {}
+    approval_id=next((e['id'] for e in reversed(run['events']) if e['stage']=='metadata_approval' and e['status']=='done'),None)
+    return bool(not book_review_held(run) and decision.get('action')=='approve' and approval_id is not None and decision.get('approval_id')==approval_id and decision.get('signature')==review_signature(run,'metadata'))
+
+
 def legacy_metadata_consent(run):
     approval=raw_stage(run,'metadata_approval')
     return bool(approval and 'scope' not in approval)
@@ -90,6 +101,9 @@ def review_evaluation(run,phase,value=None):
         for name in ('work','performance','source'):
             scoped=[c for c in result['checks'] if c['metric'].startswith(('inventory.','identity.','metadata.','work.','recording.')) and ('work' if c['metric'].startswith(('work.','metadata.')) or c['metric'] in ('identity.title_known','identity.author_known') else 'performance' if c['metric'].startswith('recording.') else 'source')==name]
             groups[name]=dict(checks=scoped,eligible=complete and allowed and all(c['passed'] for c in scoped),complete=complete,kind_allowed=allowed)
+    if phase=='metadata' and book_review_held(run):
+        checks.append(dict(metric='review.manual_hold',value=None,threshold={},passed=False,reason='Book approval was withdrawn; accept a book match to release manual review.'))
+        groups['work']['eligible']=False
     return dict(checks=checks,groups=groups,eligible=complete and allowed and identity.get('book',{}).get('review')!='ignored' and all(c['passed'] for c in checks),complete=complete,kind_allowed=allowed,policy_revision=p.get('revision',0))
 
 
@@ -100,13 +114,14 @@ def review_signature(run,phase):
 
 
 def approval_valid(run,phase):
+    if book_review_held(run):return False
     if phase in ('audiobook','quality') and not approval_valid(run,'metadata'):return False
     if phase=='quality' and not approval_valid(run,'audiobook'):return False
     if phase=='audiobook' and legacy_metadata_consent(run):
         approval=raw_stage(run,'metadata_approval')
         return not approval.get('automatic') or review_evaluation(run,'audiobook')['eligible']
     approval=stage_data(run,phase+'_approval')
-    return bool(approval and approval.get('signature')==review_signature(run,phase) and (not approval.get('automatic') or approval.get('policy_revision')==policy.current().get('revision',0) and review_evaluation(run,phase)['eligible']))
+    return bool(approval and approval.get('signature')==review_signature(run,phase) and (not approval.get('automatic') or phase=='metadata' and book_confirmed(run) or approval.get('policy_revision')==policy.current().get('revision',0) and review_evaluation(run,phase)['eligible']))
 
 
 def require_approvals(run):
@@ -375,6 +390,7 @@ def refresh_metadata(run_id,book_only=False):
         for stage in reuse:
             event=next(e for e in reversed(previous['events']) if e['stage']==stage and e['status']=='done')
             store.event(fresh,stage,'done',event['metrics'],dict(event['data'],reused_from=run_id))
+        if book_review_held(previous):store.event(fresh,'metadata_revocation','done',data=dict(reused_from=run_id,reason='Manual book review retained during metadata refresh'))
         return run_one(book['id'],run_id=fresh,book_only=book_only)
 
 
@@ -458,9 +474,10 @@ def enqueue(run_id,automatic=False):
 def header_phase(run,value):
     """Classify immutable consent IDs cheaply; only the selected page loads evidence."""
     def valid(phase):
+        if book_review_held(run):return False
         if run['state']==phase+'_review':return False
         approval=raw_stage(run,phase+'_approval')
-        return bool(approval and approval.get('signature')==review_signature(run,phase) and (not approval.get('automatic') or approval.get('policy_revision')==value.get('revision',0)))
+        return bool(approval and approval.get('signature')==review_signature(run,phase) and (not approval.get('automatic') or phase=='metadata' and book_confirmed(run) or approval.get('policy_revision')==value.get('revision',0)))
     if not valid('metadata'):return 'metadata'
     if run['state']=='audiobook_review' or not legacy_metadata_consent(run) and not valid('audiobook'):return 'audiobook'
     if not valid('quality'):return 'quality'
@@ -553,6 +570,8 @@ def publish_run(run_id):
     """Materialize a single archived review on the worker; HTTP never loads its raw evidence."""
     with saved_evidence_only():view=_review_rows([store.get(run_id)])[0]
     read_models.save('ingest',run_id,view)
+    from app.ingest import match_review
+    match_review.publish(store.get(run_id))
 
 
 def _pending_view(header):

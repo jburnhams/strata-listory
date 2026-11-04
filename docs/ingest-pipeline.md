@@ -218,3 +218,62 @@ Source inspection/artwork discovery is enqueued after scanning uncached books. D
 Processing requests return HTTP 202 with a job ID. `GET /api/jobs/{id}` reads its saved state/result; the web client polls these lightweight records and reports job errors. Continuations are queued rather than run inside approval requests. Catalogue edits remain small database mutations; their mirror writes are queued. Startup indexes legacy cached artifacts and materializes review views on the same queue. Policy changes queue a saved-view refresh. Configuration remains in the small bootstrap settings file, with the settings response persisted in SQLite.
 
 Review pages read materialized `read_models` rows, paginated using compact saved headers. Unmaterialized rows remain incomplete and cannot enable approval. Provider status, cover index, cover locations, source inspection, Audible sidecars, listening sample status/locations, plan summaries and verified output metadata are persisted in SQLite. JSON reads never walk the source or mirror filesystem. Audio, image and static responses serve existing files and may check the asset path; they do not generate or retrieve assets. `POST /api/books/{id}/inspect` explicitly queues source inspection/artwork retrieval and saves the resulting facts, including any discovered duration. Full run evidence remains archived; the interactive run endpoint returns at most 100 compact event headers.
+
+## Quick match review
+
+**Automatic approvals** (`#/automatic-approvals`) shows current automatically
+approved book identities. **Match shortlist** (`#/match-shortlist`) shows imported
+model recommendations whose saved evidence is still current. Both pages offer
+search and batches of ten, with source identity beside the approved/proposed title,
+complete credited authors, original year and publisher. Duration, source files,
+model measurements, warnings and publication notes provide compact context.
+Expand **All evidence and alternatives** for source claims, catalogue candidates,
+original tags, recording metadata and the original approval record.
+
+**Unapprove book** records an append-only revocation, invalidates downstream
+consent, rejects pending processing approval and holds the run for explicit
+manual book review. Automatic reconciliation and metadata refresh preserve that
+hold; an explicit manual book approval releases it. Previously completed outputs
+are retained. A queued continuation cannot undo the hold.
+
+**Accept book match** freezes exactly the displayed catalogue candidate as a
+manual work selection, records the check exceptions and queues separate recording
+identification. It verifies current group membership, source hashes, catalogue
+signatures, provider manifests and the displayed review token before changing
+consent. Locked fields, active jobs, existing plans, superseded runs and stale
+suggestions are refused rather than silently accepting another identity.
+
+The pages read persisted views; GET requests do not load full source inventories,
+run the resolver, query providers or inspect audio. Worker publication keeps the
+cards current. Legacy cards and a new model shortlist can be indexed explicitly:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m app.ingest.match_review
+PYTHONPATH=src .venv/bin/python -m app.ingest.match_review data/match-model-20261104/final-verified/pending.jsonl
+```
+
+The first command indexes saved evidence only. The second imports the highest
+above-threshold saved candidate per current book review, checking its presence in
+archived provider evidence; it does not train a model or approve any match.
+
+Both quick-review pages have **Approve** and **Reject** on every card. On
+Automatic approvals, Approve records a firm human confirmation and removes the
+entry from that queue, including after refresh, restart or reindexing. The
+confirmation binds the displayed work evidence and original approval event;
+a changed match or replacement approval needs its own review. It preserves
+existing recording/quality consent and processing-plan signatures, and remains
+manual book consent when automatic thresholds change.
+
+On Match shortlist, Approve accepts the displayed candidate as before. Reject
+on either page removes the entry and holds it for manual review. Reimporting the
+same rejected model candidate does not put it back into the shortlist. Decisions
+are retained as append-only `match_review_decision` events.
+
+
+Quick-review batches stay fixed while you approve or reject their ten entries.
+The next batch and its covers preload in the background. Completing the last
+entry automatically displays that prepared batch and scrolls to its first card.
+A stable run cursor prevents queue removals from shifting the next page and
+skipping books. Search and Refresh reset the batch; failed decisions keep their
+card, and failed preloads retry when needed. A completed decision stays removed
+even if loading the following batch fails.
