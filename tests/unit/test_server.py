@@ -60,6 +60,45 @@ def test_settings_roundtrip_and_server_main(client, tmp_path, monkeypatch):
     assert runs == [('127.0.0.1', 8360, 'warning')]
 
 
+@pytest.mark.parametrize('running',[False,True])
+def test_data_directory_cannot_switch_under_queued_or_running_jobs(tmp_path,monkeypatch,running):
+    from app import settings
+    old=str(tmp_path/'old');new=str(tmp_path/'new')
+    settings.save(dict(data_dir=old));monkeypatch.delenv('APP_DATA')
+    client=TestClient(create_app());jobs=client.app.state.jobs;responses=[]
+    def handler(*args):
+        responses.append(client.put('/api/settings',json=dict(data_dir=new)))
+        return 'finished in original database'
+    jobs.handler=handler if running else lambda *a:'finished in original database'
+    ident=jobs.submit('system','test')
+    assert jobs.pending()
+    assert client.put('/api/settings',json=dict(data_dir=old)).status_code==200
+    assert client.put('/api/settings',json=dict(library_dir=str(tmp_path/'audio'))).status_code==200
+    if not running:responses.append(client.put('/api/settings',json=dict(data_dir=new)))
+    assert jobs.run_one()
+    assert responses[0].status_code==409 and 'jobs' in responses[0].json()['detail']
+    assert settings.data_dir()==old and jobs.get(ident)['state']=='done'
+    assert jobs.get(ident)['result']=='finished in original database' and not jobs.pending()
+    assert client.put('/api/settings',json=dict(data_dir=new)).status_code==200
+    assert settings.data_dir()==new
+
+
+def test_failed_jobs_are_visible_and_only_an_explicit_retry_runs_again(client):
+    from app import catalogue
+    book=catalogue.add_book(title='Broken source')
+    jobs=client.app.state.jobs;calls=[]
+    def broken(*args):calls.append('failed');raise ValueError('job exceeded its time limit')
+    jobs.handler=broken;ident=jobs.submit('system','inspect',book_id=book['id']);jobs.run_one()
+    row=next(r for r in client.get('/api/operations').json()['rows'] if r.get('job_id')==ident)
+    assert row['state']=='failed' and row['error']=='job exceeded its time limit'
+    assert row['book_id']==book['id'] and 'Broken source' in row['title']
+    assert jobs.submit('system','inspect',book_id=book['id'])==ident and not jobs.run_one() and calls==['failed']
+    jobs.handler=lambda *args:dict(retried=True)
+    assert client.post(f'/api/jobs/{ident}/retry').json()==dict(retried=True)
+    assert not client.get('/api/operations').json()['rows']
+    assert client.post('/api/jobs/missing/retry').status_code==400
+
+
 def test_corrupt_database_gives_503(client, monkeypatch):
     from app import db
     client.post('/api/books', json=dict(title='a'))
@@ -71,6 +110,9 @@ def test_corrupt_database_gives_503(client, monkeypatch):
 
 def test_scan_match_confirm_endpoints(client, tmp_path, monkeypatch):
     from app import matcher, providers
+    from app.server import tasks
+    monkeypatch.setattr(tasks.details,'describe',lambda book:dict(files=None))
+    monkeypatch.setattr(tasks.details,'cover',lambda book:None)
     from app.providers.base import candidate
     assert client.post('/api/scan', json={}).status_code == 400
     assert client.post('/api/scan', json=dict(folder=str(tmp_path / 'nope'))).status_code == 400
@@ -161,7 +203,9 @@ def test_scan_reports_a_down_share_with_503(client, tmp_path, monkeypatch):
     r = client.post('/api/scan', json=dict(folder=str(lib))); assert r.status_code == 400 and 'not reachable' in r.json()['detail']
     monkeypatch.setattr(fs, 'reachable', lambda p: True)
     monkeypatch.setattr(scan, 'scan', lambda root: (_ for _ in ()).throw(OSError(errno.EHOSTDOWN, 'Host is down')))
-    r = client.post('/api/scan', json=dict(folder=str(lib))); assert r.status_code == 400 and 'Host is down' in r.json()['detail']
+    failed=client.app.state.jobs.failures()[0]['id']
+    r = client.post('/api/scan', json=dict(folder=str(lib))); assert 'not reachable' in r.json()['detail']
+    r = client.post(f'/api/jobs/{failed}/retry'); assert r.status_code == 400 and 'Host is down' in r.json()['detail']
 
 
 def test_processing_queue_endpoints(client, monkeypatch, tmp_path):

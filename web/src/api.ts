@@ -61,6 +61,7 @@ export const api = {
   enrichBook: (id: number) => req<{ found: boolean; extras: Extras }>(`/api/books/${id}/enrich`, { method: 'POST' }),
   enrich: (limit = 25) => req<{ tried: number; enriched: number; not_found: number; remaining: number }>(`/api/enrich?limit=${limit}`, { method: 'POST' }),
   queue: () => req<QueueView>('/api/process'),
+  retryJob: (id: string) => req<unknown>(`/api/jobs/${id}/retry`, send('POST', {})),
   operations: (completed = false) => req<OperationsView>(`/api/operations?completed=${completed}`),
   finished: () => req<{ book_id: number; title: string; author: string; result: Processed }[]>('/api/finished'),
   output: (id: number) => req<Output>(`/api/books/${id}/output`),
@@ -90,7 +91,7 @@ export interface MetaRow { field: string; value: string; source: string; note: s
 export interface PlanSummary { book_metadata?: MetaRow[]; audiobook_metadata?: MetaRow[]; enhancement?: { method: string } | null; metadata: MetaRow[]; year: number | null; hours: number; files: number; chapters: number; chapter_source: string; tiers: Record<string, number>; in_bytes: number; est_bytes: number; out_dir: string; loudness_before: number; loudness_after_est: number; decision: string; reencoded: boolean; warnings: string[]; advisories?: string[]; downmix: string; chapter_list: { file: string; title: string; minutes: number; mode: string; tier: string }[] }
 export interface QueueRow { book_id: number; title: string; author: string; state: PlanState; error: string; updated: string; summary: PlanSummary | null }
 export interface QueueView { rows: QueueRow[]; worker: { busy: string | null; queued: number; last: Record<string, object>; counts: Record<string, number> }; result: Record<string, { out_bytes?: number; in_bytes?: number; loudness_after?: number; true_peak_after?: number; seconds?: number } | null> }
-export interface Operation { current_step?: string; step_elapsed?: number; logs?: { created: string; message: string; status: string }[]; id: string; book_id: number | null; run_id: string | null; title: string; stage: string; state: 'running' | 'queued' | 'failed' | 'waiting' | 'completed'; phase: 'metadata' | 'audiobook' | 'quality' | 'processing' | null; error: string }
+export interface Operation { job_id?: string; current_step?: string; step_elapsed?: number; logs?: { created: string; message: string; status: string }[]; id: string; book_id: number | null; run_id: string | null; title: string; stage: string; state: 'running' | 'queued' | 'failed' | 'waiting' | 'completed'; phase: 'metadata' | 'audiobook' | 'quality' | 'processing' | null; error: string }
 export interface OperationsView { rows: Operation[]; busy: boolean }
 
 export interface IngestCheck { metric: string; value: number | null; threshold: { min?: number; max?: number }; passed: boolean; reason: string }

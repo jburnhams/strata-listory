@@ -1,5 +1,31 @@
 # Progress log
 
+## 2026-11-04: PR #12 CI and lifecycle review fixes
+
+Resolved two review findings: a failed job superseded by explicit retry or newer completed work no longer blocks future submissions; unresolved retry failures still require another explicit retry. Isolated workers watch a private pipe owned by the supervisor and kill their process group/tools on EOF, including abrupt server death. Completed supervisors close their pipe handles. macOS CI exposed inherited negative niceness: set an absolute nice target of 19 instead of adding 19 to the inherited value, while preserving an already lower priority.
+
+Validation: focused queue/OS/worker tests and all 24 integration tests passed. New regressions cover successful and failed retry chains, changed retry options, supervisor pipe cleanup, platform priority boundaries, and a real server crash that terminates both its detached worker and tool.
+
+## 2026-11-04: searchable failure details
+
+Processing exposes labelled, multiline failure reasons and the last step for stopped work. Missing error text falls back to the last failed activity entry, or explicitly states that no reason was recorded. The Failed tab can be combined with search across titles, IDs, stages, errors and activity messages. Status tabs wrap on smaller screens. Search filters the existing saved API response without adding backend work. Rebuilt and verified the live frontend without restarting active jobs.
+
+Validation: full web suite and coverage gate passed, along with typecheck/build and whitespace checks. The new UI regression covers mixed job/plan failures, timeout search, failed activity fallback, absent reasons, exclusion of queued work and clearing search.
+
+## 2026-11-04: background job scheduling priority
+
+Isolated workers lower their CPU priority before importing processing code (POSIX nice 19, Windows idle priority class). Linux workers request idle I/O priority through ionice when available; an absent/unsupported tool does not fail the job. Child tools inherit those settings. Applied CPU nice 19 and idle I/O to the current job, FFmpeg and their existing threads without restarting or interrupting the job. Verified the web-server process remains nice 0.
+
+Validation: 23 focused OS/worker unit tests and two real-process integration tests passed. The new real-process test verifies a tool inherits nice 19/idle I/O while the supervisor's priority stays unchanged. Ruff and whitespace checks passed.
+
+## 2026-11-04: terminal job failures, hard deadlines and review follow-ups
+
+Background slots now supervise isolated child processes, with per-job persisted deadlines (default 30 minutes via `APP_JOB_TIMEOUT_SECONDS`). A deadline, abnormal child exit or shutdown kills the child/process group and records a terminal failed state. Restart no longer requeues interrupted jobs. Duplicate automatic submissions return the existing failure; Processing exposes errors and an explicit Retry job action. Work ownership propagates failure to unfinished ingest runs, process plans and preview samples, including legacy interrupted regroup/processing work. Finished reviews remain intact; unattempted collection children and remaining batch books are queued in the same transaction as failure. Explicit retry selects failed work rather than repeating completed siblings or the remaining batch. Process retries reset only their own failed reservations, retaining normal source/approval validation.
+
+Addressed both PR #11 review findings: scanning now queues inspection/artwork jobs for uncached books, and Settings prevents database changes while queued/running work exists. Submissions/claims and settings changes share a configuration lock; isolated workers pin their database. Added schema 11 for deadlines/ownership and schema 12 for indexed failure/history lookups. The live service configuration is set to one worker with its existing 4 GiB cap. Test defaults remain in temporary directories even when APP_DATA is unset.
+
+Validation: full backend suite 770 passed at 95.68% coverage, followed by 42 supervisor/OS checks and two final environment/deadline checks. All 22 integration tests and 94 web tests passed; web coverage gate, typecheck/build, Ruff and whitespace checks passed. A real process is killed at its deadline and the next real isolated job completes. An 800-launch regression keeps PYTHONPATH fixed rather than growing it on every book. The running service shows one isolated child and a persisted 1800-second deadline, retaining the 4 GiB cap. Before/after audit found no missing queue records (`data/job-safety-audit-20261104/`).
+
 ## 2026-11-04: FFmpeg 6 decoded-duration compatibility
 
 PR CI exposed a Linux-only split-MP3 repair assertion: FFmpeg 6's final progress timestamp reports the start of the last packet, undercounting about one MP3 frame per part. Reproduced the identical 179 ms discrepancy with isolated FFmpeg 6.0. Counting decoded PCM samples confirmed the repaired output preserved the sum of the input samples; the planned duration was short.

@@ -98,6 +98,12 @@ def create_app():
         try:return jobs.get(job_id)
         except ValueError as e:raise HTTPException(404,str(e))
 
+    @app.post('/api/jobs/{job_id}/retry')
+    def retry_job(job_id:str):
+        try:ident=jobs.retry(job_id)
+        except ValueError as e:raise HTTPException(400,str(e))
+        return JSONResponse(dict(queued=True,job_id=ident,url=f'/api/jobs/{ident}'),status_code=202)
+
     def guard(fn, *a, **kw):
         try: return fn(*a, **kw)
         except catalogue.CatalogueError as e: raise HTTPException(400, str(e))
@@ -120,9 +126,14 @@ def create_app():
         for label, v in (('data', s.data_dir), ('library', s.library_dir), ('backup', s.backup_dir)):
             if v and not os.path.isabs(os.path.expanduser(v)): raise HTTPException(400, f'the {label} folder must be an absolute path')
         changes = {k: v for k, v in (('data_dir', s.data_dir), ('library_dir', s.library_dir), ('backup_dir', s.backup_dir)) if v is not None}
-        if changes: settings.save({k: v or None for k, v in changes.items()})      # an empty value resets the setting
-        value=settings.all_settings();read_models.save('settings','current',value)
-        return value
+        with jobs.configuration_lock:
+            target=os.environ.get('APP_DATA') or changes.get('data_dir') or settings.DEFAULT_DATA_DIR
+            normalize=lambda path:os.path.normcase(os.path.abspath(os.path.expanduser(path)))
+            if 'data_dir' in changes and normalize(target)!=normalize(settings.data_dir()) and jobs.pending():
+                raise HTTPException(409,'wait for queued and running jobs to finish before changing the data folder')
+            if changes: settings.save({k: v or None for k, v in changes.items()})
+            value=settings.all_settings();read_models.save('settings','current',value)
+            return value
 
     @app.get('/api/books')
     def get_books(q: str = '', status: str | None = None, review: str | None = None, kind: str | None = None): return guard(catalogue.list_books, q, status, review, kind)
@@ -231,7 +242,11 @@ def create_app():
     @app.get('/api/operations')
     def get_operations(completed:bool=False):
         from app.ingest import operations
-        return operations.view(ingest_worker.tasks()+jobs.tasks('system'),worker.tasks(),completed)
+        view=operations.view(ingest_worker.tasks()+jobs.tasks('system'),worker.tasks(),completed)
+        for job in jobs.failures():
+            label=job['kind'].replace('_',' ')
+            view['rows'].append(dict(id='job-'+job['id'],job_id=job['id'],book_id=job['book_id'],run_id=None,title=f"{label}: {job['title']}" if job['title'] else label,stage=label,state='failed',phase=None,error=job['error']))
+        return view
 
     @app.get('/api/library/covers')
     def library_covers():return dict(ids=details.available_cover_ids())

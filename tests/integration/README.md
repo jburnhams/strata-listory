@@ -25,3 +25,5 @@ Not gated. `pytest tests/integration -n auto --cov --cov-fail-under=0 --cov-repo
 | `ingest/`, `process/` | `test_ingest_pipeline.py`: legacy fragment consolidation, named/counter sequences, preserved previews, split-VBR decoded timing, forced encoding and clean output headers |
 
 Listening-preview HTTP integration submits a durable job, executes it on the shared queue, then serves the persisted ready assets. Finished-output fixtures explicitly persist their verified metadata read model; JSON routes no longer discover metadata from output folders.
+
+`test_jobs.py` starts a real isolated process, verifies its hard deadline terminates it, and then executes a real `app.job_worker` scan against the temporary database to prove the single slot is released and job outcomes persist.

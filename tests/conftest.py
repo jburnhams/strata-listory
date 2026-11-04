@@ -4,7 +4,7 @@ import os, socket, sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'utils'))
-TUNING = ('APP_LIBRARY',)
+TUNING = ('APP_LIBRARY','APP_WORKERS','APP_JOB_TIMEOUT_SECONDS')
 
 
 def pytest_collection_modifyitems(items):
@@ -18,6 +18,9 @@ def isolated_env(tmp_path_factory, monkeypatch):
     base = tmp_path_factory.mktemp('env')
     monkeypatch.setenv('HOME', str(base / 'home')); monkeypatch.setenv('USERPROFILE', str(base / 'home'))
     monkeypatch.setenv('APP_HOME', str(base / 'app-home')); monkeypatch.setenv('APP_DATA', str(base / 'data'))
+    # Tests that explicitly unset APP_DATA must still never reach the real catalogue.
+    from app import settings
+    monkeypatch.setattr(settings,'DEFAULT_DATA_DIR',str(base/'data'))
     for k in TUNING: monkeypatch.delenv(k, raising=False)
     return base
 

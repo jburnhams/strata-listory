@@ -285,6 +285,9 @@ def set_plan(book_id: int, state: str, plan: dict | None = None, error: str = ''
     try:
         with c:
             _one(c, book_id)
+            if state in ('planning','running'):
+                from app.jobs import bind_work
+                bind_work(c,'plan',book_id)
             if keep_plan and c.execute('SELECT 1 FROM process_plan WHERE book_id=?', (book_id,)).fetchone():
                 c.execute('UPDATE process_plan SET state=?, error=?, updated=? WHERE book_id=?', (state, error, now, book_id))
             else:
@@ -340,7 +343,12 @@ def claim_plan(book_id):
     """Atomically claim an approved plan so concurrent workers cannot both run it."""
     c=db.connect()
     try:
-        with c:return c.execute("UPDATE process_plan SET state='running' WHERE book_id=? AND state='approved'",(book_id,)).rowcount==1
+        with c:
+            claimed=c.execute("UPDATE process_plan SET state='running' WHERE book_id=? AND state='approved'",(book_id,)).rowcount==1
+            if claimed:
+                from app.jobs import bind_work
+                bind_work(c,'plan',book_id)
+            return claimed
     finally:c.close()
 
 
