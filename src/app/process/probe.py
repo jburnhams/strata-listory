@@ -41,11 +41,15 @@ def probe_file(path: str) -> dict:
 
 def decoded_duration(path: str) -> dict:
     """Byte-split MP3s can retain a whole-book VBR header; measure actual samples."""
-    r=run(['ffmpeg','-nostdin','-hide_banner','-v','error','-nostats','-progress','pipe:1','-i',path,'-map','0:a:0','-af','asetpts=N/SR/TB','-f','null','-'],900)
-    values=re.findall(r'^out_time_us=(\d+)$',r.stdout,re.M)
-    duration=max(map(int,values),default=0)/1_000_000
+    # Older FFmpeg progress clocks report the last packet's start, losing one
+    # frame per split. Count samples at a fixed rate instead; no PCM is buffered.
+    filters='aresample=48000,astats=metadata=0:reset=0:measure_perchannel=none:measure_overall=Number_of_samples'
+    r=run(['ffmpeg','-nostdin','-hide_banner','-loglevel','level+info','-nostats','-progress','pipe:1','-i',path,'-map','0:a:0','-af',filters,'-f','null','-'],900)
+    values=re.findall(r'^\[Parsed_astats_[^\]]+\]\s+\[info\] Number of samples:\s*(\d+)',r.stderr,re.M)
+    duration=max(map(int,values),default=0)/48000
     if r.returncode or 'progress=end' not in r.stdout or duration<=0:raise ToolError(f'cannot measure decoded duration of {path}: {r.stderr.strip()[-200:]}')
-    return dict(duration=duration,decode_messages=r.stderr.strip())
+    diagnostics='\n'.join(line for line in r.stderr.splitlines() if re.search(r'\[(?:error|fatal|panic|warning)\]',line))
+    return dict(duration=duration,decode_messages=diagnostics)
 
 
 def apply_decoded_duration(info: dict, measured: dict, header_warning: str = '') -> dict:

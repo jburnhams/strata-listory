@@ -35,19 +35,19 @@ def test_parsers():
     assert sorted(['10 b', '2 a', '1 c'], key=probe.natural_key) == ['1 c', '2 a', '10 b']
 
 
-def test_split_mp3_duration_uses_decoded_clock_and_keeps_decoder_diagnostics(monkeypatch):
+def test_split_mp3_duration_uses_sample_count_and_keeps_only_decoder_diagnostics(monkeypatch):
     calls=[]
     def run(cmd,timeout):
         calls.append((cmd,timeout))
-        return subprocess.CompletedProcess(cmd,0,'out_time_us=0\nprogress=continue\nout_time_us=12345678\nprogress=end\n','Header missing at split boundary')
+        return subprocess.CompletedProcess(cmd,0,'out_time_us=0\nprogress=continue\nout_time_us=12000000\nprogress=end\n','[info] title: metadata is not a decode error\n[mp3 @ 0x1] [error] Header missing at split boundary\n[Parsed_astats_1 @ 0x2] [info] Number of samples: 600000\n')
     monkeypatch.setattr(probe,'run',run)
-    assert probe.decoded_duration('split.mp3')==dict(duration=12.345678,decode_messages='Header missing at split boundary')
-    assert calls[0][1]==900 and 'asetpts=N/SR/TB' in calls[0][0] and calls[0][0][calls[0][0].index('-i')+1]=='split.mp3'
+    assert probe.decoded_duration('split.mp3')==dict(duration=12.5,decode_messages='[mp3 @ 0x1] [error] Header missing at split boundary')
+    assert calls[0][1]==900 and 'aresample=48000' in calls[0][0][calls[0][0].index('-af')+1] and calls[0][0][calls[0][0].index('-i')+1]=='split.mp3'
 
 
-@pytest.mark.parametrize('code,stdout',[(1,'out_time_us=1000000\nprogress=end'),(0,'out_time_us=1000000\nprogress=continue'),(0,'out_time_us=N/A\nprogress=end'),(0,'out_time_us=0\nprogress=end')])
-def test_incomplete_or_invalid_decoded_duration_fails_closed(monkeypatch,code,stdout):
-    monkeypatch.setattr(probe,'run',lambda *a:subprocess.CompletedProcess(a[0],code,stdout,'decode failed'))
+@pytest.mark.parametrize('code,stdout,samples',[(1,'progress=end','48000'),(0,'progress=continue','48000'),(0,'progress=end','N/A'),(0,'progress=end','0')])
+def test_incomplete_or_invalid_decoded_duration_fails_closed(monkeypatch,code,stdout,samples):
+    monkeypatch.setattr(probe,'run',lambda *a:subprocess.CompletedProcess(a[0],code,stdout,f'[Parsed_astats_1 @ 0x2] [info] Number of samples: {samples}'))
     with pytest.raises(probe.ToolError,match='cannot measure decoded duration'):probe.decoded_duration('split.mp3')
 
 

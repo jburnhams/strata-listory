@@ -1,5 +1,13 @@
 # Progress log
 
+## 2026-11-04: FFmpeg 6 decoded-duration compatibility
+
+PR CI exposed a Linux-only split-MP3 repair assertion: FFmpeg 6's final progress timestamp reports the start of the last packet, undercounting about one MP3 frame per part. Reproduced the identical 179 ms discrepancy with isolated FFmpeg 6.0. Counting decoded PCM samples confirmed the repaired output preserved the sum of the input samples; the planned duration was short.
+
+Decoded duration now uses the final `astats` sample count at a fixed 48 kHz analysis rate, with no PCM buffered or written. Only the sample-count statistic is enabled. Progress still verifies completion; level-prefixed warnings/errors remain diagnostics, while informational metadata/statistics do not falsely mark an input damaged. The existing 150 ms output assertion is unchanged. Unit doubles explicitly give a misleading progress timestamp to verify that the sample count wins, and missing/zero counts or incomplete decoding still fail closed.
+
+Validation: 302 process/ingest unit tests passed; all 21 integration tests passed with isolated FFmpeg 6.0 and again with installed FFmpeg 9. Ruff and whitespace checks passed.
+
 ## 2026-11-04: fix repeated OOM restarts and unresponsive HTTP
 
 The service had repeatedly been killed by systemd-oomd/the kernel overnight. A loose MP3, The Road to Kalamata, has a malformed `track=1/4294967295` tag. Its track total expanded discovery recursively into the entire Books directory (16,830 files). On completing inventory, missing-track calculation materialised `set(range(1,total+1))`, attempting billions of integers. After limiting discovery, the same allocation reproduced immediately: Python RSS reached 3.3 GiB, MemoryHigh throttling held the GIL, and even health requests timed out. The second ingest worker waited for the active ingest lock, so durable recovery repeatedly retried the same failing work.
