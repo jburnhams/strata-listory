@@ -35,8 +35,8 @@ class JobQueue:
         payload=json.dumps(options,sort_keys=True,allow_nan=False);key=hashlib.sha256(json.dumps([domain,kind,payload]).encode()).hexdigest();c=connection if connection is not None else db.connect()
         try:
             with c if connection is None else nullcontext():
-                previous=c.execute("SELECT id FROM jobs WHERE dedupe=? AND state IN ('queued','running','failed') ORDER BY CASE state WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,created DESC LIMIT 1",(key,)).fetchone()
-                if previous and (not retry or c.execute('SELECT state FROM jobs WHERE id=?',(previous[0],)).fetchone()[0]!='failed'):return previous[0]
+                previous=c.execute("SELECT j.id,j.state FROM jobs j WHERE j.dedupe=? AND (j.state IN ('queued','running') OR (j.state='failed' AND NOT EXISTS (SELECT 1 FROM job_work r WHERE r.kind='retry' AND r.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created))) ORDER BY CASE j.state WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,j.created DESC LIMIT 1",(key,)).fetchone()
+                if previous and (not retry or previous['state']!='failed'):return previous[0]
                 ident=uuid.uuid4().hex
                 ids=set(options.get('ids') or [])
                 if options.get('book_id'):ids.add(options['book_id'])
@@ -167,6 +167,8 @@ class JobQueue:
         except Exception as exc:
             if process is not None:oslib.kill_job(process)
             self.fail(row['id'],str(exc) or type(exc).__name__)
+        finally:
+            if process is not None and (pipe:=getattr(process,'stdin',None)) is not None:pipe.close()
 
     def fail(self,ident,error):
         c=db.connect()

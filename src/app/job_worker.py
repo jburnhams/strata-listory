@@ -7,6 +7,7 @@ from app import db,oslib
 def main(argv=None):
     args=sys.argv[1:] if argv is None else argv
     if len(args)!=1:raise ValueError('expected one job ID')
+    oslib.watch_supervisor()
     oslib.lower_job_priority()
     from app.server import tasks
     # The supervisor verified/migrated this database before claiming the job.

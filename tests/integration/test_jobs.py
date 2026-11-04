@@ -33,3 +33,32 @@ def test_job_priority_is_inherited_by_tools_without_lowering_the_server():
     priority=json.loads(result.stdout)
     assert priority['nice']==19 and os.getpriority(os.PRIO_PROCESS,0)==before
     if priority['io'] is not None:assert priority['io']=='idle'
+
+
+@pytest.mark.skipif(oslib.WIN,reason='POSIX abrupt supervisor death and detached process group')
+def test_server_crash_stops_the_detached_worker_and_its_tool(tmp_path):
+    import threading,time
+    ready=tmp_path/'ready.json'
+    tool="import os,time; print(os.getpid(),flush=True); time.sleep(60)"
+    worker=f"import os,json,subprocess,sys,time; from pathlib import Path; from app import oslib; oslib.watch_supervisor(); p=subprocess.Popen([sys.executable,'-c',{tool!r}],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,text=True); tool_pid=int(p.stdout.readline()); Path({str(ready)+'.tmp'!r}).write_text(json.dumps([os.getpid(),tool_pid])); os.replace({str(ready)+'.tmp'!r},{str(ready)!r}); p.wait()"
+    supervisor=f"import os,sys; from app import oslib; p=oslib.job_process([sys.executable,'-c',{worker!r}],dict(os.environ,APP_JOB_SUPERVISED='1'),supervised=True); sys.stdin.buffer.read(1); p.wait()"
+    parent=subprocess.Popen([sys.executable,'-c',supervisor],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,env=dict(os.environ,PYTHONPATH=os.pathsep.join(sys.path)))
+    ids=[]
+    def wait_until(predicate):
+        deadline=time.monotonic()+15
+        while not predicate():
+            assert time.monotonic()<deadline,'child did not reach the expected state'
+            threading.Event().wait(.02)
+    def stopped(pid):
+        state=subprocess.run(['ps','-o','stat=','-p',str(pid)],capture_output=True,text=True,check=False).stdout.strip()
+        return not state or state.startswith('Z')  # A dead adopted child may await reaping by init.
+    try:
+        wait_until(ready.exists);ids=json.loads(ready.read_text())
+        assert all(not stopped(pid) for pid in ids)
+        parent.kill();parent.wait(timeout=5)
+        wait_until(lambda:all(stopped(pid) for pid in ids))
+    finally:
+        if parent.poll() is None:parent.kill()
+        parent.communicate(timeout=5)
+        for pid in ids:
+            if not stopped(pid):oslib.kill_tree(pid,9)

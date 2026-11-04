@@ -1,5 +1,11 @@
 # Progress log
 
+## 2026-11-04: PR #12 CI and lifecycle review fixes
+
+Resolved two review findings: a failed job superseded by explicit retry or newer completed work no longer blocks future submissions; unresolved retry failures still require another explicit retry. Isolated workers watch a private pipe owned by the supervisor and kill their process group/tools on EOF, including abrupt server death. Completed supervisors close their pipe handles. macOS CI exposed inherited negative niceness: set an absolute nice target of 19 instead of adding 19 to the inherited value, while preserving an already lower priority.
+
+Validation: focused queue/OS/worker tests and all 24 integration tests passed. New regressions cover successful and failed retry chains, changed retry options, supervisor pipe cleanup, platform priority boundaries, and a real server crash that terminates both its detached worker and tool.
+
 ## 2026-11-04: searchable failure details
 
 Processing exposes labelled, multiline failure reasons and the last step for stopped work. Missing error text falls back to the last failed activity entry, or explicitly states that no reason was recorded. The Failed tab can be combined with search across titles, IDs, stages, errors and activity messages. Status tabs wrap on smaller screens. Search filters the existing saved API response without adding backend work. Rebuilt and verified the live frontend without restarting active jobs.

@@ -131,7 +131,7 @@ def test_supervisor_kills_overrunning_children_and_records_terminal_outcomes(mon
             if case=='success':q.execute_claimed(ident)
             self.returncode=3 if case=='crash' else 0
             return self.returncode
-    process=Process()
+    closed=[];process=Process();process.stdin=SimpleNamespace(close=lambda:closed.append(True))
     def start(job_id,data_dir):
         assert job_id==ident and data_dir==settings.data_dir()
         if case=='spawn_error':raise OSError('cannot spawn')
@@ -143,6 +143,7 @@ def test_supervisor_kills_overrunning_children_and_records_terminal_outcomes(mon
     assert q.run_one(isolated=True)
     assert q.get(ident)['state']==('done' if case=='success' else 'failed') and not q.pending()
     if case in ('timeout','shutdown','crash','empty_exit'):assert killed==[process]
+    assert closed==([] if case=='spawn_error' else [True])
     if case=='timeout':assert 'time limit' in q.get(ident)['error']
     assert not q.run_one()
 
@@ -273,3 +274,30 @@ def test_environment_deadline_is_snapshotted_on_submission(monkeypatch):
     monkeypatch.setenv('APP_JOB_TIMEOUT_SECONDS','99')
     assert queue.workers==1 and queue.get(ident)['timeout_seconds']==37
     assert JobQueue(None).timeout_seconds==99
+
+
+@pytest.mark.parametrize('retry_fails',[False,True])
+def test_successful_retry_unblocks_future_work_but_failed_retry_stays_stopped(retry_fails):
+    queue=JobQueue(lambda *a:(_ for _ in ()).throw(ValueError('first failure')))
+    original=queue.submit('process','run');queue.run_one()
+    retry=queue.retry(original)
+    queue.handler=lambda *a:(_ for _ in ()).throw(ValueError('retry failure')) if retry_fails else dict(ok=True)
+    queue.run_one()
+    following=queue.submit('process','run')
+    if retry_fails:
+        assert following==retry and not queue.pending()
+        assert [j['id'] for j in queue.failures()]==[retry]
+    else:
+        assert following not in (original,retry) and queue.pending() and not queue.failures()
+        assert queue.submit('process','run')==following
+        queue.run_one()
+        assert queue.get(following)['state']=='done'
+
+
+def test_changed_retry_options_also_supersede_the_original_failure():
+    queue=JobQueue(None);original=queue.submit('ingest','run',ids=[1,2],limit=2)
+    queue.fail(original,'timeout');retry=queue.retry(original)
+    queue.handler=lambda *a:dict(ok=True)
+    while queue.run_one():pass
+    assert queue.get(retry)['state']=='done'
+    assert queue.submit('ingest','run',ids=[1,2],limit=2)!=original

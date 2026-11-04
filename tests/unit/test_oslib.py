@@ -40,14 +40,15 @@ def test_job_process_is_detached_and_does_not_buffer_output(monkeypatch,windows)
 def test_start_job_pins_database_and_uses_the_current_python(monkeypatch):
     calls=[]
     monkeypatch.setattr(oslib,'cli_command',lambda:['python','-m','app'])
-    monkeypatch.setattr(oslib,'job_process',lambda *args:calls.append(args) or 'child')
+    monkeypatch.setattr(oslib,'job_process',lambda *args,**kwargs:calls.append((*args,kwargs)) or 'child')
     assert oslib.start_job('saved','/database')=='child'
     assert calls[0][0]==['python','-m','app.job_worker','saved'] and calls[0][1]['APP_DATA']=='/database'
+    assert calls[0][1]['APP_JOB_SUPERVISED']=='1' and calls[0][2]==dict(supervised=True)
 
 
 def test_launching_eight_hundred_jobs_does_not_grow_the_python_environment(monkeypatch):
     monkeypatch.setenv('PYTHONPATH','extra');monkeypatch.setenv('PYTHONWARNINGS','default');paths=[]
-    monkeypatch.setattr(oslib,'job_process',lambda command,env:paths.append(env['PYTHONPATH']))
+    monkeypatch.setattr(oslib,'job_process',lambda command,env,**kw:paths.append(env['PYTHONPATH']))
     for n in range(800):oslib.start_job(str(n),'/database')
     assert set(paths)=={os.path.join(oslib.ROOT_DIR,'src')+os.pathsep+'extra'}
 
@@ -167,7 +168,9 @@ def test_kill_tree_ends_the_process(monkeypatch):
 def test_lower_priority_and_venv_python(monkeypatch):
     monkeypatch.setattr(oslib, 'WIN', False)
     nices = []
-    monkeypatch.setattr(os, 'nice', lambda n: nices.append(n), raising=False)
+    monkeypatch.setattr(os, 'getpriority', lambda *a: -10, raising=False)
+    monkeypatch.setattr(os, 'PRIO_PROCESS', 0, raising=False)
+    monkeypatch.setattr(os, 'setpriority', lambda which,pid,n: nices.append(n), raising=False)
     oslib.lower_priority(10)
     assert nices == [10]
     assert oslib.venv_python('/tmp/v').endswith('bin/python') or oslib.venv_python('/tmp/v').endswith('bin\\python')
@@ -188,3 +191,45 @@ def test_lower_priority_and_venv_python(monkeypatch):
 def test_cli_command_runs_the_cli():
     out = subprocess.run([*oslib.cli_command(), '--help'], capture_output=True, text=True, timeout=60)
     assert out.returncode == 0 and 'usage' in out.stdout, out.stderr[-300:]
+
+
+@pytest.mark.parametrize('windows',[False,True])
+def test_supervised_process_uses_a_private_pipe(monkeypatch,windows):
+    calls=[];monkeypatch.setattr(oslib,'WIN',windows)
+    monkeypatch.setattr(subprocess,'Popen',lambda command,**kw:calls.append(kw))
+    oslib.job_process(['worker'],supervised=True)
+    assert calls[0]['stdin']==subprocess.PIPE and calls[0]['stdout']==subprocess.DEVNULL
+
+
+def test_supervisor_watch_waits_for_pipe_eof_before_terminating(monkeypatch):
+    monkeypatch.delenv('APP_JOB_SUPERVISED',raising=False);calls=[];threads=[]
+    monkeypatch.setattr(oslib.threading,'Thread',lambda **kw:types.SimpleNamespace(start=lambda:threads.append(kw)))
+    oslib.watch_supervisor();assert threads==[]
+    monkeypatch.setenv('APP_JOB_SUPERVISED','1');oslib.watch_supervisor()
+    assert threads[0]['daemon'] is True
+    reads=iter([b'x',b'']);monkeypatch.setattr(os,'read',lambda fd,n:next(reads))
+    monkeypatch.setattr(oslib,'terminate_job_group',lambda:calls.append('terminated'))
+    threads[0]['target']();assert calls==['terminated']
+
+
+@pytest.mark.parametrize('windows,group',[(True,123),(False,123),(False,999)])
+def test_orphan_termination_only_kills_its_own_session(monkeypatch,windows,group):
+    import signal
+    monkeypatch.setattr(signal,'SIGKILL',9,raising=False)
+    monkeypatch.setattr(oslib,'WIN',windows);calls=[]
+    monkeypatch.setattr(os,'getpid',lambda:123)
+    monkeypatch.setattr(os,'getpgrp',lambda:group,raising=False)
+    monkeypatch.setattr(os,'killpg',lambda pid,sig:calls.append(('group',pid)),raising=False)
+    monkeypatch.setattr(oslib,'kill_tree',lambda pid:calls.append(('tree',pid)))
+    monkeypatch.setattr(os,'_exit',lambda code:calls.append(('exit',code)))
+    oslib.terminate_job_group()
+    assert calls==([('tree',123)] if windows else [('group',123)] if group==123 else [])+[('exit',1)]
+
+
+def test_lower_priority_does_not_raise_an_already_lower_priority(monkeypatch):
+    monkeypatch.setattr(oslib,'WIN',False);values=[]
+    monkeypatch.setattr(os,'PRIO_PROCESS',0,raising=False)
+    monkeypatch.setattr(os,'getpriority',lambda *a:20,raising=False)
+    monkeypatch.setattr(os,'setpriority',lambda which,pid,value:values.append(value),raising=False)
+    oslib.lower_priority(19)
+    assert values==[20]
