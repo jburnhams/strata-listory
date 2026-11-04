@@ -33,3 +33,9 @@ vitest 4, Testing Library, user-event, msw (backend mocks). Run from `web/`: `np
 | `src/components/LibraryPage.tsx` | 100 | done | Covered by integration/LibraryPage.test.tsx |
 | `src/components/SettingsPage.tsx` | 100 | done | Covered by integration/SettingsPage.test.tsx |
 | `src/components/ui.tsx` | 100 | done | Shared UI primitives |
+
+Quick-review regressions in `MatchReviewPage.test.tsx` cover local/proposed identity,
+lazy evidence, exact decision tokens, accept/unapprove feedback, stale failures,
+search/pagination, missing fields, unsafe source URLs, active-work controls,
+approval records and both navigation routes. Every new endpoint has a default msw
+handler. The coverage gate remains unchanged.

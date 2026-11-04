@@ -9,9 +9,12 @@ export type Route =
   | { page: 'finished' }
   | { page: 'metadata' | 'audiobook' | 'quality' }
   | { page: 'settings' }
+  | { page: 'automatic' | 'shortlist' }
 
 export function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent)
+  if (parts[0] === 'automatic-approvals') return { page: 'automatic' }
+  if (parts[0] === 'match-shortlist') return { page: 'shortlist' }
   if (parts[0] === 'settings') return { page: 'settings' }
   if (parts[0] === 'audiobook-identification') return { page: 'audiobook' }
   if (parts[0] === 'ingest' || parts[0] === 'metadata' || parts[0] === 'book-identification') return { page: 'metadata' }
@@ -34,6 +37,8 @@ export const href = {
   audiobook: () => '#/audiobook-identification',
   quality: () => '#/quality',
   settings: () => '#/settings',
+  automatic: () => '#/automatic-approvals',
+  shortlist: () => '#/match-shortlist',
 }
 
 export function useRoute(): Route {

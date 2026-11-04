@@ -52,6 +52,10 @@ class IdsIn(BaseModel):
     ids: list[int]
 
 
+class MatchDecisionIn(BaseModel):
+    basis: str = Field(min_length=64,max_length=64)
+
+
 class ScanIn(BaseModel):
     folder: str | None = None
 
@@ -126,12 +130,14 @@ def create_app():
         for label, v in (('data', s.data_dir), ('library', s.library_dir), ('backup', s.backup_dir)):
             if v and not os.path.isabs(os.path.expanduser(v)): raise HTTPException(400, f'the {label} folder must be an absolute path')
         changes = {k: v for k, v in (('data_dir', s.data_dir), ('library_dir', s.library_dir), ('backup_dir', s.backup_dir)) if v is not None}
+        # Serialize a database switch with job submission/claiming. Once a job
+        # is active, its domain writes and completion must stay in that database.
         with jobs.configuration_lock:
             target=os.environ.get('APP_DATA') or changes.get('data_dir') or settings.DEFAULT_DATA_DIR
             normalize=lambda path:os.path.normcase(os.path.abspath(os.path.expanduser(path)))
             if 'data_dir' in changes and normalize(target)!=normalize(settings.data_dir()) and jobs.pending():
                 raise HTTPException(409,'wait for queued and running jobs to finish before changing the data folder')
-            if changes: settings.save({k: v or None for k, v in changes.items()})
+            if changes: settings.save({k: v or None for k, v in changes.items()})      # an empty value resets the setting
             value=settings.all_settings();read_models.save('settings','current',value)
             return value
 
@@ -238,6 +244,20 @@ def create_app():
 
     @app.get('/api/ingest')
     def get_ingest(offset:int=Query(default=0,ge=0),phase:Literal['metadata','audiobook','quality']|None=None,sort:Literal['strongest','metadata','newest','oldest','title']|None=None):return dict(ingest.dashboard(offset=offset,phase=phase,sort=sort),worker=ingest_worker.status())
+
+    from app.ingest import match_review
+
+    @app.get('/api/match-reviews')
+    def match_reviews(mode:Literal['automatic','shortlist']='automatic',offset:int=Query(default=0,ge=0),q:str='',after:str|None=None):
+        return ingest_guard(match_review.page,mode,offset,q,after)
+
+    @app.get('/api/match-reviews/{run_id}')
+    def match_review_detail(run_id:str):return ingest_guard(match_review.detail,run_id)
+
+    @app.post('/api/match-reviews/{run_id}/{action}')
+    def match_review_decide(run_id:str,action:Literal['accept','unapprove','confirm','reject'],b:MatchDecisionIn):
+        ingest_guard(ingest_store.run_book_id,run_id)
+        return queued('ingest','match_review',run_id=run_id,action=action,expected=b.basis)
 
     @app.get('/api/operations')
     def get_operations(completed:bool=False):

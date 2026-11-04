@@ -7,6 +7,7 @@ import { Card, Err, btn, btnQuiet, input } from './ui'
 
 
 const metricLabels: Record<string, string> = {
+  'review.manual_hold': 'Approval withdrawn — manual review required',
   'metadata.original_work_link': 'Original book identified', 'metadata.work_families': 'Metadata source families', 'metadata.critical_conflicts': 'Conflicting metadata',
   'recording.score': 'Title and author similarity', 'recording.runtime_error': 'Recording runtime comparison', 'recording.narrator_agrees': 'Narrator corroboration', 'recording.language_agrees': 'Language corroboration', 'recording.abridgement_known': 'Abridgement verified', 'recording.ambiguous': 'Recording ambiguity',
   'identity.conflicts': 'Conflicting source tags', 'inventory.probe_errors': 'Unreadable source files', 'alignment.coverage': 'Recording coverage', 'alignment.missing_tracks': 'Missing or duplicate tracks', 'alignment.unresolved_representations': 'Unresolved source alternatives',

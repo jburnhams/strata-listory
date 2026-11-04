@@ -33,7 +33,7 @@ describe('App navigation and header', () => {
 it('orders the workflow navigation and gives final proposals their own page', async () => {
   const { user } = open('#/process')
   const nav = screen.getByRole('navigation', { name: 'Main navigation' })
-  expect(within(nav).getAllByRole('link').map(a => a.textContent)).toEqual(['Library','Processing','Book identification','Audiobook identification','Quality','Proposed','Finished','Settings'])
+  expect(within(nav).getAllByRole('link').map(a => a.textContent)).toEqual(['Library','Processing','Book identification','Automatic approvals','Match shortlist','Audiobook identification','Quality','Proposed','Finished','Settings'])
   await screen.findByRole('heading', { name: 'Processing' })
   expect(screen.queryByLabelText('Select Dune')).toBeNull()
   await user.click(within(nav).getByRole('link', { name: 'Proposed' }))

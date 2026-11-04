@@ -45,3 +45,13 @@ Inventory regressions in `test_ingest.py` prohibit loose-file track totals from 
 Job hardening tests use fake child processes/clocks to verify hard deadlines, shutdown/crash handling, stopped failures, explicit retries, owned-work failure propagation, remaining batch preservation and interrupted legacy work. HTTP tests reproduce data-folder changes from inside an active handler. Scan tests forbid inline inspection; new inspection jobs remain durable. OS-boundary tests mock process sessions/tree termination; real child termination and following-job execution live in integration tests. The shared isolation fixture also patches the default data directory so removing APP_DATA cannot access the real catalogue.
 
 `test_jobs.py` verifies durable deduplication, transactional shared worker limits across job types, same-book exclusion, error/result persistence, owner-aware recovery and interrupted batch continuation. `test_tasks.py` covers worker action dispatch and legacy asset/read-view indexing. `tests/utils/job_client.py` is a deterministic client that awaits job completion like the browser; raw TestClient regressions independently assert HTTP 202 precedes all processing.
+
+Bulk identification regressions cover recording marketing versus written-work subtitle conflicts, explicit English edition discovery with work/volume bounds, failed-provider preservation, and canonical main-title retries retaining contrary hits. `test_match_audit.py` verifies candidate features, unknown labels despite automatic consent, read-only export, overwrite refusal and zero-error precision uncertainty.
+
+`test_match_model.py` verifies user-trusted automatic/manual labels, freezing evidence at approval time, unknown edition alternatives, work/member/identifier grouping, within-split hard negatives, zero-error calibration with group support, selection before held-out evaluation, optional ML orchestration, saved-model artifacts and replaying frozen datasets. Scikit-learn/XGBoost remain optional research dependencies; unit orchestration uses deterministic estimator doubles and a separate real-data experiment runs the actual libraries.
+
+`test_match_review.py` covers saved-only reads, exact displayed candidate acceptance,
+source identity preservation, stale/superseded/locked/active refusals, downstream
+consent invalidation, rejected pending plans, processed-output preservation and
+manual holds surviving automatic reconciliation and metadata refresh. HTTP and
+job dispatch contracts are covered in `test_ingest_api.py` and `test_tasks.py`.

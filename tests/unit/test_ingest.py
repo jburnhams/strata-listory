@@ -1495,7 +1495,7 @@ def test_provisional_work_lookup_requires_independent_confirmation_before_approv
             calls.append((self.name,title,author))
             if self.name=='hardcover':return [candidate(self.name,id='99',title='Dune: Desert World',authors=['Frank Herbert'],original_year=1965)]
             if self.name=='openlibrary':
-                assert title=='Dune: Desert World' and author in ('Frank Herbert','')
+                assert (title=='Dune: Desert World' and author in ('Frank Herbert','')) or (title=='Dune' and author=='Frank Herbert')
                 return [candidate(self.name,id='/works/OL1W',title='Dune',authors=['Frank Herbert'],original_year=1965)] if corroborated else []
             return []
         def details(self,identifier):return None
@@ -2043,3 +2043,68 @@ def test_failed_ingest_processing_can_be_reproposed_with_its_valid_stage_approva
     assert result['planned']==1 and result['failed']==0
     assert catalogue.get_plan(book['id'])['state']=='proposed'
     assert all(P.approval_valid(store.get(run['id']),phase) for phase in P.REVIEW_STAGES)
+
+
+def test_recording_marketing_does_not_invent_conflicting_written_works(book):
+    inv,_=I.discover(book);identity,_=I.recover(book,inv)
+    identity['book'].update(title='Dune',author='Frank Herbert')
+    printed={name:dict(candidates=[candidate(name,title='Dune',subtitle='Desert World',authors=['Frank Herbert'],original_year=1965)]) for name in ('hardcover','openlibrary')}
+    printed['audible']=dict(candidates=[candidate('audible',title='Dune',subtitle='Now a major motion picture',authors=['Frank Herbert'])])
+    meta,metrics=M.resolve(identity,inv,dict(providers=printed))
+    assert {'hardcover','openlibrary'}<=meta['work']['records'].keys()
+    assert metrics['metadata.work_families']>=2 and metrics['work.score']>=.9
+    assert not metrics['recording.matched']
+    printed['openlibrary']['candidates'][0]['subtitle']='Another distinct book'
+    meta,_=M.resolve(identity,inv,dict(providers=printed))
+    assert not {'hardcover','openlibrary'}&meta['work']['records'].keys()
+
+
+def test_edition_discovery_resolves_only_explicit_english_work_links():
+    local=dict(title='History',author='Writer')
+    original=candidate('openlibrary',id='/works/OL1W',title='History',authors=['Writer'])
+    cohort=[original,candidate('hardcover',title='History',subtitle='Ancient World',authors=['Writer']),candidate('hardcover',title='History',subtitle='Ancient Civilisations',authors=['Writer'])]
+    calls=[]
+    class Provider:
+        def edition_publishers(self,key):
+            calls.append(key)
+            return [dict(key='/books/OL1M',work_key=key,title='History',subtitle='Ancient World',languages=['/languages/eng']),
+                    dict(key='/books/OL2M',work_key=key,title='History',subtitle='Ancient Civilisations',languages=['/languages/eng']),
+                    dict(key='/books/OL3M',work_key='/works/OL9W',title='History',subtitle='Wrong link',languages=['/languages/eng']),
+                    dict(key='/books/OL4M',work_key=key,title='History',subtitle='Unknown language'),
+                    dict(key='/books/OL5M',work_key=key,title='History Volume 2',subtitle='Other volume',languages=['/languages/eng'])]
+    found=M.discover_work_editions(Provider(),local,[original],cohort)
+    assert calls==['/works/OL1W'] and [c.get('subtitle_edition') for c in found]==[None,'/books/OL1M','/books/OL2M']
+    assert M.compatible_work(local,original,cohort+found)
+    assert M.discover_work_editions(Provider(),dict(local,author='Someone Else'),[original],cohort)==[original]
+    assert M.discover_work_editions(Provider(),local,[original])==[original]
+    assert M.discover_work_editions(object(),local,[original],cohort)==[original]
+
+
+def test_edition_discovery_is_bounded_and_tolerates_provider_failure():
+    local=dict(title='History',author='Writer')
+    cs=[candidate('openlibrary',id=f'/works/OL{n}W',title='History',authors=['Writer']) for n in range(1,6)]
+    cohort=cs+[candidate('hardcover',title='History: Ancient World',authors=['Writer']),candidate('hardcover',title='History: Modern World',authors=['Writer'])]
+    calls=[]
+    class Provider:
+        def edition_publishers(self,key):
+            calls.append(key)
+            raise providers.MatchError('offline')
+    assert M.discover_work_editions(Provider(),local,cs,cohort)==cs
+    assert calls==['/works/OL1W','/works/OL2W','/works/OL3W']
+
+
+def test_book_collection_retries_main_title_without_discarding_conflicting_hits(book,monkeypatch,tmp_path):
+    inv,_=I.discover(book);identity,_=I.recover(book,inv)
+    identity['book'].update(title='History: Ancient World',author='Writer')
+    wrong=candidate('openlibrary',id='/works/OL2W',title='History: Modern World',authors=['Writer'])
+    correct=candidate('openlibrary',id='/works/OL1W',title='History: Ancient World',authors=['Writer'])
+    calls=[]
+    class Provider:
+        name='openlibrary'
+        def unavailable(self):return None
+        def search(self,title,author):
+            calls.append((title,author));return [correct] if title=='History' else [wrong]
+    monkeypatch.setattr(providers,'get',lambda name:Provider())
+    collected,_=M.collect(identity,inv,tmp_path/'sources',['openlibrary'])
+    assert calls==[('History: Ancient World','Writer'),('History: Ancient World',''),('History','Writer')]
+    assert collected['providers']['openlibrary']['candidates']==[wrong,correct]

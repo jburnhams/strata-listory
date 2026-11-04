@@ -7,6 +7,7 @@ import ProcessPage from './components/ProcessPage'
 import IngestPage from './components/IngestPage'
 import SettingsPage from './components/SettingsPage'
 import FinishedPage from './components/FinishedPage'
+import MatchReviewPage from './components/MatchReviewPage'
 
 export default function App() {
   const r = useRoute()
@@ -21,6 +22,8 @@ export default function App() {
           <a href={href.library()} className="text-blue-600 dark:text-blue-400 hover:underline">Library</a>
           <a href={href.process()} className="text-blue-600 dark:text-blue-400 hover:underline">Processing</a>
           <a href={href.metadata()} className="text-blue-600 dark:text-blue-400 hover:underline">Book identification</a>
+          <a href={href.automatic()} className="text-blue-600 dark:text-blue-400 hover:underline">Automatic approvals</a>
+          <a href={href.shortlist()} className="text-blue-600 dark:text-blue-400 hover:underline">Match shortlist</a>
           <a href={href.audiobook()} className="text-blue-600 dark:text-blue-400 hover:underline">Audiobook identification</a>
           <a href={href.quality()} className="text-blue-600 dark:text-blue-400 hover:underline">Quality</a>
           <a href={href.proposed()} className="text-blue-600 dark:text-blue-400 hover:underline">Proposed</a>
@@ -31,6 +34,7 @@ export default function App() {
       {r.page === 'library' && <LibraryPage />}
       {r.page === 'book' && <BookPage id={r.id} />}
       {(r.page === 'metadata' || r.page === 'audiobook' || r.page === 'quality') && <IngestPage key={r.page} phase={r.page} />}
+      {(r.page === 'automatic' || r.page === 'shortlist') && <MatchReviewPage key={r.page} mode={r.page} />}
       {r.page === 'process' && <ProcessPage />}
       {r.page === 'proposed' && <ProcessPage mode="proposed" />}
       {r.page === 'finished' && <FinishedPage />}

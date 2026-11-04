@@ -123,3 +123,24 @@ export const ingestApi = {
   savePolicy: (policy: IngestPolicy) => req<IngestPolicy>('/api/ingest/policy', send('PUT', policy)),
   details: (id: string) => req<object>(`/api/ingest/runs/${encodeURIComponent(id)}`),
 }
+
+export interface MatchCandidate {
+  source: string; id: string; title: string; subtitle?: string; authors: string[]; narrators?: string[]; original_year?: number | null; publisher?: string; release_date?: string; runtime_minutes?: number | null; language?: string; abridged?: boolean | null; asin?: string; isbns?: string[]; series?: string; series_position?: number | null; genres?: string[]; description?: string; rating?: number | null; ratings_count?: number | null; pages?: number | null; url?: string
+}
+export interface MatchReview {
+  id: string; book_id: number; created: string; state: string; basis: string; automatic: boolean; approved: boolean; held: boolean; shortlisted: boolean; blocked: string; approved_at: string | null; cover: boolean; complete: boolean;
+  approval: { automatic: boolean; policy_revision?: number; resolution_version?: number; scope?: string; checks?: IngestCheck[] } | null;
+  local: { title: string; author: string; narrator: string; path: string; asin: string; kind: string; locked: string[] };
+  match: { title: string; authors: string[]; year: number | null; publisher: string; rows: MetaRow[]; sources: string[] };
+  recording: { matched?: boolean; local?: { narrators?: string[]; language?: string; duration_seconds?: number; abridged?: boolean | null }; rows?: MetaRow[] };
+  suggestion: { candidate: MatchCandidate; score: number; features: Record<string, number>; model: string; candidate_key: string } | null;
+  source: { folder: string; count: number; files: string[]; hours: number };
+  checks: IngestCheck[];
+  evidence?: { records: Record<string, Record<string, unknown>>; providers: Record<string, { status: string; reason?: string; candidates: MatchCandidate[] }>; tags: Record<string, string[]> }
+}
+export interface MatchReviewPage { rows: MatchReview[]; total: number; offset: number; limit: number }
+export const matchReviewApi = {
+  list: (mode: 'automatic' | 'shortlist', offset = 0, q = '', after?: string) => req<MatchReviewPage>(`/api/match-reviews?${new URLSearchParams({ mode, offset: String(offset), q, ...(after ? { after } : {}) })}`),
+  details: (id: string) => req<MatchReview>(`/api/match-reviews/${encodeURIComponent(id)}`),
+  decide: (id: string, action: 'accept' | 'unapprove' | 'confirm' | 'reject', basis: string) => req<{ changed: boolean }>(`/api/match-reviews/${encodeURIComponent(id)}/${action}`, send('POST', { basis })),
+}

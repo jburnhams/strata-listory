@@ -8,7 +8,7 @@ import uuid
 from app import book_titles, contributors, matcher, merge, providers, sources
 from app.ingest.observe import capture,report
 
-VERSION=18
+VERSION=19
 
 
 def names(value): return {contributors.name_key(v) for v in value or [] if v}
@@ -138,7 +138,16 @@ def collect(identity,inv,output,provider_names):
                 if not found and search_book['author'] and not any(compatible_work(search_book,c) for c in cs):
                     extra=p.search(search_book['title'],'')
                     cs=cs+[c for c in extra if not any(c.get('id')==old.get('id') and c.get('source')==old.get('source') for old in cs)]
+                main=book_titles.parts(search_book['title'])[0]
+                if book_only and name=='openlibrary' and search_book['author'] and main!=search_book['title'] and not any(compatible_work(search_book,c,cs) for c in cs):
+                    extra=p.search(main,search_book['author'])
+                    cs=cs+[c for c in extra if c not in cs]
                 results[name]=dict(status='ok',candidates=cs)
+                if book_only and name=='openlibrary':
+                    # Subtitle ambiguity must not prevent discovery of the
+                    # explicit edition links needed to resolve that ambiguity.
+                    cohort=[c for entry in results.values() for c in entry.get('candidates',[])]
+                    results[name]['candidates']=discover_work_editions(p,book,cs,cohort)
                 if book_only:
                     hint=work_lookup_hint(book,dict(providers=results))
                     if hint:search_book.update(hint)
@@ -185,6 +194,33 @@ def collect(identity,inv,output,provider_names):
                     results['openlibrary']['edition_work_key']=selected['id']
                 except providers.MatchError as error:results['openlibrary']['details_error']=str(error)
     return dict(providers=results,archives=archives),{'metadata.provider_attempts':sum(r['status']!='unavailable' for r in results.values()),'metadata.providers_configured':len(results),'metadata.providers_unavailable':sum(r['status']=='unavailable' for r in results.values()),'metadata.provider_errors':sum(r['status']=='error' for r in results.values()),'metadata.raw_responses':len(archives)}
+
+
+def discover_work_editions(provider,book,candidates,cohort=None):
+    """Bounded discovery, retaining every contrary candidate for acceptance checks."""
+    from app.providers.openlibrary import edition_language
+    lookup=getattr(provider,'edition_publishers',None)
+    if not callable(lookup):return candidates
+    aliases=[];seen=set()
+    for c in candidates:
+        key=c.get('id','')
+        if key in seen or len(seen)>=3 or not re.fullmatch(r'/works/OL\d+W',key):continue
+        if matcher.author_score(book.get('author',''),c)<.9:continue
+        main=book_titles.parts(work_title(c.get('title','')))[0]
+        if not book_titles.similar(book_titles.parts(work_title(book['title']))[0],main):continue
+        # An already unambiguous cohort needs no additional edition requests.
+        if compatible_work(book,c,cohort if cohort is not None else candidates):continue
+        seen.add(key)
+        try:editions=lookup(key)
+        except providers.MatchError:continue
+        for edition in editions:
+            if len(aliases)>=12:break
+            if edition.get('work_key')!=key or not re.fullmatch(r'/books/OL\d+M',edition.get('key','')):continue
+            if language(edition_language(edition))!='english':continue
+            if not book_titles.similar(main,book_titles.parts(work_title(edition.get('title','')))[0]):continue
+            alias=dict(c,title=edition['title'],subtitle=edition.get('subtitle',''),subtitle_edition=edition['key'],language=edition_language(edition))
+            if not any(book_titles.compact(a['title']+' '+a.get('subtitle',''))==book_titles.compact(alias['title']+' '+alias['subtitle']) for a in candidates+aliases):aliases.append(alias)
+    return candidates+aliases
 
 
 def title_match(book,c,candidates=()):
@@ -494,8 +530,15 @@ def resolve(identity,inv,collected):
     compatible=[e for e in evidence['candidates'] if compatible_work(book,e['candidate'])]
     if compatible:
         c=max(compatible,key=lambda e:e['score'])['candidate'];work_book['title']=c['title']
-    cohort=[c for entry in collected['providers'].values() for c in entry.get('candidates',[])]
-    cohort += [entry['details'] for name,entry in collected['providers'].items() if name!='hardcover' and entry.get('details')]
+    # Storefront marketing and recording subtitles cannot create competing
+    # written works. Work catalogues retain all of their contrary assertions;
+    # performance candidates still undergo their independent recording checks.
+    cohort=[c for name,entry in collected['providers'].items() if name in merge.WORK for c in entry.get('candidates',[])]
+    cohort += [entry['details'] for name,entry in collected['providers'].items() if name in merge.WORK and name!='hardcover' and entry.get('details')]
+    # A full recording title explicitly present in the local tags can still
+    # explain missing punctuation in a concatenated title/subtitle assertion.
+    local_title=book_titles.compact(work_title(book['title']))
+    cohort += [c for name,entry in collected['providers'].items() if name in merge.AUDIOBOOK for c in entry.get('candidates',[]) if local_title==book_titles.compact(work_title(': '.join(v for v in (c.get('title'),c.get('subtitle')) if v)))]
     for name,entry in collected['providers'].items():
         candidates=list(entry.get('candidates',[]))
         if entry.get('details') and name!='hardcover':candidates.insert(0,entry['details'])

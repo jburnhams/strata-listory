@@ -13,3 +13,4 @@ pytest-timeout
 pytest-xdist
 diff-cover
 tzdata                         # IANA timezone database, needed on Windows for zoneinfo
+numpy>=2.1,<3                   # Array operations in offline model tests; estimators are faked

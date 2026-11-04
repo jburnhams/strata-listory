@@ -116,7 +116,7 @@ def review_headers():
                 JOIN ingest_runs newer ON newer.id=later.run_id WHERE mine.run_id=r.id AND newer.created>r.created)
             ORDER BY r.created DESC""").fetchall()
         runs={r['id']:dict(r,events=[]) for r in rows};ids=list(runs)
-        stages=('inventory','identity','providers','metadata','recording_providers','recording','alignment','quality','selection','metadata_approval','audiobook_approval','quality_approval','quality_rating')
+        stages=('inventory','identity','providers','metadata','recording_providers','recording','alignment','quality','selection','metadata_approval','audiobook_approval','quality_approval','quality_rating','metadata_revocation','match_review_decision')
         for offset in range(0,len(ids),200):
             batch=ids[offset:offset+200]
             # Extract only ranking fields in SQLite: provider payloads and audio inventories stay off the queue path.
@@ -126,7 +126,7 @@ def review_headers():
                     'year',COALESCE(json_extract(data,'$.work.resolved.year'),json_extract(data,'$.resolved.year')),
                     'publisher',COALESCE(json_extract(data,'$.work.resolved.publisher'),json_extract(data,'$.resolved.publisher')),
                     'analysis_metrics',json_extract(data,'$.analysis_metrics')) ELSE '{}' END"""
-            for event in c.execute(f"SELECT id,run_id,stage,status,metrics,{summary} AS summary,CASE WHEN stage LIKE '%_approval' THEN data ELSE '{{}}' END AS data FROM ingest_events WHERE status='done' AND run_id IN ({','.join('?' for _ in batch)}) AND stage IN ({','.join('?' for _ in stages)}) ORDER BY id",batch+list(stages)):
+            for event in c.execute(f"SELECT id,run_id,stage,status,metrics,{summary} AS summary,CASE WHEN stage LIKE '%_approval' OR stage='match_review_decision' THEN data ELSE '{{}}' END AS data FROM ingest_events WHERE status='done' AND run_id IN ({','.join('?' for _ in batch)}) AND stage IN ({','.join('?' for _ in stages)}) ORDER BY id",batch+list(stages)):
                 value=dict(event)
                 for field in ('data','metrics','summary'):value[field]=json.loads(value[field])
                 runs[value['run_id']]['events'].append(value)
@@ -147,7 +147,7 @@ def workflow_snapshot(activity=False):
             for row in c.execute(f'SELECT id,book_id,created,state FROM ingest_runs WHERE id IN ({slots})',batch):
                 runs[row['id']]=dict(row,events=[])
             # Signatures use event IDs. Only consent records need their small JSON body.
-            for row in c.execute(f"SELECT id,run_id,stage,status,CASE WHEN stage LIKE '%_approval' THEN data ELSE '{{}}' END AS data FROM ingest_events WHERE run_id IN ({slots}) AND status='done' AND id=(SELECT max(newer.id) FROM ingest_events newer WHERE newer.run_id=ingest_events.run_id AND newer.stage=ingest_events.stage AND newer.status='done') ORDER BY id",batch):
+            for row in c.execute(f"SELECT id,run_id,stage,status,CASE WHEN stage LIKE '%_approval' OR stage='match_review_decision' THEN data ELSE '{{}}' END AS data FROM ingest_events WHERE run_id IN ({slots}) AND status='done' AND id=(SELECT max(newer.id) FROM ingest_events newer WHERE newer.run_id=ingest_events.run_id AND newer.stage=ingest_events.stage AND newer.status='done') ORDER BY id",batch):
                 event=dict(row);event['data']=json.loads(event['data']);runs[event['run_id']]['events'].append(event)
             if activity:
                 for rid in batch:

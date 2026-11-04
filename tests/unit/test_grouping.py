@@ -256,3 +256,35 @@ def test_sequence_and_coded_file_keys_preserve_the_callers_path_spelling(monkeyp
     code=[file(f'C:/Books/APS{n:03} Chapter.mp3') for n in (1,2,3)]
     assert set(G.coded_parts(f['path'] for f in code))=={f['path'] for f in code}
     assert len(G.partition(code,'C:/Books'))==1
+
+
+def test_explicit_reader_album_artist_does_not_split_numbered_chapters_into_books():
+    files=[file(f'/books/Writer - Finance/{n:03}-Finance.mp3','Finance: The Bankers','Actual Writer',album_artist='Narrated by Book Reader',composer='Narrated by Book Reader',track=f'{n:03}',title=f'{n:03} Chapter {n}') for n in range(1,31)]
+    [group]=G.partition(files,'/books/Writer - Finance')
+    assert group['author']=='Actual Writer' and len(group['paths'])==30
+    [representation]=I.represent(files)
+    assert representation['duration']==1800 and representation['missing_tracks']==0
+    identity,metrics=I.recover(dict(title='Finance',author='',narrator='',asin='',locked=[]),dict(root='/books/Writer - Finance',files=files,work_hint=group,sidecars=[]))
+    assert identity['book']['author']=='Actual Writer' and identity['book']['narrator']=='Book Reader'
+    assert metrics['identity.author_known']==1 and metrics['identity.conflicts']==0
+    assert files[0]['probe']['tags']['album_artist']=='Narrated by Book Reader'
+
+
+@pytest.mark.parametrize('credit',['Narrated by: Book Reader','Read by Book Reader','Book Reader (narrator)','Introduction by Helper'])
+def test_auxiliary_album_artist_falls_back_to_actual_writer_and_preserves_distinct_authors(credit):
+    files=[file(f'/books/{n:02} Chapter.mp3','Same Book',writer,album_artist=credit,track=str(n)) for n,writer in ((1,'First Writer'),(2,'Other Writer'))]
+    groups=G.partition(files,'/books')
+    assert {g['author'] for g in groups}=={'First Writer','Other Writer'} and len(groups)==2
+
+
+def test_reader_only_chapter_tags_share_a_group_without_inventing_an_author():
+    files=[file(f'/book/{n:02} Chapter.mp3','A Book','',album_artist='Read by Book Reader',track=str(n)) for n in (1,2,3)]
+    [group]=G.partition(files,'/book')
+    assert group['author']=='' and len(group['paths'])==3
+    identity,metrics=I.recover(dict(title='A Book',author='',narrator='',asin='',locked=[]),dict(root='/book',files=files,work_hint=group,sidecars=[]))
+    assert identity['book']['narrator']=='Book Reader' and metrics['identity.author_known']==0
+
+
+def test_unlabelled_album_artist_retains_its_existing_writer_assertion():
+    assert G.author_credit(dict(album_artist='Album Writer',artist='Other Writer'))=='Album Writer'
+    assert G.author_credit(dict(artist='Writer, Helper - foreword'))=='Writer, Helper - foreword'
