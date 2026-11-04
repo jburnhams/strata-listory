@@ -42,7 +42,8 @@ class JobQueue:
                 if options.get('book_id'):ids.add(options['book_id'])
                 if options.get('run_id'):
                     ids.update(r[0] for r in c.execute('SELECT book_id FROM ingest_members WHERE run_id=?',(options['run_id'],)))
-                resources=json.dumps(sorted(f'book:{bid}' for bid in ids))
+                # Derived evidence reads immutable event snapshots; it must not block a human decision.
+                resources=json.dumps([] if domain=='system' and kind=='training_features' else sorted(f'book:{bid}' for bid in ids))
                 c.execute("INSERT OR IGNORE INTO jobs(id,domain,kind,options,dedupe,state,created,resources,timeout_seconds) VALUES (?,?,?,?,?,'queued',?,?,?)",(ident,domain,kind,payload,key,now(),resources,self.timeout_seconds))
                 row=c.execute("SELECT id FROM jobs WHERE dedupe=? AND state IN ('queued','running')",(key,)).fetchone()
                 ident=row[0]

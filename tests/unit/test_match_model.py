@@ -98,6 +98,7 @@ def test_calibration_threshold_rejects_false_positives_and_requires_group_suppor
 
 def test_experiment_selects_without_test_data_and_writes_reproducible_artifacts(monkeypatch,tmp_path):
     from app.ingest import match_audit as A
+    monkeypatch.setattr(M,'refresh_features',lambda rows:rows)  # Feature extraction has its own frozen-input regressions.
     database=tmp_path/'source.db'
     # Exercise the real read-only loader and preserve source bytes.
     import sqlite3
@@ -124,8 +125,8 @@ def test_experiment_selects_without_test_data_and_writes_reproducible_artifacts(
     monkeypatch.setitem(sys.modules,'sklearn.preprocessing',SimpleNamespace(StandardScaler=Model))
     monkeypatch.setitem(sys.modules,'xgboost',SimpleNamespace(__version__='test',XGBClassifier=lambda **kw:Model(tree=True)))
     monkeypatch.setattr(M,'load_runs',lambda db:[dict(id='trusted',events=[dict(stage='metadata_approval',status='done',data={})]),dict(id='pending',events=[]),dict(id='finished',state='processed',events=[]),dict(id='radio',events=[dict(stage='identity',status='done',data=dict(kind='radio'))]),dict(id='empty',events=[])])
-    monkeypatch.setattr(M,'trusted_rows',lambda r:deepcopy(labelled) if r['id']=='trusted' else [])
-    monkeypatch.setattr(M,'add_cross_work_negatives',lambda rows:rows)
+    monkeypatch.setattr(M,'trusted_rows',lambda r,**kwargs:deepcopy(labelled) if r['id']=='trusted' else [])
+    monkeypatch.setattr(M,'add_cross_work_negatives',lambda rows,**kwargs:rows)
     pending=dict(row('pending',1000,'p'),features=dict(a=.99,supporting_families=2))
     monkeypatch.setattr(A,'candidate_rows',lambda r:[] if r['id']=='empty' else [pending])
     result=M.experiment(database,tmp_path/'result')
@@ -144,10 +145,33 @@ def test_experiment_selects_without_test_data_and_writes_reproducible_artifacts(
     assert (tmp_path/'tree'/'model.ubj').read_text()=='model'
     assert tree_result['unknown_candidates']==1
     actual_experiment=M.experiment
-    monkeypatch.setattr(M,'experiment',lambda database,output,dataset:dict(selected_model='test',dataset=dataset))
+    monkeypatch.setattr(M,'experiment',lambda database,output,dataset,**kwargs:dict(selected_model='test',dataset=dataset))
     monkeypatch.setattr(sys,'argv',['match_model',str(database),'--out',str(tmp_path/'cli'),'--dataset',str(cached)])
     M.main()
     monkeypatch.setattr(M,'experiment',actual_experiment)
     with pytest.raises(FileExistsError):M.experiment(database,tmp_path/'result')
-    monkeypatch.setattr(M,'trusted_rows',lambda r:[])
-    with pytest.raises(ValueError,match='positive and negative'):M.experiment(database,tmp_path/'empty')
+    monkeypatch.setattr(M,'trusted_rows',lambda r,**kwargs:[])
+    with pytest.raises(ValueError,match='positive and negative'):M.experiment(database,tmp_path/'empty',cache=tmp_path/'empty-cache.sqlite')
+
+
+def test_rebuilding_legacy_vectors_uses_frozen_rating_and_edition_evidence():
+    from app.ingest import match_audit as A
+    c=candidate('openlibrary',id='/works/OL1W',title='History',ratings_count=100,rating=4,subtitle='Annotated',subtitle_edition='/books/OL1M')
+    c['subtitle_edition']='/books/OL1M'
+    rows=[dict(version=1,run_id='frozen',candidate=c,title='History',author='Alice Writer',local_book=dict(title='History',author='Alice Writer'),features=dict(title_edit=1,supporting_families=1),edition_evidence=[dict(work_key=c['id'],key=c['subtitle_edition'],year=1900,publishers=['Press'])])]
+    [updated]=M.refresh_features(rows)
+    assert updated['version']==A.VERSION and updated['features']['ratings_count_log']==pytest.approx(np.log1p(100))
+    assert updated['features']['annotation_added']==1 and updated['features']['edition_evidence_known']==1
+    assert updated['features']['supporting_families']==1
+    assert updated['features']['title_edit']==1  # Existing derived columns are retained exactly.
+    assert M.RULE_FEATURES==set()
+
+
+def test_synthetic_negative_popularity_is_measured_in_the_query_context():
+    a=row('a',1,'id1');b=row('b',2,'id2',title='A Different History',author='Bob Writer')
+    for r,count in ((a,1000),(b,5000)):
+        r['split']='train';r['work_group']=r['run_id'];r['candidate']['ratings_count']=count
+    result=M.add_cross_work_negatives([a,b],per_query=1)
+    negatives=[r for r in result if r.get('label_origin')=='different_approved_work']
+    assert len(negatives)==2
+    assert all(r['features']['ratings_popularity_relative']>0 for r in negatives)

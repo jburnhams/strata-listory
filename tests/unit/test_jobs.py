@@ -336,3 +336,13 @@ def test_review_slot_does_not_bypass_same_book_resource_lock_or_block_unrelated_
     assert q.get(blocked)['state']=='queued'
     q.execute_claimed(review)
     assert q.run_one() and q.get(blocked)['state']=='done'
+
+
+def test_training_feature_cache_work_does_not_lock_out_same_book_review():
+    q=JobQueue(lambda *args:dict(saved=True),workers=1)
+    cache=q.submit('system','training_features',book_id=15,run_id='saved',revision=1)
+    c=db.connect()
+    with c:c.execute("UPDATE jobs SET state='running' WHERE id=?",(cache,))
+    c.close()
+    review=q.submit('ingest','match_review',book_id=15,action='confirm')
+    assert q.run_one() and q.get(review)['state']=='done'

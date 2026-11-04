@@ -9,6 +9,16 @@ from app.process import queue as pq
 
 
 def execute(jobs,domain,kind,options):
+    from app.ingest import training_cache
+    dirty=set();token=training_cache.DIRTY.set(dirty)
+    try:return _execute(jobs,domain,kind,options)
+    finally:
+        training_cache.DIRTY.reset(token)
+        if domain=='system' and kind=='bootstrap':dirty.update(read_models.owners('training_dirty'))
+        training_cache.enqueue(jobs,dirty)
+
+
+def _execute(jobs,domain,kind,options):
     if domain=='ingest':
         options=dict(options);recovered=options.pop('_recovered',False)
         if kind=='match_review':
@@ -55,6 +65,9 @@ def execute(jobs,domain,kind,options):
             if changed:jobs.submit('process','propose',ids=changed,limit=len(changed))
             return dict(changed=changed)
     if domain=='system':
+        if kind=='training_features':
+            from app.ingest import training_cache
+            return training_cache.update(**options)
         if kind=='bootstrap':return bootstrap()
         if kind=='views':
             from app.ingest import store

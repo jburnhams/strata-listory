@@ -573,7 +573,10 @@ def publish_run(run_id):
     with saved_evidence_only():view=_review_rows([store.get(run_id)])[0]
     read_models.save('ingest',run_id,view)
     from app.ingest import match_review
-    match_review.publish(store.get(run_id))
+    current=store.get(run_id)
+    match_review.publish(current)
+    from app.ingest import training_cache
+    training_cache.mark_dirty(current)
 
 
 def _pending_view(header):

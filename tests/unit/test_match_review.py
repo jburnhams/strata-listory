@@ -273,9 +273,29 @@ def test_deferred_shortlist_acceptance_stays_reversible_until_next(review,tmp_pa
     shown=suggest(review,tmp_path);jobs=JobQueue(None)
     accepted=tasks.execute(jobs,'ingest','match_review',dict(run_id=review['id'],action='accept',expected=shown['basis'],defer_continuation=True))
     assert accepted['changed'] and accepted['basis']==R.detail(review['id'])['basis']
-    assert store.get(review['id'])['state']=='audiobook_review' and not jobs.tasks()
+    assert store.get(review['id'])['state']=='audiobook_review' and not jobs.tasks('ingest')
     rejected=tasks.execute(jobs,'ingest','match_review',dict(run_id=review['id'],action='reject',expected=accepted['basis'],defer_continuation=True))
     assert P.book_review_held(store.get(review['id']))
     restored=tasks.execute(jobs,'ingest','match_review',dict(run_id=review['id'],action='restore',expected=rejected['basis'],defer_continuation=True))
     assert restored['changed'] and P.book_confirmed(store.get(review['id']))
-    assert store.get(review['id'])['state']=='audiobook_review' and not jobs.tasks()
+    assert store.get(review['id'])['state']=='audiobook_review' and not jobs.tasks('ingest')
+
+
+def test_updated_model_withdraws_below_threshold_suggestion_without_rejecting_the_book(review,tmp_path):
+    from app.ingest.training_cache import input_key
+    shown=suggest(review,tmp_path)
+    record=dict(run_id=review['id'],candidate=shown['suggestion']['candidate'],above_threshold=False,model_score=.5,input_key=input_key(store.get(review['id'])))
+    path=tmp_path/'updated.jsonl';path.write_text(json.dumps(record)+'\n')
+    assert R.import_shortlist(path,replace=True)==dict(imported=0,withdrawn=1)
+    assert R.page('shortlist')['total']==0 and read_models.get('match_suggestion',review['id']) is None
+    assert not P.book_review_held(store.get(review['id']))
+    with pytest.raises(ValueError,match='changed'):R.accept(review['id'],shown['basis'])
+
+
+def test_model_refresh_does_not_replace_or_withdraw_predictions_from_stale_source_inputs(review,tmp_path):
+    shown=suggest(review,tmp_path)
+    path=tmp_path/'stale.jsonl'
+    for above in (False,True):
+        path.write_text(json.dumps(dict(run_id=review['id'],candidate=shown['suggestion']['candidate'],candidate_key='replacement',above_threshold=above,model_score=.999,features={},input_key='stale'))+'\n')
+        assert R.import_shortlist(path,replace=True)==dict(imported=0,withdrawn=0)
+        assert R.detail(review['id'])['basis']==shown['basis']

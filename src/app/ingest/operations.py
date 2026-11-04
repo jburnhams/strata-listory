@@ -5,6 +5,7 @@ from app.ingest import pipeline as P, policy, store
 
 
 def view(ingest_tasks,process_tasks,completed=False):
+    ingest_tasks=[task for task in ingest_tasks if task['kind']!='training_features']
     snapshot=store.workflow_snapshot(activity=True);latest=snapshot['latest'];runs=snapshot['runs'];value=policy.current()
     rows=[];pending=set();books={b['id']:b for b in catalogue.list_books()};plans={r['book_id'] for r in snapshot['plans']}
     for n,task in enumerate(ingest_tasks):

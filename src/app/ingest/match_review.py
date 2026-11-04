@@ -81,19 +81,37 @@ def detail(run_id):
     return value
 
 
-def import_shortlist(path):
+def import_shortlist(path,replace=False):
     """Explicit local artifact import; GET requests never scan model files."""
     from app.ingest import pipeline as P
     rows=[json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()];best={}
     for row in rows:
         if row.get('above_threshold') and row.get('candidate'):
             if row['run_id'] not in best or row['model_score']>best[row['run_id']]['model_score']:best[row['run_id']]=row
+    withdrawn=0
+    if replace:
+        from app.ingest.training_cache import input_key
+        covered={row['run_id']:row for row in rows}
+        for rid,row in covered.items():
+            if rid in best:continue
+            run=store.get(rid);previous=read_models.get('match_suggestion',rid)
+            if not previous or previous['basis']!=basis(run) or P.raw_stage(run,'metadata_approval') or run['state'] not in ('metadata_review','review','eligible') or store.latest_id(run['book_id'])!=rid:continue
+            if not row.get('input_key') or row['input_key']!=input_key(run):continue
+            store.event(rid,'match_shortlist','done',data=dict(withdrawn=True,model=Path(path).parent.name,reason='Below updated model threshold',previous_candidate_key=previous['candidate_key']))
+            c=db.connect()
+            try:
+                with c:c.execute("DELETE FROM read_models WHERE kind='match_suggestion' AND owner=?",(rid,))
+            finally:c.close()
+            P.publish_run(rid);withdrawn+=1
     imported=0
     for rid,row in best.items():
         run=store.get(rid)
         if run['state'] not in ('metadata_review','review','eligible') or P.raw_stage(run,'metadata_approval'):continue
         if store.latest_id(run['book_id'])!=rid:continue
         if (P.raw_stage(run,'identity') or {}).get('kind')!='book':continue
+        if row.get('input_key'):
+            from app.ingest.training_cache import input_key
+            if row['input_key']!=input_key(run):continue
         collected=metadata.work_edition_evidence(P.raw_stage(run,'providers') or dict(providers={}))
         c=row['candidate']
         decision=P.raw_stage(run,'match_review_decision') or {}
@@ -105,7 +123,7 @@ def import_shortlist(path):
         run=store.get(rid)
         read_models.save('match_suggestion',rid,dict(candidate=chosen_fields(c),score=row['model_score'],features=row['features'],basis=basis(run),candidate_key=row['candidate_key'],model=Path(path).parent.name))
         P.publish_run(rid);imported+=1
-    return dict(imported=imported)
+    return dict(imported=imported,withdrawn=withdrawn) if replace else dict(imported=imported)
 
 
 def _current(run_id,expected):
@@ -213,8 +231,8 @@ def accept(run_id,expected):
 
 
 def main():
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('shortlist',nargs='?');args=parser.parse_args()
-    if args.shortlist:print(json.dumps(import_shortlist(args.shortlist)))
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('shortlist',nargs='?');parser.add_argument('--replace',action='store_true',help='withdraw covered old suggestions now below the model threshold');args=parser.parse_args()
+    if args.shortlist:print(json.dumps(import_shortlist(args.shortlist,replace=args.replace)))
     else:
         for run in store.all_runs():publish(run)
         print('Indexed saved match reviews')
