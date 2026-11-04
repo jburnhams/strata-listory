@@ -50,6 +50,7 @@ export const resetMock = () => {
 
 // Every endpoint the app calls has a handler here; one without a handler fails the test (setup.ts: onUnhandledFrame 'error').
 export const handlers = [
+  http.post('/api/jobs/:id/retry', () => HttpResponse.json({ queued: true })),
   http.get('/api/operations', () => HttpResponse.json({ rows: [], busy: false })),
   http.get('/api/finished', () => HttpResponse.json([])),
   http.get('/api/books/:id/output', () => HttpResponse.json({ book: {}, metadata: null, chapters: [] })),

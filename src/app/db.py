@@ -34,6 +34,11 @@ SCHEMA = (
        CREATE INDEX jobs_state ON jobs(state,created);
        CREATE TABLE read_models(kind TEXT NOT NULL,owner TEXT NOT NULL,data TEXT NOT NULL,updated TEXT NOT NULL,PRIMARY KEY(kind,owner))""",
     "ALTER TABLE jobs ADD COLUMN resources TEXT NOT NULL DEFAULT '[]'",
+    """ALTER TABLE jobs ADD COLUMN timeout_seconds REAL NOT NULL DEFAULT 1800;
+       CREATE TABLE job_work(kind TEXT NOT NULL,owner TEXT NOT NULL,job_id TEXT NOT NULL,PRIMARY KEY(kind,owner));
+       CREATE INDEX job_work_job ON job_work(job_id)""",
+    """CREATE INDEX jobs_history_dedupe ON jobs(dedupe,created);
+       CREATE INDEX jobs_failures ON jobs(finished) WHERE state='failed'""",
 )       # schema version n is SCHEMA[n-1]; append new migrations, never edit old ones (PRAGMA user_version tracks the applied count)
 
 

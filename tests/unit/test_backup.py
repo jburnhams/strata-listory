@@ -107,3 +107,18 @@ def test_queue_resource_migration_preserves_existing_schema_nine_jobs():
         assert tuple(row)==('queued',123,'[]')
         assert c.execute('PRAGMA user_version').fetchone()[0]==len(db.SCHEMA)
     finally:c.close()
+
+
+def test_job_history_index_migration_preserves_existing_deadlines_and_ownership():
+    import sqlite3
+    c=sqlite3.connect(db.path())
+    for migration in db.SCHEMA[:11]:c.executescript(migration)
+    c.execute('PRAGMA user_version=11')
+    c.execute("INSERT INTO jobs(id,domain,kind,options,dedupe,state,created,timeout_seconds) VALUES ('saved','system','scan','{}','saved','failed','now',37.5)")
+    c.execute("INSERT INTO job_work VALUES ('ingest','run','saved')");c.commit();c.close()
+    c=db.connect()
+    try:
+        assert c.execute("SELECT timeout_seconds FROM jobs WHERE id='saved'").fetchone()[0]==37.5
+        assert tuple(c.execute('SELECT * FROM job_work').fetchone())==('ingest','run','saved')
+        assert c.execute("SELECT name FROM sqlite_master WHERE name='jobs_history_dedupe'").fetchone()
+    finally:c.close()

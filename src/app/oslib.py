@@ -66,6 +66,27 @@ def lower_priority(nice=19):
     with contextlib.suppress(OSError, AttributeError): os.nice(nice)
 
 
+def job_process(command, env=None):
+    """Isolate descendants so the supervisor can stop all work at the deadline."""
+    options=dict(stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,env=env)
+    if not WIN:options['start_new_session']=True
+    return subprocess.Popen(command,**options)
+
+
+def start_job(ident,data_dir):
+    command=cli_command()[:-1]+['app.job_worker',ident]
+    return job_process(command,dict(os.environ,APP_DATA=data_dir))
+
+
+def kill_job(process):
+    """Force-stop a job and its tools, then reap the supervised child."""
+    if WIN:kill_tree(process.pid)
+    else:
+        import signal
+        with contextlib.suppress(OSError):os.killpg(process.pid,signal.SIGKILL)
+    with contextlib.suppress(subprocess.TimeoutExpired):process.wait(timeout=5)
+
+
 def venv_python(venv):
     """The interpreter of a virtual environment: bin/python on POSIX, Scripts\\python.exe on Windows."""
     return os.path.join(venv, 'Scripts', 'python.exe') if WIN else os.path.join(venv, 'bin', 'python')
@@ -73,5 +94,7 @@ def venv_python(venv):
 
 def cli_command():
     """Command prefix that starts the app CLI with the interpreter running this process (works on POSIX and Windows, with or without a .venv)."""
-    os.environ['PYTHONPATH'] = os.path.join(ROOT_DIR, 'src') + os.pathsep + os.environ.get('PYTHONPATH', ''); os.environ.setdefault('PYTHONWARNINGS', 'ignore')
+    # Per-job process launches must not grow this environment variable on every book.
+    paths=[os.path.join(ROOT_DIR,'src')]+[p for p in os.environ.get('PYTHONPATH','').split(os.pathsep) if p]
+    os.environ['PYTHONPATH']=os.pathsep.join(dict.fromkeys(paths));os.environ.setdefault('PYTHONWARNINGS','ignore')
     return [sys.executable, '-m', 'app']

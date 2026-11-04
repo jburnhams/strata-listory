@@ -27,7 +27,10 @@ def execute(jobs,domain,kind,options):
         worker=IngestWorker();worker.jobs=jobs;worker._do(kind,options)
         result=worker.last.get(kind)
         if isinstance(result,dict) and result.get('error'):raise ValueError(result['error'])
-        for rid in result if isinstance(result,list) else []:pipeline.publish_run(rid)
+        for rid in result if isinstance(result,list) else []:
+            pipeline.publish_run(rid)
+            run=pipeline.store.get(rid)
+            if run['state']=='failed':raise ValueError(next((e['error'] for e in reversed(run['events']) if e['status']=='failed'),'ingest failed'))
         return result
     if domain=='process':
         if kind=='propose':return pq.propose(**options,jobs=1)
@@ -54,7 +57,16 @@ def execute(jobs,domain,kind,options):
             if not fs.reachable(folder):raise ValueError('audiobook folder is not reachable')
             if not os.path.isdir(folder):raise ValueError(f'not a folder: {folder}')
             found=list(scan.scan(folder))
-            return dict(found=len(found),**catalogue.add_scanned(found))
+            result=dict(found=len(found),**catalogue.add_scanned(found))
+            from app import db
+            c=db.connect()
+            try:
+                for offset in range(0,len(found),200):
+                    paths=[entry['path'] for entry in found[offset:offset+200]]
+                    rows=c.execute(f"SELECT id FROM books WHERE path IN ({','.join('?' for _ in paths)}) AND NOT EXISTS (SELECT 1 FROM read_models v WHERE v.owner=CAST(books.id AS TEXT) AND v.kind IN ('details','cover'))",paths).fetchall()
+                    for row in rows:jobs.submit('system','inspect',book_id=row['id'])
+            finally:c.close()
+            return result
         if kind=='match':return matcher.match_pending(options['limit'],providers.enabled(options.get('providers')))
         if kind=='enrich':return enrich.enrich_pending(options['limit'])
         if kind=='enrich_book':

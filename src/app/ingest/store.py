@@ -13,6 +13,8 @@ def create(book_id, options):
     try:
         with c:
             c.execute('INSERT INTO ingest_runs VALUES (?,?,?,?,?,?)', (ident, book_id, now(), 'running', json.dumps(options), 1))
+            from app.jobs import bind_work
+            bind_work(c,'ingest',ident)
             # Bind the selected entry before inventory so an older run cannot
             # remain current while a new run is discovering its group.
             c.execute('INSERT INTO ingest_members VALUES (?,?)',(ident,book_id))
@@ -30,7 +32,11 @@ def event(run_id, stage, status, metrics=None, data=None, error='', elapsed=0):
 def finish(run_id, state):
     c = db.connect()
     try:
-        with c: c.execute('UPDATE ingest_runs SET state=? WHERE id=?', (state, run_id))
+        with c:
+            c.execute('UPDATE ingest_runs SET state=? WHERE id=?', (state, run_id))
+            if state in ('running','queued','processing'):
+                from app.jobs import bind_work
+                bind_work(c,'ingest',run_id)
     finally: c.close()
 
 

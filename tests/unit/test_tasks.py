@@ -23,6 +23,7 @@ def test_metadata_refresh_reuses_the_worker_and_publishes_the_new_run(monkeypatc
     submitted=[];jobs=SimpleNamespace(submit=lambda *a,**kw:submitted.append((a,kw)))
     monkeypatch.setattr(pipeline,'refresh_metadata',lambda **kw:calls.append(kw) or dict(id='fresh',state=state))
     monkeypatch.setattr(pipeline,'publish_run',lambda rid:calls.append(rid))
+    monkeypatch.setattr(pipeline.store,'get',lambda rid:dict(state=state,events=[]))
     assert tasks.execute(jobs,'ingest','refresh',dict(run_id='saved',book_only=True))==['fresh']
     assert calls==[dict(run_id='saved',book_only=True),'fresh']
     assert submitted==([(('ingest','continue'),dict(run_id='fresh'))] if state=='queued' else [])
@@ -39,6 +40,25 @@ def test_inspection_is_worker_owned_and_legacy_worker_errors_fail_jobs(monkeypat
         with pytest.raises(ValueError,match='unknown job kind'):tasks.execute(None,domain,'bad',{})
     catalogue.remove_book(book['id'])
     assert tasks.execute(None,'system','mirror',dict(book_id=book['id'])) is None
+
+
+def test_scan_queues_inspection_only_for_uncached_books_and_never_probes_inline(tmp_path,monkeypatch):
+    entries=[dict(path=str(tmp_path/f'{name}.mp3'),title=name,author='',narrator='',asin='',kind='book',file_count=1,series_position=None) for name in ('New','Covered','No artwork')]
+    catalogue.add_scanned(entries[1:])
+    existing={b['title']:b['id'] for b in catalogue.list_books()}
+    read_models.save('cover',existing['Covered'],dict(path='saved.jpg'))
+    read_models.save('details',existing['No artwork'],dict(files=None))
+    monkeypatch.setattr(tasks.scan,'scan',lambda folder:iter(entries))
+    monkeypatch.setattr(tasks.details,'describe',lambda *a:pytest.fail('scan must enqueue inspection'))
+    monkeypatch.setattr(tasks.details,'cover',lambda *a:pytest.fail('scan must enqueue artwork'))
+    calls=[];jobs=SimpleNamespace(submit=lambda *a,**kw:calls.append((a,kw)))
+    result=tasks.execute(jobs,'system','scan',dict(folder=str(tmp_path)))
+    new=next(b['id'] for b in catalogue.list_books() if b['title']=='New')
+    assert result==dict(found=3,added=1,existing=2,replaced=0)
+    assert calls==[(('system','inspect'),dict(book_id=new))]
+    read_models.save('details',new,dict(files=None));calls.clear()
+    assert tasks.execute(jobs,'system','scan',dict(folder=str(tmp_path)))['existing']==3
+    assert not calls
 
 
 def test_bootstrap_indexes_legacy_assets_outputs_and_plans_without_audio_analysis(tmp_path,monkeypatch):

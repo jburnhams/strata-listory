@@ -1,6 +1,47 @@
 """OS helpers (app.oslib): file lock, process liveness, termination, priority, CLI command."""
 import os, subprocess, sys, time, types
+import pytest
 from app import oslib
+
+
+@pytest.mark.parametrize('windows',[False,True])
+def test_job_process_is_detached_and_does_not_buffer_output(monkeypatch,windows):
+    calls=[];process=object();monkeypatch.setattr(oslib,'WIN',windows)
+    monkeypatch.setattr(subprocess,'Popen',lambda command,**kw:calls.append((command,kw)) or process)
+    assert oslib.job_process(['worker'],dict(APP_DATA='/saved')) is process
+    options=calls[0][1]
+    assert options['stdout']==options['stderr']==options['stdin']==subprocess.DEVNULL
+    assert options.get('start_new_session',False)==(not windows)
+    assert options['env']==dict(APP_DATA='/saved')
+
+
+def test_start_job_pins_database_and_uses_the_current_python(monkeypatch):
+    calls=[]
+    monkeypatch.setattr(oslib,'cli_command',lambda:['python','-m','app'])
+    monkeypatch.setattr(oslib,'job_process',lambda *args:calls.append(args) or 'child')
+    assert oslib.start_job('saved','/database')=='child'
+    assert calls[0][0]==['python','-m','app.job_worker','saved'] and calls[0][1]['APP_DATA']=='/database'
+
+
+def test_launching_eight_hundred_jobs_does_not_grow_the_python_environment(monkeypatch):
+    monkeypatch.setenv('PYTHONPATH','extra');monkeypatch.setenv('PYTHONWARNINGS','default');paths=[]
+    monkeypatch.setattr(oslib,'job_process',lambda command,env:paths.append(env['PYTHONPATH']))
+    for n in range(800):oslib.start_job(str(n),'/database')
+    assert set(paths)=={os.path.join(oslib.ROOT_DIR,'src')+os.pathsep+'extra'}
+
+
+@pytest.mark.parametrize('windows',[False,True])
+def test_job_termination_kills_descendants_and_reaps_the_child(monkeypatch,windows):
+    import signal
+    monkeypatch.setattr(signal,'SIGKILL',9,raising=False)
+    calls=[];monkeypatch.setattr(oslib,'WIN',windows)
+    monkeypatch.setattr(oslib,'kill_tree',lambda pid:calls.append(('tree',pid)))
+    monkeypatch.setattr(os,'killpg',lambda pid,sig:calls.append(('group',pid)),raising=False)
+    def wait(timeout):
+        calls.append(('wait',timeout));raise subprocess.TimeoutExpired('child',timeout)
+    process=types.SimpleNamespace(pid=123,wait=wait)
+    oslib.kill_job(process)
+    assert calls==[('tree' if windows else 'group',123),('wait',5)]
 
 
 def test_file_lock_excludes_other_processes(tmp_path):

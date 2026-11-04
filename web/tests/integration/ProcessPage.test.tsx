@@ -146,3 +146,16 @@ it('shows the live step, elapsed time, and activity log for active ingest', asyn
   await user.click(screen.getByText('Activity log'))
   expect(screen.getByText(/Hashed chapter 1.mp3/)).toBeInTheDocument()
 })
+
+it('keeps failed jobs stopped until Retry job is clicked', async () => {
+  let retries = 0
+  server.use(http.get('/api/operations', () => HttpResponse.json({ busy: false, rows: retries ? [] : [
+    { id: 'job-failed', job_id: 'failed', book_id: null, run_id: null, title: 'Source inspection', stage: 'system', state: 'failed', phase: null, error: 'Job exceeded its time limit' },
+  ] })), http.post('/api/jobs/failed/retry', () => { retries++; return HttpResponse.json({ retried: true }) }))
+  const { user } = setup(<ProcessPage />)
+  expect(await screen.findByText('Job exceeded its time limit')).toBeInTheDocument()
+  expect(retries).toBe(0)
+  await user.click(screen.getByRole('button', { name: 'Retry job' }))
+  expect(retries).toBe(1)
+  expect(await screen.findByText('No operations in this view.')).toBeInTheDocument()
+})
