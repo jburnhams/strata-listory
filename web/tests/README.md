@@ -39,3 +39,7 @@ lazy evidence, exact decision tokens, accept/unapprove feedback, stale failures,
 search/pagination, missing fields, unsafe source URLs, active-work controls,
 approval records and both navigation routes. Every new endpoint has a default msw
 handler. The coverage gate remains unchanged.
+
+The ingest polling regression intercepts only the app's three-second interval.
+Testing Library's own wait intervals remain real, and request assertions use
+bounded waits so a failure cannot leave an unresolved React act scope behind.
