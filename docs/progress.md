@@ -559,3 +559,11 @@ transfer share. Downloaded dumps, tool environments/caches, listening previews
 and output audio are omitted; generated state stays in the database as history.
 See `docs/omarchy-migration-20261104.md` for complete restore commands, required
 configuration, queued-work behavior, output rebuilding and the proxy/auth boundary.
+
+## 2026-11-04 — Responsive concurrent match approvals
+
+- Replaced the page-wide saving flag with per-run pending state and independent book-specific errors. Other cards, search, refresh and pagination stay interactive while jobs complete; stale overlapping list responses cannot resurrect a completed revision.
+- Reserved one bounded durable worker slot for `ingest/match_review`, prioritized ahead of queued bulk work while retaining resource locks across both kinds of jobs. `APP_WORKERS` still caps bulk tasks; at most one review decision runs alongside them.
+- On omarchy, recent automatic confirmations spent 42 s and 158 s waiting, versus 0.18–0.21 s executing. The bottleneck was the shared ingest queue rather than the decision itself.
+- Added queued/out-of-order UI regressions for both review modes, failure recovery, stale refresh handling, and scheduling tests for both caps and shared book locks. No live review decisions were submitted as tests.
+- Validation: 835 backend unit tests passed at 96.25% coverage; six job/API integration tests passed; 115 web tests passed the unchanged coverage gate; lint and production build passed. Deployed on omarchy, verified health and both review APIs, and explicitly requeued the ingest job interrupted by the service restart.

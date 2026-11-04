@@ -308,3 +308,66 @@ it('recovers when concurrent reviews empty a prefetched page or make its offset 
   await user.click(screen.getByRole('button', { name: 'Next' }))
   expect(await screen.findByText('1–5 of 5 reviews')).toBeInTheDocument()
 })
+
+it.each(['automatic', 'shortlist'] as const)('saves %s cards independently while a decision is still queued', async mode => {
+  const original = reviewRows(11, mode)
+  let rows = [...original]
+  const calls: string[] = []
+  const releases = new Map<string, (failed?: boolean) => void>()
+  server.use(http.get('/api/match-reviews', ({ request }) => {
+    const after = new URL(request.url).searchParams.get('after')
+    return HttpResponse.json({ rows: after ? original.slice(10) : rows.slice(0, 10), total: rows.length, offset: after ? 10 : 0, limit: 10 })
+  }), http.post('/api/match-reviews/:id/:action', ({ params }) => {
+    const id = String(params.id); calls.push(id)
+    return HttpResponse.json({ job_id: id }, { status: 202 })
+  }), http.get('/api/jobs/:id', async ({ params }) => {
+    const id = String(params.id)
+    const failed = await new Promise<boolean>(resolve => { releases.set(id, (fail = false) => resolve(fail)) })
+    if (!failed) rows = rows.filter(row => row.id !== id)
+    return HttpResponse.json({ state: failed ? 'failed' : 'done', result: { changed: true }, error: failed ? 'Evidence changed; refresh and retry.' : '' })
+  }))
+  const { user } = setup(<MatchReviewPage mode={mode} />)
+  const first = await screen.findByRole('article', { name: 'Review Book 1' })
+  const second = screen.getByRole('article', { name: 'Review Book 2' })
+  await user.click(within(first).getByRole('button', { name: 'Approve' }))
+  await waitFor(() => expect(releases.has('batch-1')).toBe(true))
+  expect(within(first).getByRole('button', { name: 'Saving…' })).toBeDisabled()
+  expect(within(first).getByRole('button', { name: 'Reject' })).toBeDisabled()
+  expect(within(second).getByRole('button', { name: 'Approve' })).toBeEnabled()
+  expect(screen.getByRole('textbox', { name: 'Search reviews' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled()
+  await user.click(within(second).getByRole('button', { name: 'Approve' }))
+  await waitFor(() => expect(releases.has('batch-2')).toBe(true))
+  releases.get('batch-2')!()
+  await waitFor(() => expect(screen.queryByRole('article', { name: 'Review Book 2' })).toBeNull())
+  expect(within(first).getByRole('button', { name: 'Saving…' })).toBeDisabled()
+  releases.get('batch-1')!(true)
+  expect(await screen.findByRole('alert')).toHaveTextContent('Book 1: Evidence changed')
+  expect(within(first).getByRole('button', { name: 'Approve' })).toBeEnabled()
+  expect(calls).toEqual(['batch-1', 'batch-2'])
+})
+
+it('does not restore a saved card when an overlapping refresh returns stale rows', async () => {
+  const rows = reviewRows(2)
+  let releaseDecision: () => void = () => {}, releaseRefresh: () => void = () => {}, reads = 0, deciding = false
+  const decision = new Promise<void>(resolve => { releaseDecision = resolve })
+  const refresh = new Promise<void>(resolve => { releaseRefresh = resolve })
+  server.use(http.get('/api/match-reviews', async () => {
+    if (++reads > 1) await refresh
+    return HttpResponse.json(listing(rows))
+  }), http.post('/api/match-reviews/:id/confirm', async () => {
+    deciding = true; await decision; return HttpResponse.json({ changed: true })
+  }))
+  const { user } = setup(<MatchReviewPage mode="automatic" />)
+  await user.click(within(await screen.findByRole('article', { name: 'Review Book 1' })).getByRole('button', { name: 'Approve' }))
+  await waitFor(() => expect(deciding).toBe(true))
+  await user.click(screen.getByRole('button', { name: 'Refresh' }))
+  await waitFor(() => expect(reads).toBe(2))
+  releaseDecision()
+  await waitFor(() => expect(screen.queryByRole('article', { name: 'Review Book 1' })).toBeNull())
+  releaseRefresh()
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled())
+  expect(screen.queryByRole('article', { name: 'Review Book 1' })).toBeNull()
+  expect(screen.getByRole('article', { name: 'Review Book 2' })).toBeInTheDocument()
+})

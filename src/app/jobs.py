@@ -116,9 +116,15 @@ class JobQueue:
         try:
             with c:
                 c.execute('BEGIN IMMEDIATE')
-                # The database also enforces the shared cap if several callers try to claim concurrently.
-                if c.execute("SELECT count(*) FROM jobs WHERE state='running'").fetchone()[0]>=self.workers:return None
-                row=c.execute("SELECT j.id,j.timeout_seconds FROM jobs j WHERE j.state='queued' AND NOT EXISTS (SELECT 1 FROM jobs active,json_each(active.resources) a,json_each(j.resources) b WHERE active.state='running' AND a.value=b.value) ORDER BY j.created,j.id LIMIT 1").fetchone()
+                # Reserve one bounded slot for explicit review decisions so long audio
+                # jobs cannot hold up the review UI. Resource locks still span both lanes.
+                review="domain='ingest' AND kind='match_review'"
+                active=c.execute(f"SELECT count(*) FILTER (WHERE {review}),count(*) FILTER (WHERE NOT ({review})) FROM jobs WHERE state='running'").fetchone()
+                row=c.execute(f"""SELECT j.id,j.timeout_seconds FROM jobs j WHERE j.state='queued'
+                    AND ((j.domain='ingest' AND j.kind='match_review' AND ?<1)
+                        OR (NOT (j.domain='ingest' AND j.kind='match_review') AND ?<?))
+                    AND NOT EXISTS (SELECT 1 FROM jobs active,json_each(active.resources) a,json_each(j.resources) b WHERE active.state='running' AND a.value=b.value)
+                    ORDER BY CASE WHEN j.domain='ingest' AND j.kind='match_review' THEN 0 ELSE 1 END,j.created,j.id LIMIT 1""",(active[0],active[1],self.workers)).fetchone()
                 if row is None:return None
                 c.execute("UPDATE jobs SET state='running',started=?,owner_pid=? WHERE id=?",(now(),os.getpid(),row['id']))
         finally:c.close()
@@ -234,7 +240,7 @@ class JobQueue:
                         # that may have killed or stalled its previous owner.
                         self.fail(row['id'],'job interrupted: previous worker stopped')
         finally:c.close()
-        for n in range(self.workers):
+        for n in range(self.workers+1):
             thread=threading.Thread(target=self._loop,kwargs=dict(isolated=True),name=f'job-worker-{n}',daemon=True);self.threads.append(thread);thread.start()
 
     def _loop(self,isolated=False):

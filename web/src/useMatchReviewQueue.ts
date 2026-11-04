@@ -9,7 +9,12 @@ export function useMatchReviewQueue(mode: 'automatic' | 'shortlist', query: stri
   const [data, setData] = useState<MatchReviewPage | null>(null)
   const [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null)
   const current = useRef<MatchReviewPage | null>(null), ahead = useRef<Prefetch | null>(null), generation = useRef(0)
-  const normalise = (page: MatchReviewPage, offset: number): MatchReviewPage => ({ ...page, offset, limit: REVIEW_PAGE_SIZE, rows: page.rows.slice(0, REVIEW_PAGE_SIZE) })
+  const decided = useRef(new Set<string>())
+  function excludeDecided(page: MatchReviewPage): MatchReviewPage {
+    const rows = page.rows.filter(row => !decided.current.has(`${row.id}:${row.basis}`))
+    return { ...page, rows, total: Math.max(0, page.total - (page.rows.length - rows.length)) }
+  }
+  const normalise = (page: MatchReviewPage, offset: number): MatchReviewPage => excludeDecided({ ...page, offset, limit: REVIEW_PAGE_SIZE, rows: page.rows.slice(0, REVIEW_PAGE_SIZE) })
   function prefetch(page: MatchReviewPage) {
     ahead.current = null
     if (!page.rows.length || page.offset + page.rows.length >= page.total) return
@@ -25,7 +30,7 @@ export function useMatchReviewQueue(mode: 'automatic' | 'shortlist', query: stri
     }).catch(() => null) // Failed speculation must not disturb the visible batch.
     ahead.current = request
   }
-  function display(page: MatchReviewPage) { current.current = page; setData(page) }
+  function display(page: MatchReviewPage) { const visible = excludeDecided(page); current.current = visible; setData(visible) }
   async function load(offset: number, cached?: Prefetch | null, total?: number, scroll = false): Promise<void> {
     const version = ++generation.current
     ahead.current = null; setError(null)
@@ -52,7 +57,9 @@ export function useMatchReviewQueue(mode: 'automatic' | 'shortlist', query: stri
     void load(0)
     return () => { generation.current++; current.current = null; ahead.current = null }
   }, [mode, query])
-  async function remove(id: string) {
+  async function remove(id: string, basis: string) {
+    // A list/preload already in flight may still contain the just-saved revision.
+    decided.current.add(`${id}:${basis}`)
     const page = current.current
     if (!page || !page.rows.some(row => row.id === id)) return
     const remaining = { ...page, rows: page.rows.filter(row => row.id !== id), total: Math.max(0, page.total - 1) }
