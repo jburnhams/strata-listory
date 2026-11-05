@@ -1,6 +1,7 @@
 """Offline dumps publish atomically and preserve work identity and rating provenance."""
 import gzip
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -158,3 +159,64 @@ def test_editions_cli_flag_imports_the_snapshot(dumps,capsys):
     assert main(['openlibrary-import','--directory',str(dumps),'--editions'])==0
     assert json.loads(capsys.readouterr().out)['counts']['editions']==1
     assert local.editions('/works/OL1W')[0]['year']==2006
+
+
+@pytest.mark.parametrize('languages,keep', [([],True),(['/languages/eng'],True),(['/languages/fre'],False),(['/languages/ger','/languages/eng'],True),([''],True),(['/languages/not-a-code'],True),(['/languages/und'],True),(['/languages/mul'],True)])
+def test_edition_language_filter_keeps_english_and_unknown(languages,keep):
+    assert local.keep_edition(languages) is keep
+
+
+def test_import_excludes_explicit_foreign_editions_and_their_links(dumps):
+    dump(dumps/'editions.txt.gz',[(f'/books/OL{n}M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_10=[f'{n:010}'],languages=languages)) for n,languages in enumerate([
+        [dict(key='/languages/fre')],[dict(key='/languages/eng')],[],[dict(key='/languages/ger'),dict(key='/languages/eng')],[{}],
+    ],1)])
+    state=local.build(dumps,editions=True)
+    assert state['counts']['editions']==4 and state['edition_languages']=='english_or_unknown'
+    assert {r['key'] for r in local.editions('/works/OL1W')}=={'/books/OL2M','/books/OL3M','/books/OL4M','/books/OL5M'}
+    assert local.editions(isbn='0000000001')==[]
+
+
+def old_editions_index(dumps):
+    dump(dumps/'editions.txt.gz',[(f'/books/OL{n}M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_10=[f'{n:010}'])) for n in (1,2)])
+    local.build(dumps,editions=True)
+    c=sqlite3.connect(local.folder()/'index.sqlite')
+    with c:
+        snapshot=json.loads(c.execute("SELECT value FROM metadata WHERE key='snapshot'").fetchone()[0]);snapshot.pop('edition_languages')
+        c.execute("UPDATE metadata SET value=? WHERE key='snapshot'",(json.dumps(snapshot),))
+        c.execute("UPDATE editions SET languages=? WHERE key='/books/OL1M'",(json.dumps(['/languages/fre']),))
+        c.execute("UPDATE editions SET languages=? WHERE key='/books/OL2M'",(json.dumps(['/languages/und']),))
+    c.close()
+
+
+def test_compaction_removes_foreign_editions_links_and_reclaims_pages_atomically(dumps,capsys):
+    from app.cli import main
+    old_editions_index(dumps)
+    assert main(['openlibrary-compact'])==0
+    summary=json.loads(capsys.readouterr().out)
+    assert summary['counts']['editions']==1 and summary['editions_excluded']==1
+    assert local.status()['ready'] and local.status()['edition_languages']=='english_or_unknown'
+    assert [r['key'] for r in local.editions('/works/OL1W')]==['/books/OL2M']
+    assert local.editions(isbn='0000000001')==[]
+    assert local.search('The Road','Cormac McCarthy')[0]['original_year']==2006
+    assert local.compact_editions()==summary
+    assert not (local.folder()/'index.sqlite.compacting').exists()
+
+
+def test_failed_compaction_preserves_published_index(dumps,monkeypatch):
+    old_editions_index(dumps)
+    target=local.folder()/'index.sqlite';before=target.read_bytes();replace=Path.replace
+    def fail_publication(self,other):
+        if self.name=='index.sqlite.compacting':raise OSError('publication failed')
+        return replace(self,other)
+    monkeypatch.setattr(Path,'replace',fail_publication)
+    with pytest.raises(OSError,match='publication failed'):local.compact_editions()
+    assert target.read_bytes()==before and local.status()['ready']
+    assert len(local.editions('/works/OL1W'))==2
+    assert not (local.folder()/'index.sqlite.compacting').exists()
+
+
+def test_compaction_requires_a_published_editions_snapshot(dumps):
+    local.folder().mkdir(parents=True,exist_ok=True)
+    with pytest.raises(ValueError,match='no published'):local.compact_editions()
+    local.build(dumps)
+    with pytest.raises(ValueError,match='no editions'):local.compact_editions()

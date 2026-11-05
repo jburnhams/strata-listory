@@ -12,7 +12,7 @@ from app import book_titles, contributors, oslib, settings
 from app.providers.base import candidate
 from app.ingest.observe import emit
 
-VERSION=2
+VERSION=3
 
 
 def folder():return Path(settings.data_dir())/'openlibrary'
@@ -48,6 +48,11 @@ def records(path,sizes=None):
 def year(value):
     found=re.search(r'\b(1\d{3}|20\d{2})\b',str(value or ''))
     return int(found[1]) if found else None
+
+
+def keep_edition(languages):
+    known={value for value in languages if re.fullmatch(r'/languages/[a-z]{3}',value) and value not in ('/languages/und','/languages/mul','/languages/zxx')}
+    return not known or '/languages/eng' in known
 
 
 def build(dumps=None,wait=False,editions=False):
@@ -108,7 +113,8 @@ def build(dumps=None,wait=False,editions=False):
                     work_keys=list(dict.fromkeys(w['key'] for w in data.get('works') or [] if isinstance(w,dict) and re.fullmatch(r'/works/OL\d+W',w.get('key') or '')))
                     isbns=list(dict.fromkeys(re.sub(r'[-\s]','',str(v)).upper() for field in ('isbn_10','isbn_13') for v in data.get(field) or []))
                     isbns=[v for v in isbns if re.fullmatch(r'\d{9}[\dX]|\d{13}',v)]
-                    languages=[v.get('key','') for v in data.get('languages') or [] if isinstance(v,dict)]
+                    languages=[v.get('key','') for v in data.get('languages') or [] if isinstance(v,dict) and isinstance(v.get('key',''),str)]
+                    if not keep_edition(languages):continue
                     publishers=[str(v) for v in data.get('publishers') or [] if v]
                     date=str(data.get('publish_date') or '')
                     batch.append((key,data['title'],str(data.get('subtitle') or ''),year(date),date,json.dumps(publishers),json.dumps(languages),str(data.get('physical_format') or ''),json.dumps(isbns)))
@@ -131,7 +137,7 @@ def build(dumps=None,wait=False,editions=False):
                 try:info=json.loads((source/f'{kind}.download.json').read_text())
                 except (OSError,ValueError):info={}
                 provenance[kind]=dict(uncompressed_bytes=sizes[path.name],bytes=path.stat().st_size,url=info.get('url_effective',''),file=path.name)
-            summary=dict(version=VERSION,counts=counts,editions=editions,dumps=provenance,built=datetime.now(timezone.utc).isoformat())
+            summary=dict(version=VERSION,counts=counts,editions=editions,edition_languages='english_or_unknown' if editions else None,dumps=provenance,built=datetime.now(timezone.utc).isoformat())
             connection.execute('INSERT INTO metadata VALUES(?,?)',('snapshot',json.dumps(summary)));connection.commit()
             check=connection.execute('PRAGMA quick_check').fetchone()[0]
             if check!='ok':raise ValueError(f'Open Library index verification failed: {check}')
@@ -141,6 +147,48 @@ def build(dumps=None,wait=False,editions=False):
             return status()
         except BaseException as error:
             connection.close();_progress('failed',error=str(error));raise
+
+
+def compact_editions():
+    """Filter an existing snapshot without a new import; publish only a verified compact copy."""
+    root=folder()
+    with (root/'import.lock').open('a+b') as lock,oslib.file_lock(lock):
+        source=root/'index.sqlite';target=root/'index.sqlite.compacting'
+        if not source.is_file():raise ValueError('no published Open Library index')
+        original=sqlite3.connect(source.resolve().as_uri()+'?mode=ro',uri=True)
+        try:summary=json.loads(original.execute("SELECT value FROM metadata WHERE key='snapshot'").fetchone()[0])
+        except BaseException:original.close();raise
+        if not summary.get('editions'):
+            original.close();raise ValueError('published index has no editions')
+        if summary.get('edition_languages')=='english_or_unknown':
+            original.close();return summary
+        target.unlink(missing_ok=True);connection=sqlite3.connect(target)
+        try:
+            _progress('filtering_editions',ready=True)
+            original.backup(connection);original.close()
+            connection.executescript("""PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA temp_store=FILE;
+                CREATE TEMP TABLE excluded(key TEXT PRIMARY KEY);
+                INSERT INTO excluded SELECT e.key FROM editions e
+                WHERE EXISTS (SELECT 1 FROM json_each(e.languages) WHERE value GLOB '/languages/[a-z][a-z][a-z]' AND value NOT IN ('/languages/und','/languages/mul','/languages/zxx'))
+                  AND NOT EXISTS (SELECT 1 FROM json_each(e.languages) WHERE value='/languages/eng');""")
+            removed=connection.execute('SELECT count(*) FROM excluded').fetchone()[0]
+            with connection:
+                for table in ('edition_works','edition_isbns'):connection.execute(f'DELETE FROM {table} WHERE edition IN (SELECT key FROM excluded)')
+                connection.execute('DELETE FROM editions WHERE key IN (SELECT key FROM excluded)')
+                summary.update(version=VERSION,edition_languages='english_or_unknown',editions_excluded=removed,compacted=datetime.now(timezone.utc).isoformat())
+                summary['counts']['editions']=connection.execute('SELECT count(*) FROM editions').fetchone()[0]
+                connection.execute("UPDATE metadata SET value=? WHERE key='snapshot'",(json.dumps(summary),))
+            _progress('compacting_editions',ready=True,editions_excluded=removed)
+            connection.execute('VACUUM')
+            if connection.execute('PRAGMA quick_check').fetchone()[0]!='ok':raise ValueError('compacted index verification failed')
+            connection.close()
+            with (root/'index.lock').open('a+b') as publication,oslib.file_lock(publication):target.replace(source)
+            _progress('ready',ready=True,error='',**summary)
+            return summary
+        except BaseException:
+            original.close();connection.close();target.unlink(missing_ok=True)
+            _progress('ready',ready=True,error='Edition compaction failed; published index preserved')
+            raise
 
 
 def _flush(connection,kind,batch,links):

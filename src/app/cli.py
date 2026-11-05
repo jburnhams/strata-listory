@@ -285,7 +285,10 @@ def cmd_ingest(args):
 
 def cmd_openlibrary(args):
     from app.providers import openlibrary_local
-    try:result=openlibrary_local.build(args.directory,wait=args.wait,editions=args.editions) if args.cmd=='openlibrary-import' else openlibrary_local.status()
+    try:
+        if args.cmd=='openlibrary-import':result=openlibrary_local.build(args.directory,wait=args.wait,editions=args.editions)
+        elif args.cmd=='openlibrary-compact':result=openlibrary_local.compact_editions()
+        else:result=openlibrary_local.status()
     except (ValueError,OSError) as error:sys.exit(str(error))
     print(json.dumps(result,indent=2));return 0
 
@@ -298,6 +301,7 @@ def cmd_serve(args):
 def main(argv=None):
     p = argparse.ArgumentParser(prog='app'); sub = p.add_subparsers(dest='cmd', required=True)
     oi=sub.add_parser('openlibrary-import',help='index downloaded Open Library gzip dumps for offline lookup');oi.add_argument('--directory');oi.add_argument('--editions',action='store_true',help='also index the editions dump and ISBN links');oi.add_argument('--wait',action='store_true',help='wait for in-progress dump downloads');oi.set_defaults(fn=cmd_openlibrary)
+    sub.add_parser('openlibrary-compact',help='keep English/unknown-language editions and compact a verified copy of the offline index').set_defaults(fn=cmd_openlibrary)
     sub.add_parser('openlibrary-status',help='show offline Open Library import progress').set_defaults(fn=cmd_openlibrary)
     ir=sub.add_parser('ingest-run',help='run staged ingest and persist metrics/evidence (automation follows policy; off by default)');ir.add_argument('ids',nargs='*',type=int);ir.add_argument('--limit',type=int,default=5);ir.add_argument('--offline',action='store_true');ir.set_defaults(fn=cmd_ingest)
     for command in ('ingest-show','ingest-resume','ingest-refresh','ingest-enqueue','ingest-evaluate'):
