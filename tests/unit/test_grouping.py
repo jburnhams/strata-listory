@@ -1,5 +1,6 @@
 """Book boundaries follow file evidence, including mixed flat and nested collections."""
 import pytest
+from pathlib import Path
 from app.ingest import grouping as G,inventory as I
 
 
@@ -288,3 +289,91 @@ def test_reader_only_chapter_tags_share_a_group_without_inventing_an_author():
 def test_unlabelled_album_artist_retains_its_existing_writer_assertion():
     assert G.author_credit(dict(album_artist='Album Writer',artist='Other Writer'))=='Album Writer'
     assert G.author_credit(dict(artist='Writer, Helper - foreword'))=='Writer, Helper - foreword'
+
+
+@pytest.mark.parametrize('title,folder,editor',[
+    ('London After Midnight','Haining, Peter (Ed.) - London After Midnight','Peter Haining'),
+    ('Night Tales','Reader, Alex (Editor) - Night Tales','Alex Reader'),
+    ('Different Stories','Different Stories',''),
+])
+def test_ordered_anthology_groups_story_authors_under_the_shared_container(title,folder,editor):
+    files=[file(f'/books/{folder}/{n:02} Story {n}.mp3',title,writer,title=f'A short story {n}') for n,writer in ((1,'First Writer'),(2,'Second Writer'),(3,'Third Writer'))]
+    [group]=G.partition(files,f'/books/{folder}')
+    assert group['anthology'] and group['title']==title and group['author']==editor
+    assert len(group['paths'])==3
+    identity,metrics=I.recover(dict(title=title,author=editor,narrator='',asin='',locked=[]),dict(root=f'/books/{folder}',files=files,work_hint=group,sidecars=[]))
+    assert identity['kind']=='book' and identity['book']['author']==editor
+    assert [e['tags']['artist'] for e in identity['evidence']]==['First Writer','Second Writer','Third Writer']
+
+
+@pytest.mark.parametrize('change',['reset','gap','different_album','unrelated_folder','whole_books'])
+def test_anthology_grouping_does_not_swallow_ambiguous_collections(change):
+    files=[file(f'/books/Tales/{n:02} Story {n}.mp3','Tales',writer,track=str(n)) for n,writer in ((1,'First Writer'),(2,'Second Writer'),(3,'Third Writer'))]
+    if change=='reset':files[2]['probe']['tags']['track']='1'
+    if change=='gap':files[2]['probe']['tags']['track']='4'
+    if change=='different_album':files[2]['probe']['tags']['album']='Another Book'
+    if change=='unrelated_folder':
+        for f in files:f['path']=f['path'].replace('/Tales/','/Various Books/')
+    if change=='whole_books':
+        for f in files:f['path']=f['path'].replace('.mp3','.m4b')
+    assert len(G.partition(files,'/books'))>1
+
+
+@pytest.mark.parametrize('label,disc,total',[
+    ('CD3o5',3,5),('CD03O05',3,5),('CD3of5',3,5),('Disc 3 of 5',3,5),
+    ('Disk3/5',3,5),('CD03',3,None),
+])
+def test_disc_totals_accept_compact_and_written_of_labels(label,disc,total):
+    assert G.album_parts(f'Another Work ({label})')==('Another Work',disc,total)
+
+
+@pytest.mark.parametrize('label',['CD3other','CD3opus5','CDROM3','CD3oX'])
+def test_disc_labels_do_not_consume_title_words(label):
+    assert G.album_parts(f'Another Work ({label})')[1:]==(0,None)
+
+
+def test_mixed_disc_labels_make_one_ordered_recording_without_changing_track_tags():
+    # Reconstruction of the 87-track Me Talk Pretty One Day layout, with a
+    # different title to ensure the fix is independent of any catalogue entry.
+    title='A Five Disc Memoir';counts=[15,19,16,16,21]
+    files=[]
+    for disc,count in enumerate(counts,1):
+        album=f'{title} - Disc {disc}' if disc<3 else f'{title} (CD{disc}o5)'
+        files += [file(f'/books/{title}/CD{disc:02}/{track:02}-Story {track}.mp3',album,'A Writer',track=f'{track}/{count}') for track in range(1,count+1)]
+    before=[dict(f['probe']['tags']) for f in files]
+    [group]=G.partition(files,f'/books/{title}')
+    assert group['title']==title and len(group['paths'])==87
+    [rep]=I.represent(list(reversed(files)))
+    assert rep['files']==[f['path'] for f in files]
+    assert rep['missing_tracks']==0 and rep['duplicate_tracks']==0
+    assert [f['probe']['tags'] for f in files]==before
+    # The total still catches a missing disc rather than splitting the book.
+    [incomplete]=I.represent([f for f in files if '/CD04/' not in f['path']])
+    assert incomplete['missing_tracks']==1
+
+
+@pytest.mark.parametrize('author,title',[('Mara K. Vale','Winter Harbour'),('Leon Brooks','The Ascent')])
+def test_explicit_folder_author_survives_untagged_disc_tracks(author,title):
+    root=f'/books/{author} - {title}'
+    files=[file(f'{root}/CD {disc}/{n:02} Track {n:02}.mp3',title=f'Track {n:02}',track=f'{n}/2') for disc in (1,2) for n in (1,2)]
+    [group]=G.partition(files,root)
+    assert (group['title'],group['author'])==(title,author)
+    identity,metrics=I.recover(dict(title=title,author=author,asin='',locked=[]),dict(root=root,files=files,sidecars=[],work_hint=group))
+    assert identity['book']['author']==author and metrics['identity.conflicts']==0
+    assert dict(source='folder',path=str(Path(root)),title=title,author=author) in identity['evidence']
+
+
+def test_blank_group_credit_preserves_same_work_author_but_not_collection_author():
+    inv=dict(root='/books/Novel',files=[file('/books/Novel/01.mp3')],sidecars=[],work_hint=dict(title='Novel',author=''))
+    book=dict(title='Novel',author='Known Writer',asin='',locked=[])
+    assert I.recover(book,inv)[0]['book']['author']=='Known Writer'
+    assert I.recover(dict(book,title='Collection'),inv)[0]['book']['author']==''
+
+
+def test_folder_author_conflict_is_visible_in_identity_gate():
+    root='/books/Local Writer - Novel'
+    files=[file(root+'/01.mp3','Novel','Other Writer')]
+    [group]=G.partition(files,root)
+    identity,metrics=I.recover(dict(title='Novel',author='Local Writer',asin='',locked=[]),dict(root=root,files=files,sidecars=[],work_hint=group))
+    assert identity['book']['author']=='Other Writer' and metrics['identity.conflicts']==1
+    assert any(e['source']=='folder' and e['author']=='Local Writer' for e in identity['evidence'])

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { matchReviewApi, withBase, type MatchReview, type MatchCandidate } from '../api'
 import { href, useLoad } from '../route'
 import { useMatchReviewQueue } from '../useMatchReviewQueue'
@@ -39,7 +39,7 @@ function MoreEvidence({ id }: { id: string }) {
     {data.approval && <details className="text-sm"><summary className="cursor-pointer">Approval record</summary><Fields values={Object.entries(data.approval).filter(([key]) => key !== 'checks').map(([key, value]) => [key.replaceAll('_', ' '), value])} /><ul>{data.approval.checks?.map(c => <li key={c.metric}>{labels[c.metric] || c.metric}: {c.passed ? 'passed' : 'overridden'} · {show(c.value)}</li>)}</ul></details>}
   </div>
 }
-function ReviewCard({ row, mode, busy, act }: { row: MatchReview; mode: 'automatic' | 'shortlist'; busy: string | null; act: (row: MatchReview, decision: 'approve' | 'reject') => void }) {
+function ReviewCard({ row, mode, busy, selected, act }: { row: MatchReview; mode: 'automatic' | 'shortlist'; busy: boolean; selected?: 'approve' | 'reject'; act: (row: MatchReview, decision: 'approve' | 'reject') => void }) {
   const [expanded, setExpanded] = useState(false)
   const c = row.suggestion?.candidate
   const failed = row.checks.filter(check => !check.passed)
@@ -50,8 +50,8 @@ function ReviewCard({ row, mode, busy, act }: { row: MatchReview; mode: 'automat
         {row.cover && <img src={withBase(`/api/books/${row.book_id}/cover`)} alt="" loading="lazy" className="w-12 h-16 rounded object-cover" />}
         <div className="flex-1 min-w-0"><h2 className="font-semibold"><a href={withBase(href.book(row.book_id))} className="hover:underline">{row.local.title}</a></h2><p className="text-xs text-stone-500">#{row.book_id} · {row.local.kind} · {row.state.replaceAll('_', ' ')}{row.approved_at && ` · approved ${new Date(row.approved_at).toLocaleDateString()}`}</p></div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className={btn} disabled={!!busy || !!row.blocked || (mode === 'shortlist' && !row.complete)} onClick={() => act(row, 'approve')}>{busy === row.id ? 'Saving…' : 'Approve'}</button>
-          <button type="button" className={`${btnQuiet} text-red-700 dark:text-red-400`} disabled={!!busy || !!row.blocked} onClick={() => act(row, 'reject')}>Reject</button>
+          <button type="button" className={btn} aria-pressed={selected === 'approve'} disabled={!!busy || selected === 'approve' || !!row.blocked || (mode === 'shortlist' && !row.complete)} onClick={() => act(row, 'approve')}>{busy ? 'Saving…' : 'Approve'}</button>
+          <button type="button" className={`${btnQuiet} text-red-700 dark:text-red-400`} aria-pressed={selected === 'reject'} disabled={!!busy || selected === 'reject' || !!row.blocked} onClick={() => act(row, 'reject')}>Reject</button>
         </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -72,25 +72,57 @@ function ReviewCard({ row, mode, busy, act }: { row: MatchReview; mode: 'automat
   </Card>
 }
 export default function MatchReviewPage({ mode }: { mode: 'automatic' | 'shortlist' }) {
-  const [query, setQuery] = useState('')
-  const { data, error, loading, reload, next, previous, remove } = useMatchReviewQueue(mode, query)
+  const [query, setQuery] = useState(''), [advancing, setAdvancing] = useState(false)
+  const { data, error, loading, reload, next, previous, saved } = useMatchReviewQueue(mode, query)
   const offset = data?.offset ?? 0
-  const [busy, setBusy] = useState<string | null>(null), [actionError, setActionError] = useState<string | null>(null), [message, setMessage] = useState('')
+  const inFlight = useRef(new Set<string>())
+  const [decisions, setDecisions] = useState<Record<string, { action: 'approve' | 'reject'; basis: string }>>({})
+  const [pending, setPending] = useState<Set<string>>(new Set()), [actionErrors, setActionErrors] = useState<Record<string, string>>({}), [message, setMessage] = useState('')
   async function act(row: MatchReview, decision: 'approve' | 'reject') {
-    setBusy(row.id); setActionError(null); setMessage('')
-    try { await matchReviewApi.decide(row.id, decision === 'reject' ? 'reject' : mode === 'automatic' ? 'confirm' : 'accept', row.basis); setMessage(decision === 'reject' ? `${row.local.title}: match rejected. Automatic reapproval is held for manual review.` : mode === 'automatic' ? `${row.local.title}: approval confirmed. Removed from this review queue.` : `${row.local.title}: book match accepted. Recording identification is queued.`); await remove(row.id) }
-    catch (e) { setActionError((e as Error).message) } finally { setBusy(null) }
+    if (inFlight.current.has(row.id)) return
+    inFlight.current.add(row.id); setPending(new Set(inFlight.current))
+    setActionErrors(errors => { const next = { ...errors }; delete next[row.id]; return next })
+    try {
+      const prior = decisions[row.id]
+      const result = await matchReviewApi.decide(row.id, decision === 'reject' ? 'reject' : prior?.action === 'reject' && prior.basis === row.basis ? 'restore' : mode === 'automatic' ? 'confirm' : 'accept', row.basis, mode === 'shortlist')
+      const basis = result.basis ?? row.basis
+      saved(row.id, row.basis, basis)
+      setDecisions(values => ({ ...values, [row.id]: { action: decision, basis } }))
+      setMessage(decision === 'reject' ? `${row.local.title}: match rejected. Automatic reapproval is held for manual review.` : mode === 'automatic' ? `${row.local.title}: approval confirmed.` : `${row.local.title}: book match accepted. Recording identification starts when you press Next.`)
+    }
+    catch (e) { setActionErrors(errors => ({ ...errors, [row.id]: `${row.local.title}: ${(e as Error).message}` })) }
+    finally { inFlight.current.delete(row.id); setPending(new Set(inFlight.current)) }
+  }
+  async function advance() {
+    if (!data || advancing) return
+    setAdvancing(true)
+    try {
+      const completed = data.rows.filter(row => decisions[row.id]?.basis === row.basis && !inFlight.current.has(row.id))
+      const removable = new Set(completed.map(row => row.id))
+      if (mode === 'shortlist') {
+        await Promise.all(completed.filter(row => decisions[row.id].action === 'approve').map(async row => {
+          try {
+            setActionErrors(errors => { const next = { ...errors }; delete next[row.id]; return next })
+            await matchReviewApi.advance(row.id)
+          }
+          catch (e) { removable.delete(row.id); setActionErrors(errors => ({ ...errors, [row.id]: `${row.local.title}: ${(e as Error).message}` })) }
+        }))
+      }
+      if (completed.length && !removable.size) return
+      await next(removable, inFlight.current)
+    } finally { setAdvancing(false) }
   }
   return <div className="space-y-4">
     <h1 className="text-xl font-semibold">{mode === 'automatic' ? 'Automatic approvals' : 'Match shortlist'}</h1>
-    <p className="text-sm text-stone-500">{mode === 'automatic' ? 'Approve to confirm an automatic book match and remove it from this queue. Reject to withdraw consent and hold it for manual review. Existing outputs are retained.' : 'Approve the displayed book match, including any shown exceptions, to start separate recording identification. Reject dismisses the suggestion and holds the book for manual review.'}</p>
-    <div className="flex flex-wrap items-center gap-3"><label className="flex-1 text-sm">Search reviews<input className={`${input} block w-full mt-1`} value={query} disabled={!!busy} onChange={e => setQuery(e.target.value)} placeholder="Title or author" /></label><button className={btnQuiet} disabled={loading || !!busy} onClick={reload}>Refresh</button></div>
-    <Err msg={actionError || error} />{message && <p role="status" className="text-sm">{message}</p>}
+    <p className="text-sm text-stone-500">{mode === 'automatic' ? 'Approve to confirm an automatic book match. Reject to withdraw consent and hold it for manual review. Existing outputs are retained.' : 'Approve the displayed book match, including any shown exceptions, then press Next to start separate recording identification. Reject dismisses the suggestion and holds the book for manual review.'}</p>
+    <p className="text-sm text-stone-500">Saved cards stay in place. Change a decision with the other button. Next clears saved cards and fills the batch with new reviews.</p>
+    <div className="flex flex-wrap items-center gap-3"><label className="flex-1 text-sm">Search reviews<input className={`${input} block w-full mt-1`} value={query} onChange={e => setQuery(e.target.value)} placeholder="Title or author" /></label><button className={btnQuiet} disabled={loading} onClick={reload}>Refresh</button></div>
+    <Err msg={error} />{Object.entries(actionErrors).map(([id, msg]) => <Err key={id} msg={msg} />)}{message && <p role="status" className="text-sm">{message}</p>}
     {!data && !error && <p role="status">Loading match reviews…</p>}
     {data && loading && data.rows.length === 0 && <p aria-live="polite">Loading next reviews…</p>}
-    {data && <><nav aria-label="Match review pages" className="flex items-center gap-3 text-sm"><span>{data.total === 0 ? '0 reviews' : `${offset + 1}–${Math.min(offset + data.rows.length, data.total)} of ${data.total} reviews`}</span><button className={btnQuiet} disabled={offset === 0 || !!busy || loading} onClick={previous}>Previous</button><button className={btnQuiet} disabled={offset + data.rows.length >= data.total || !!busy || loading} onClick={next}>Next</button></nav>
+    {data && <><nav aria-label="Match review pages" className="flex items-center gap-3 text-sm"><span>{data.total === 0 ? '0 reviews' : `${offset + 1}–${Math.min(offset + data.rows.length, data.total)} of ${data.total} reviews`}</span><button className={btnQuiet} disabled={offset === 0 || loading} onClick={previous}>Previous</button><button className={btnQuiet} disabled={advancing || loading || (!data.rows.some(row => decisions[row.id]?.basis === row.basis) && offset + data.rows.length >= data.total)} onClick={() => { void advance() }}>Next</button></nav>
       {data.rows.length === 0 && !loading && !error && <p>{mode === 'automatic' ? 'No automatic approvals to review.' : 'No current model suggestions. Imported suggestions appear here when their saved evidence is still current.'}</p>}
-      {data.rows.map(row => <ReviewCard key={row.id} row={row} mode={mode} busy={busy || (loading ? 'loading' : null)} act={act} />)}
+      {data.rows.map(row => <ReviewCard key={row.id} row={row} mode={mode} busy={pending.has(row.id)} selected={decisions[row.id]?.basis === row.basis ? decisions[row.id].action : undefined} act={act} />)}
     </>}
   </div>
 }

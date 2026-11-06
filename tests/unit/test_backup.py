@@ -4,10 +4,10 @@ import pytest
 from app import backup, catalogue, db
 
 
-def make(name, age):
+def make(name, age, now=None):
     """An (empty) backup file that looks `age` old."""
     os.makedirs(backup.folder(), exist_ok=True)
-    taken = datetime.now(timezone.utc) - age
+    taken = (now or datetime.now(timezone.utc)) - age
     p = os.path.join(backup.folder(), f"catalogue-{taken:%Y%m%d-%H%M%S}{'-' + name if name else ''}.db"); open(p, 'w').close(); return p
 
 
@@ -47,10 +47,17 @@ def test_migration_backs_up_an_existing_database(monkeypatch):
     assert [b['reason'] for b in backup.list_backups() if b['reason']] == ['pre-migration']
 
 
-def test_prune_keeps_recent_days_weeks_and_pre_backups():
-    keep = [make('', timedelta(hours=1)), make('', timedelta(days=3)), make('pre-restore', timedelta(days=20)), make('', timedelta(days=15))]
-    keep.append(make('manual', timedelta(days=5)))
-    gone = [make('', timedelta(hours=2)), make('', timedelta(days=60)), make('pre-migration', timedelta(days=40))]
+def test_prune_keeps_recent_days_weeks_and_pre_backups(monkeypatch):
+    # Both hourly examples must belong to the same day, even when run just after midnight.
+    noon=datetime(2026,5,6,12,tzinfo=timezone.utc)
+    class Clock(datetime):
+        @classmethod
+        def now(cls,tz=None):return noon
+    monkeypatch.setattr(backup,'datetime',Clock)
+    at_noon=lambda name,age:make(name,age,now=noon)
+    keep = [at_noon('', timedelta(hours=1)), at_noon('', timedelta(days=3)), at_noon('pre-restore', timedelta(days=20)), at_noon('', timedelta(days=15))]
+    keep.append(at_noon('manual', timedelta(days=5)))
+    gone = [at_noon('', timedelta(hours=2)), at_noon('', timedelta(days=60)), at_noon('pre-migration', timedelta(days=40))]
     backup.prune()
     left = {b['path'] for b in backup.list_backups()}
     assert all(p in left for p in keep) and not any(p in left for p in gone)

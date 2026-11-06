@@ -215,3 +215,9 @@ def test_http_review_mode_uses_materialized_rows_and_marks_missing_views_incompl
         missing=next(r for r in P.dashboard(phase='metadata')['runs'] if r['id']==fresh)
         assert missing['title']=='Not materialized'
         assert not missing['reviews']['metadata']['complete']
+
+
+def test_training_evidence_maintenance_does_not_hide_the_books_actual_review_stage():
+    book=catalogue.add_book(title='Ready for review');rid=saved(book)
+    task=dict(kind='training_features',options=dict(run_id=rid,revision=1),state='queued',started='')
+    assert operations.view([task],[])==operations.view([],[])

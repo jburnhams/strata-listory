@@ -559,3 +559,75 @@ transfer share. Downloaded dumps, tool environments/caches, listening previews
 and output audio are omitted; generated state stays in the database as history.
 See `docs/omarchy-migration-20261104.md` for complete restore commands, required
 configuration, queued-work behavior, output rebuilding and the proxy/auth boundary.
+
+## 2026-11-04 — Responsive concurrent match approvals
+
+- Replaced the page-wide saving flag with per-run pending state and independent book-specific errors. Other cards, search, refresh and pagination stay interactive while jobs complete; stale overlapping list responses cannot resurrect a completed revision.
+- Reserved one bounded durable worker slot for `ingest/match_review`, prioritized ahead of queued bulk work while retaining resource locks across both kinds of jobs. `APP_WORKERS` still caps bulk tasks; at most one review decision runs alongside them.
+- On omarchy, recent automatic confirmations spent 42 s and 158 s waiting, versus 0.18–0.21 s executing. The bottleneck was the shared ingest queue rather than the decision itself.
+- Added queued/out-of-order UI regressions for both review modes, failure recovery, stale refresh handling, and scheduling tests for both caps and shared book locks. No live review decisions were submitted as tests.
+- Validation: 835 backend unit tests passed at 96.25% coverage; six job/API integration tests passed; 115 web tests passed the unchanged coverage gate; lint and production build passed. Deployed on omarchy, verified health and both review APIs, and explicitly requeued the ingest job interrupted by the service restart.
+
+## 2026-11-04 — Stable review batches and reversible decisions
+
+- Automatic approvals and Match shortlist retain saved cards in place. Only the selected saved action is disabled; the opposite action submits the current server token. Next retains undecided/pending/failed cards and adds only enough new reviews to fill ten slots.
+- Shortlist recording continuation is queued on Next without waiting for analysis to finish, so acceptance remains reversible before advancing. Queue failures retain the affected card for retry. Restore validates the same candidate/evidence and renews book consent without reusing downstream consent.
+- Removed duplicate full audio validation within shortlist acceptance. Recent share-backed accepts started promptly but took 4–8 seconds; one full hash check per decision remains mandatory.
+- Validation: 114 frontend tests passed the unchanged coverage gate and production build; 268 ingest/approval tests plus 72 queue/API/reversal tests and three job integrations passed. No live decisions were submitted by validation.
+
+## 2026-11-04 — General anthology grouping and local editions
+
+- Group named anthologies from a shared album identity, a complete ordered run of at least three tracks, and a matching container title. Different per-story artist credits no longer split that work. Explicit container editor credits can name the anthology; unlabelled credits remain unknown instead of assigning the first story author. Original track tags remain in evidence. No book-title exception or source-layout override is used.
+- Grouping version 6 invalidates older source descriptors on fresh inventory. General regressions cover multiple unrelated anthology titles and preserve splits for resets, gaps, competing albums, unrelated folders and whole-book files. A scan of 39 archived split parents identified London After Midnight (23 tracks) as the applicable existing case; normal re-ingest was queued after backup, with old fragment history retained and no approvals copied.
+- Added optional streaming Open Library editions import with indexed ISBN/work links and bounded local publisher queries. Preserve edition publication dates separately from work first-publication dates; support multiple linked works and audio-format filtering. Atomic failed-import behavior remains unchanged.
+- The transfer excluded Open Library snapshots, so started resumable, checksum-verified authors/works/ratings/editions downloads and a waiting, bounded importer for the official 2026-10-31 snapshot on omarchy.
+- Final backend validation: 851 unit tests passed at 96.24% coverage; lint passed. The anthology re-ingest is queued behind existing work; four-dump download and waiting import are active.
+
+## 2026-11-04 — Compact multi-CD labels
+
+- Recognize compact disc totals such as `CD3o5` and `CD3of5` alongside `Disc 3 of 5` and `CD3/5`. Grouping version 7 rebuilds older descriptors on fresh inventory. This is a general parser change, with no title-specific exceptions.
+- Me Talk Pretty One Day's archived five-CD layout now groups as one 87-track recording, in disc/track order with zero missing/duplicate tracks. Tags and source audio remain unchanged. The earlier split came from combining ordinary `Disc 1/2` labels with unrecognised `(CD3o5)`–`(CD5o5)` labels.
+- Added positive/negative parser tests, an unrelated-title reconstruction of the mixed 87-track layout, and missing-disc detection. All 72 focused grouping tests and lint passed. Backed up the catalogue and queued normal full-container re-ingest (book 917), preserving old fragment history and requiring fresh combined-work consent.
+- Re-ingest has now linked all five catalogue members into one 87-track inventory and one recording representation (run `7972c9f5f3b0495390ca678dff9ba3fc`); later analysis remains in progress. Broader verification passed 231 ingest unit tests and nine pipeline integration tests.
+
+
+## 2026-11-04 — Incremental training evidence and richer match features
+
+- Added learned resolver outputs, subtitle/type evidence, publication/linked-edition availability and five ratings/popularity features (48 total). Edition evidence remains linked to the precise work/edition. Ratings are a prior within a provider; they do not create approval labels.
+- Persist candidate vectors, frozen consent labels and per-query synthetic examples in `data/training/features.sqlite`. Feature additions fill missing columns without overwriting existing values or rerunning title comparisons. Changed review decisions update supervision separately; revoked/superseded consent and changed foreign evidence invalidate affected examples.
+- Run publication records durable maintenance markers, serviced by background jobs and recovered on bootstrap. Maintenance holds no book lock and stays out of the operations view, preserving responsive review decisions.
+- Reused 5,718 candidate vectors and 1,404 synthetic examples. Actual retraining with old feature computation disabled completed in 15.76 seconds. Warm feature-family comparison runs took 11–13 seconds. CPU model fitting is small; GPU acceleration would not address the former repeated preparation cost.
+- Expanded-model held-out results: 536 correct candidate accepts and one incorrect, versus 527 correct and one incorrect without ratings (75 groups each). Great Expectations' biography proposal fell below threshold without an exception. Updated 32 manual shortlist suggestions and withdrew 14 covered below-threshold suggestions, protected by immutable input and current-review revision checks. No automatic approval policy changed.
+- Validation: 876 backend unit tests passed at 96.26% coverage; 41 focused cache/job tests and three real job integrations passed. Ruff and patch whitespace checks passed. Service restarted, interrupted work resumed through the normal retry endpoint, and bootstrap is recovering outstanding evidence markers.
+
+## 2026-11-04 — Preserve folder authors and expand spaced chapter codes
+
+- Fixed recovery replacing a known same-work catalogue author with an empty grouping hint. Explicit `Author - Title` folder credits now survive untagged CD tracks and are retained as folder evidence. Contradictory embedded/folder author credits increase the identity conflict gate. Anthology credits and scoped unrelated-work safeguards remain explicit.
+- Recognize spaced sequence names such as `AB - 001 - Opening.mp3`. Selecting one member of a coherent coded sibling run inventories the full recording and no longer narrows back to a single file because chapter titles differ. Unrelated siblings still prevent directory expansion. Grouping version 8 refreshes stale source descriptors.
+- Archived House of Cards evidence now recovers William D. Cohan instead of an empty author; its earlier title-only lookup had approved Michael Dobbs. Archived The Push reconstructs as one Tommy Caldwell work, 25 files and one complete representation with no missing/duplicate tracks. Withdrew the incorrect work approval and all 25 fragment approvals through normal review jobs, preserving their history and revoking their training consent.
+- Queued a normal metadata refresh for House of Cards and a complete sibling re-ingest for The Push. Training-cache maintenance now yields to ordinary ingest jobs, while the reserved human review lane and worker cap remain in force.
+- Validation: 882 backend unit tests passed at 96.26% coverage, including 308 focused grouping/ingest tests; all 12 ingest/job integration tests passed. Ruff and whitespace checks passed. Fixes are deployed; corrective jobs are queued behind existing ingest work.
+
+## 2026-11-05 — Smaller English/unknown-language editions index
+
+- Edition imports now retain English, multilingual-with-English and unspecified-language records, excluding explicitly non-English editions before storing their ISBN/work links. Work/author/ratings evidence and original work years remain intact.
+- Added `openlibrary-compact` for the initial all-language snapshot: wait for the importer lock, prepare a separate filtered database, reclaim pages with VACUUM, verify and atomically publish. Readers retain the previous index until publication; failure preserves it, and already filtered snapshots are not rebuilt.
+- The initial import is allowed to finish without restarting. A low-priority compaction service will apply the same filter to its published result.
+- Full unit coverage reached 96.28% (891 passed; one existing backup-retention fixture failed because its two hourly examples crossed midnight). Made that fixture use a fixed noon clock and rechecked it independently with the edition/CLI tests; backup implementation is unchanged. Edition tests cover language placeholders, multilingual editions, link cleanup, repeat-safe compaction and preservation of the published file on failure.
+- Initial import has read 56,896,821 editions and is building indexes. The low-priority `listory-openlibrary-compact` unit is active and waiting on the shared import lock; no import restart or expanded dump copy was needed.
+- Final focused verification: all 45 edition, CLI and backup tests passed; Ruff and patch whitespace checks passed.
+
+## 2026-11-06 — ISBN-led edition matching
+
+- Wire the completed local editions index into matching: discover valid ISBNs from local tags/identity and compatible provider/work-edition evidence, match equivalent ISBN-10/13 values, traverse duplicate edition records to exact linked works, and retain alternate edition title/subtitle evidence. Bounded local queries archive their snapshot and records for review/training.
+- Keep conflicting authors/titles, work dates and edition dates separate. ISBNs broaden discovery; they do not bypass identity checks or turn duplicate Open Library records into independent providers. Existing consent versions remain unchanged.
+- Add the missing reverse edition/work index to future builds and the current live index (65.9-second low-priority maintenance, no dump re-import). Confirmed covering-index traversal and live read-only matches for William D. Cohan's House of Cards and Tommy Caldwell's The Push in under 0.2 seconds each.
+- Queued an ISBN-enabled House of Cards refresh through the normal worker; its explicit manual-review hold is retained. New matching jobs use the ISBN path automatically.
+- The live refresh completed as run `8e458236f88e4966a34a4b58a35bbd3f`: two ISBN queries produced four linked edition records, retained William D. Cohan, and kept the explicit manual-review hold. Original year remains 2009 from independent Hardcover evidence; edition publication years are retained separately.
+- Validation: 901 unit tests passed at 96.21% coverage, plus all nine ingest integration tests. Focused discovery/audit/index tests (267) and Ruff/whitespace checks passed.
+
+## 2026-11-06 — PR #14 follow-up
+
+- Retain pending review decisions when Next is pressed on a full batch with no completed decisions, and protect pending cards throughout refill. Use the live in-flight set so a deferred shortlist acceptance remains visible until a later Next can queue its continuation.
+- Add automatic/shortlist regressions exercising Next before the first decision completes and confirming accepted shortlist work is subsequently resumed. Normalize the folder-evidence assertion with the platform's Path representation for Windows.
+- Validation: 116 frontend tests passed the coverage gate; typecheck/production build and all 76 grouping unit tests passed. Replacement cross-platform CI is monitored on PR #14.

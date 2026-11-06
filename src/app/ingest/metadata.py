@@ -4,6 +4,7 @@ import json
 import hashlib
 from pathlib import Path
 import re
+import sqlite3
 import uuid
 from app import book_titles, contributors, matcher, merge, providers, sources
 from app.ingest.observe import capture,report
@@ -95,6 +96,45 @@ def corroboration(records,field,value,normalise):
     return supporting if len({family(s) for s in supporting})>=2 else []
 
 
+def collect_isbn_matches(identity,results):
+    """Local ISBNs and compatible candidate editions broaden discovery, never consent."""
+    from app.providers import openlibrary_local as local
+    entry=results.get('openlibrary')
+    if entry is None:return
+    lookup=getattr(providers.get('openlibrary'),'by_isbn',None)
+    if not callable(lookup):return
+    book=identity['book'];seeds=[]
+    def add(values):
+        if isinstance(values,str):values=re.split(r'[,;]',values)
+        for value in values or []:
+            keys=local.isbn_keys(value)
+            if keys and not any(set(keys)&set(local.isbn_keys(old)) for old in seeds):seeds.append(str(value))
+    add(identity.get('isbns'));add(book.get('isbns'))
+    for evidence in identity.get('evidence',[]):
+        for field in ('isbn','isbn_10','isbn_13'):add((evidence.get('tags') or {}).get(field))
+    cohort=[c for value in results.values() for c in value.get('candidates',[])]
+    for source,value in results.items():
+        for c in value.get('candidates',[]):
+            if compatible_work(book,c,cohort):add(c.get('isbns'))
+        detail=value.get('details') or {}
+        if detail and compatible_work(book,detail,cohort):add(detail.get('isbns'))
+    # A suggested work supplies edition ISBN discovery terms, not independent support.
+    seen=set()
+    for c in entry.get('candidates',[]):
+        key=c.get('id','')
+        if key in seen or len(seen)>=3 or not compatible_work(book,c,cohort):continue
+        seen.add(key)
+        for edition in local.editions(key) or []:add(edition.get('isbns'))
+    matched=[];editions=[]
+    for isbn in seeds[:12]:
+        found=lookup(isbn)
+        matched.extend(c for c in found['candidates'] if c not in matched)
+        editions.extend(e for e in found['editions'] if e not in editions)
+    if matched:
+        entry['candidates']=entry.get('candidates',[])+[c for c in matched if c not in entry.get('candidates',[])]
+        entry['isbn_editions']=editions;entry['isbn_queries']=seeds[:12]
+
+
 def collect(identity,inv,output,provider_names):
     output=Path(output);output.mkdir(parents=True,exist_ok=True);archives=[];results={};book=identity['book'];duration=max(r['duration'] for r in inv['representations']);anchor=book.get('asin') or ''
     book_only=all(name in merge.WORK for name in provider_names)
@@ -181,6 +221,9 @@ def collect(identity,inv,output,provider_names):
                     d=details(selected['id'] if name=='hardcover' else selected)
                     if d:results[name]['details']=d
                 except (providers.MatchError,ValueError) as e:results[name]['details_error']=str(e)
+        try:collect_isbn_matches(identity,results)
+        except (providers.MatchError,OSError,sqlite3.Error) as error:
+            if 'openlibrary' in results:results['openlibrary']['isbn_error']=str(error)
         if 'openlibrary' in results:
             p=providers.get('openlibrary');lookup=getattr(p,'publication_editions',None)
             compatible=[c for c in results['openlibrary']['candidates'] if compatible_work(search_book,c,results['openlibrary']['candidates'])]

@@ -2108,3 +2108,36 @@ def test_book_collection_retries_main_title_without_discarding_conflicting_hits(
     collected,_=M.collect(identity,inv,tmp_path/'sources',['openlibrary'])
     assert calls==[('History: Ancient World','Writer'),('History: Ancient World',''),('History','Writer')]
     assert collected['providers']['openlibrary']['candidates']==[wrong,correct]
+
+
+def test_spaced_code_chapters_expand_from_one_selected_file_without_resplitting(tmp_path,monkeypatch):
+    folder=tmp_path/'A Writer - The Ascent';folder.mkdir()
+    names=['AS - 001 - Opening.mp3','AS - 002 - Wind.mp3','AS - 003 - Chapter 1.mp3','AS - 004 - Credits.mp3']
+    paths=[folder/name for name in names]
+    for path in paths:path.write_bytes(b'audio')
+    monkeypatch.setattr(I.details,'_ffprobe',lambda path:dict(format={}))
+    def probe(path):return dict(duration=60,tags=dict(album='The Ascent',artist='A Writer',track=str(names.index(Path(path).name)+1)))
+    monkeypatch.setattr(I.probe,'probe_file',probe)
+    b=catalogue.add_book(title='Opening',author='AS',path=str(paths[0]))
+    inv,metrics=I.discover(b)
+    assert inv['root']==str(folder) and [f['path'] for f in inv['files']]==list(map(str,paths))
+    assert metrics['inventory.files']==4 and inv['work_hint']['author']=='A Writer'
+    assert len(inv['representations'])==1 and inv['representations'][0]['missing_tracks']==0
+    # An unrelated sibling must prevent silently claiming the whole directory.
+    (folder/'Other Novel.mp3').write_bytes(b'audio')
+    inv,_=I.discover(b)
+    assert [f['path'] for f in inv['files']]==[str(paths[0])]
+
+
+def test_isbn_discovery_uses_compatible_sources_and_deduplicates_equivalent_identifiers(monkeypatch):
+    calls=[]
+    class OL:
+        def by_isbn(self,isbn):calls.append(isbn);return dict(candidates=[],editions=[])
+    monkeypatch.setattr(providers,'get',lambda name:OL())
+    monkeypatch.setattr('app.providers.openlibrary_local.editions',lambda key:None)
+    book=dict(title='A Novel',author='A Writer')
+    good=candidate('hardcover',title='A Novel',authors=['A Writer'],isbns=['0307387895','9780307387899'])
+    wrong=candidate('hardcover',title='Another Book',authors=['Other Writer'],isbns=['9780141182636'])
+    results=dict(openlibrary=dict(candidates=[]),hardcover=dict(candidates=[good,wrong]))
+    M.collect_isbn_matches(dict(book=book),results)
+    assert calls==['0307387895']

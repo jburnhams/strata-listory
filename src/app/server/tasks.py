@@ -9,14 +9,29 @@ from app.process import queue as pq
 
 
 def execute(jobs,domain,kind,options):
+    from app.ingest import training_cache
+    dirty=set();token=training_cache.DIRTY.set(dirty)
+    try:return _execute(jobs,domain,kind,options)
+    finally:
+        training_cache.DIRTY.reset(token)
+        if domain=='system' and kind=='bootstrap':dirty.update(read_models.owners('training_dirty'))
+        training_cache.enqueue(jobs,dirty)
+
+
+def _execute(jobs,domain,kind,options):
     if domain=='ingest':
         options=dict(options);recovered=options.pop('_recovered',False)
         if kind=='match_review':
             from app.ingest import match_review
-            action=options.pop('action')
-            result={'accept':match_review.accept,'unapprove':match_review.revoke,'confirm':match_review.confirm,'reject':match_review.reject}[action](**options)
-            if action=='accept' and result.get('changed'):jobs.submit('ingest','continue',run_id=options['run_id'])
-            return result
+            action=options.pop('action');defer_continuation=options.pop('defer_continuation',False)
+            result={'accept':match_review.accept,'unapprove':match_review.revoke,'confirm':match_review.confirm,'reject':match_review.reject,'restore':match_review.restore}[action](**options)
+            if (action=='accept' or result.get('resume')) and result.get('changed'):
+                if defer_continuation:
+                    # Keep a saved shortlist card reversible until its batch advances.
+                    pipeline.store.finish(options['run_id'],'audiobook_review');pipeline.publish_run(options['run_id'])
+                else:jobs.submit('ingest','continue',run_id=options['run_id'])
+            card=read_models.get('match_review',options['run_id'])
+            return dict(result,basis=card['basis']) if card else result
         if kind in ('continue','resume','restore') and pipeline.book_review_held(pipeline.store.get(options['run_id'])):
             pipeline.publish_run(options['run_id'])
             return dict(held_for_manual_book_review=True)
@@ -50,6 +65,9 @@ def execute(jobs,domain,kind,options):
             if changed:jobs.submit('process','propose',ids=changed,limit=len(changed))
             return dict(changed=changed)
     if domain=='system':
+        if kind=='training_features':
+            from app.ingest import training_cache
+            return training_cache.update(**options)
         if kind=='bootstrap':return bootstrap()
         if kind=='views':
             from app.ingest import store

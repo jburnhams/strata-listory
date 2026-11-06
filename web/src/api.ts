@@ -28,11 +28,11 @@ export function booksUrl(f: Filters) {
   return withBase('/api/books' + (qs ? '?' + qs : ''))
 }
 
-async function req<T>(url: string, init?: RequestInit): Promise<T> {
+async function req<T>(url: string, init?: RequestInit, waitForJob = true): Promise<T> {
   const r = await fetch(withBase(url), init)
   const d = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error((d as { detail?: string }).detail || r.statusText)
-  if (r.status === 202 && typeof d.job_id === 'string') {
+  if (waitForJob && r.status === 202 && typeof d.job_id === 'string') {
     for (;;) {
       const job = await req<{ state: string; result: T; error: string }>(`/api/jobs/${encodeURIComponent(d.job_id)}`)
       if (job.state === 'done') return job.result
@@ -142,5 +142,6 @@ export interface MatchReviewPage { rows: MatchReview[]; total: number; offset: n
 export const matchReviewApi = {
   list: (mode: 'automatic' | 'shortlist', offset = 0, q = '', after?: string) => req<MatchReviewPage>(`/api/match-reviews?${new URLSearchParams({ mode, offset: String(offset), q, ...(after ? { after } : {}) })}`),
   details: (id: string) => req<MatchReview>(`/api/match-reviews/${encodeURIComponent(id)}`),
-  decide: (id: string, action: 'accept' | 'unapprove' | 'confirm' | 'reject', basis: string) => req<{ changed: boolean }>(`/api/match-reviews/${encodeURIComponent(id)}/${action}`, send('POST', { basis })),
+  decide: (id: string, action: 'accept' | 'unapprove' | 'confirm' | 'reject' | 'restore', basis: string, defer = false) => req<{ changed: boolean; basis?: string }>(`/api/match-reviews/${encodeURIComponent(id)}/${action}`, send('POST', { basis, ...(defer ? { defer_continuation: true } : {}) })),
+  advance: (id: string) => req(`/api/ingest/runs/${encodeURIComponent(id)}/resume`, { method: 'POST' }, false),
 }

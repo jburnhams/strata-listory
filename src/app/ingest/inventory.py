@@ -66,14 +66,17 @@ def embedded_asins(tags):
 def discover(book):
     path=Path(book['path']).resolve()
     if not fs.reachable(str(path)) or not path.exists(): raise ValueError('audio path unavailable')
-    root=path;sibling_paths=None
+    root=path;sibling_paths=None;coded_run=False
     if path.is_file():
         try:first=probe.probe_file(str(path))
         except (OSError,ValueError,probe.ToolError):first=dict(tags={})
         siblings=[p for p in path.parent.iterdir() if p.is_file() and scan.is_audio(p.name)]
         filename_parts=grouping.filename_parts(siblings);selected_part=filename_parts.get(str(path))
+        coded=grouping.coded_parts(siblings);selected_code=coded.get(str(path))
+        coded_run=bool(selected_code and all((coded.get(str(p)) or {}).get('prefix')==selected_code['prefix'] for p in siblings))
         hint=grouping.title_hint(scan.parse_name(path.name)['title'])
         def related(p):
+            if coded_run:return True
             if selected_part and (filename_parts.get(str(p)) or {}).get('key')==selected_part['key']:return True
             other=grouping.title_hint(scan.parse_name(p.name)['title'])
             a,b=matcher.norm(hint),matcher.norm(other)
@@ -139,7 +142,7 @@ def discover(book):
         result=scoped(result,next(g for g in groups if str(path) in g['paths']),members)
     elif len(groups)>1:result['work_groups']=groups
     elif groups:
-        if path.is_file() and root!=path:
+        if path.is_file() and root!=path and not coded_run:
             def stem_key(p):return scan._norm(re.sub(r'(?:chapter|part|track|disc|cd)[ _-]*\d+','',p.stem,flags=re.I))
             base=stem_key(path)
             if base and not all(not stem_key(p) or stem_key(p).endswith(base) or base.endswith(stem_key(p)) for p in paths):
@@ -230,7 +233,7 @@ def recover(book,inv):
         t=f['probe']['tags'];hint=inv.get('work_hint') or {};title=hint.get('title') if hint.get('use_title') else t.get('album') or hint.get('title') or t.get('title') or ''
         if not grouping.title_hint(title):title=hint.get('title') or t.get('title') or ''
         title=re.sub(r'\s*\((?:un)?abridged\)\s*','',title,flags=re.I).strip()
-        add(votes,title);who=grouping.author_credit(t)
+        add(votes,title);who='' if hint.get('anthology') else grouping.author_credit(t)
         if '/' in who and len(set(who.split('/')))==1: who=who.split('/')[0]
         if hint and who and merge.norm(who) in merge.norm(hint.get('title','')):who=''
         reader=t.get('narratedby') or t.get('narrator') or t.get('composer') or ''
@@ -249,16 +252,29 @@ def recover(book,inv):
         if fmt in ('abridged','unabridged'): formats.add(fmt=='abridged')
         evidence.append(dict(source='audible_file',data=a))
     out=dict(book)
-    if inv.get('work_hint') and not authors and 'author' not in locked:out['author']=inv['work_hint'].get('author','')
+    hint=inv.get('work_hint') or {}
+    if hint and not authors and 'author' not in locked:
+        # An absent grouping credit must not erase an existing same-work author.
+        if hint.get('author') or hint.get('anthology') or matcher.norm(hint.get('title',''))!=matcher.norm(book['title']):out['author']=hint.get('author','')
+    folder_authors={}
+    for f in inv['files']:
+        folder=grouping.folder_identity(f['path'])
+        if not hint.get('anthology') and folder['author'] and matcher.norm(grouping.title_hint(folder['title']))==matcher.norm(hint.get('title') or out['title']):folder_authors[folder['path']]=folder
+    for folder in folder_authors.values():
+        evidence.append(dict(source='folder',path=folder['path'],title=folder['title'],author=folder['author']))
+        if not authors and 'author' not in locked:out['author']=hint.get('author') or folder['author']
     for field,target in [('title',votes),('author',authors),('narrator',narrators)]:
         if field not in locked and target: out[field]=max(target,key=target.get)
     if 'asin' not in locked and len(asins)==1: out['asin']=next(iter(asins))
     text=' '.join([out['title'],inv['root']]+[f['path'] for f in inv['files']]+[str(f['probe']['tags'].get(k,'')) for f in inv['files'] for k in f['probe']['tags']]).lower()
     kind='radio' if scan.BBC_RADIO.search(text) or 'radio comedy' in text or re.search(r'\bbbc\s+(?:radio|r[1-6]x?)\b',text) or re.search(r'\bs\d+\s*-?\s*e\d+',text) else 'episode' if re.search(r'\bep(?:isode)?\.?\s*\d+',text) else 'standup' if 'stand-up' in text or 'standup' in text else 'story' if re.search(r'\ba story from\b|\bshort story\b',text) else 'book'
+    if (inv.get('work_hint') or {}).get('anthology'):kind='book'
     conflicts=int(bool((inv.get('work_hint') or {}).get('conflicting_album')))+int(len(asins)>1)+int(len(languages)>1)+int(len(formats)>1)
     # Multi-work/narrator folders must not turn into a single book by popularity vote.
     author_lists=[contributors.authors(value) for value in authors]
     shared=[name for name in (author_lists[0] if author_lists else []) if all(any(contributors.same_author(name,other,True) for other in values) for values in author_lists)]
+    local_people=contributors.authors(out.get('author',''))
+    conflicts+=int(any(local_people and not any(contributors.same_author(a,b,True) for a in local_people for b in contributors.authors(folder['author'])) for folder in folder_authors.values()))
     conflicts+=int(len(author_lists)>1 and not shared)+int(len({matcher.norm(x) for x in votes})>1)
     return dict(book=out,contributors=contributors.parse(out.get('author','')),kind=kind,language=next(iter(languages)) if len(languages)==1 else '',abridged=next(iter(formats)) if len(formats)==1 else None,evidence=evidence),{'identity.title_known':int(bool(out.get('title'))),'identity.author_known':int(bool(out.get('author'))),'identity.conflicts':conflicts}
 

@@ -65,7 +65,7 @@ def test_dead_owner_fails_without_retry_but_live_owner_is_preserved(monkeypatch)
         def join(self,**kw):pass
     monkeypatch.setattr('app.jobs.threading.Thread',Thread)
     q.start();q.start()
-    assert len(q.threads)==1
+    assert len(q.threads)==2
     assert q.get(dead)['state']=='failed' and q.get(live)['state']=='running'
     q.stop()
 
@@ -301,3 +301,57 @@ def test_changed_retry_options_also_supersede_the_original_failure():
     while queue.run_one():pass
     assert queue.get(retry)['state']=='done'
     assert queue.submit('ingest','run',ids=[1,2],limit=2)!=original
+
+
+def test_review_decision_bypasses_busy_bulk_worker_but_keeps_both_lanes_bounded():
+    q=JobQueue(lambda *args:dict(saved=True),workers=1)
+    bulk=q.submit('ingest','run',ids=[1]);next_bulk=q.submit('system','scan')
+    review=q.submit('ingest','match_review',book_id=2,action='confirm')
+    next_review=q.submit('ingest','match_review',book_id=3,action='confirm')
+    c=db.connect()
+    with c:c.execute("UPDATE jobs SET state='running' WHERE id=?",(bulk,))
+    c.close()
+    claimed=q._claim()
+    assert claimed['id']==review
+    assert q._claim() is None
+    q.execute_claimed(review)
+    assert q.run_one() and q.get(next_review)['state']=='done'
+    assert q.get(next_bulk)['state']=='queued' and q.get(bulk)['state']=='running'
+
+
+def test_review_slot_does_not_bypass_same_book_resource_lock_or_block_unrelated_bulk_work():
+    q=JobQueue(lambda *args:dict(saved=True),workers=1)
+    bulk=q.submit('ingest','run',ids=[1]);blocked=q.submit('ingest','match_review',book_id=1)
+    review=q.submit('ingest','match_review',book_id=2)
+    c=db.connect()
+    with c:c.execute("UPDATE jobs SET state='running' WHERE id=?",(bulk,))
+    c.close()
+    assert q._claim()['id']==review
+    assert q._claim() is None
+    c=db.connect()
+    with c:c.execute("UPDATE jobs SET state='done' WHERE id=?",(bulk,))
+    c.close()
+    other=q.submit('system','scan',book_id=3)
+    assert q.run_one() and q.get(other)['state']=='done'
+    assert q.get(blocked)['state']=='queued'
+    q.execute_claimed(review)
+    assert q.run_one() and q.get(blocked)['state']=='done'
+
+
+def test_training_feature_cache_work_does_not_lock_out_same_book_review():
+    q=JobQueue(lambda *args:dict(saved=True),workers=1)
+    cache=q.submit('system','training_features',book_id=15,run_id='saved',revision=1)
+    c=db.connect()
+    with c:c.execute("UPDATE jobs SET state='running' WHERE id=?",(cache,))
+    c.close()
+    review=q.submit('ingest','match_review',book_id=15,action='confirm')
+    assert q.run_one() and q.get(review)['state']=='done'
+
+
+def test_background_training_backfill_yields_to_requested_ingest_work():
+    q=JobQueue(lambda *args:dict(saved=True),workers=1)
+    cache=q.submit('system','training_features',run_id='old',revision=1)
+    requested=q.submit('ingest','run',ids=[25])
+    assert q.run_one() and q.get(requested)['state']=='done'
+    assert q.get(cache)['state']=='queued'
+    assert q.run_one() and q.get(cache)['state']=='done'

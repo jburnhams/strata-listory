@@ -64,9 +64,29 @@ class OpenLibrary(Provider):
         return [to_candidate(d) for d in (raw or {}).get('docs', [])]
 
 
+    def by_isbn(self,isbn):
+        """All bounded local edition/work matches, including conflicting ISBN assignments."""
+        from app.providers import openlibrary_local as local
+        if not local.isbn_keys(isbn):return dict(candidates=[],editions=[])
+        editions=local.editions(isbn=isbn) or []
+        works=local.work_candidates([key for edition in editions for key in edition['works']])
+        candidates=[];linked=[]
+        for work in works:
+            candidates.append(dict(work,isbn_match=isbn))
+            for edition in editions:
+                if work['id'] not in edition['works']:continue
+                linked.append(dict(edition,work_key=work['id']))
+                candidates.append(dict(work,title=edition['title'],subtitle=edition['subtitle'],subtitle_edition=edition['key'],isbns=edition['isbns'],language=edition_language(edition),isbn_match=isbn))
+        return dict(candidates=candidates,editions=linked)
+
+
     def edition_publishers(self,work_key):
         """Small cached edition lookups for a known work; no editions dump is required."""
         if not re.fullmatch(r'/works/OL\d+W',work_key or ''):return []
+        from app.providers import openlibrary_local
+        local=openlibrary_local.editions(work_key)
+        if local:
+            return [e for e in local if e['year'] and not re.search(r'audio|mp3|cassette',e['physical_format'],re.I)]
         from app.providers.openlibrary_local import year
         result=[]
         for offset in (0,100,200):
@@ -76,7 +96,7 @@ class OpenLibrary(Provider):
                 if re.search(r'audio|mp3|cassette',str(entry.get('physical_format','')),re.I):continue
                 if work_key not in [work.get('key') for work in entry.get('works',[]) if isinstance(work,dict)]:continue
                 published=year(entry.get('publish_date'))
-                if published:result.append(dict(key=entry.get('key',''),title=entry.get('title',''),subtitle=entry.get('subtitle',''),work_key=work_key,year=published,publish_date=entry.get('publish_date',''),publishers=[str(p) for p in entry.get('publishers',[]) if p],languages=[lang.get('key') for lang in entry.get('languages',[]) if isinstance(lang,dict)]))
+                if published:result.append(dict(key=entry.get('key',''),title=entry.get('title',''),subtitle=entry.get('subtitle',''),work_key=work_key,year=published,publish_date=entry.get('publish_date',''),publishers=[str(p) for p in entry.get('publishers',[]) if p],languages=[lang.get('key') for lang in entry.get('languages',[]) if isinstance(lang,dict)],isbns=list(dict.fromkeys(str(v) for field in ('isbn_10','isbn_13') for v in entry.get(field) or []))))
             if len(entries)<100:break
         return result
 

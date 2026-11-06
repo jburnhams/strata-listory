@@ -1,6 +1,7 @@
 """Offline dumps publish atomically and preserve work identity and rating provenance."""
 import gzip
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -110,3 +111,152 @@ def test_subtitle_only_search_uses_attached_editions_and_caches_the_evidence(dum
     [c]=p.search('A Decade of Curious People and Dangerous Ideas','Chuck Klosterman')
     assert (c['id'],c['subtitle_edition'])==('/works/OL99W','/books/OL2M')
     assert p.search('A Decade of Curious People and Dangerous Ideas','Chuck Klosterman')==[c] and len(calls)==2
+
+
+def test_editions_import_retains_isbn_publisher_dates_and_work_links_without_inventing_original_years(dumps):
+    dump(dumps/'editions.txt.gz',[
+        ('/books/OL1M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_10=['0307387895'],isbn_13=['978-0-307-38789-9'],publish_date='March 2007',publishers=['Vintage'],languages=[dict(key='/languages/eng')],physical_format='Paperback')),
+        ('/books/OL2M',dict(title='The Road',works=[dict(key='/works/OL1W')],publish_date='2006',publishers=['Original Publisher'],languages=[dict(key='/languages/eng')],physical_format='Hardcover')),
+        ('/books/OL3M',dict(title='The Road',works=[dict(key='/works/OL1W')],publish_date='2005',publishers=['Audio Publisher'],physical_format='Audio CD')),
+        ('/books/OL4M',dict(title='Blood Meridian',works=[dict(key='/works/OL3W')],isbn_13=['9780679728757'],publish_date='1992',publishers=['Reprint Publisher'])),
+        ('/books/OL5M',dict(title='Combined volume',works=[dict(key='/works/OL1W'),dict(key='/works/OL3W')],isbn_10=['012345678X'])),
+        ('bad-key',dict(title='Bad record')),
+    ])
+    state=local.build(dumps,editions=True)
+    assert state['editions'] and state['counts']['editions']==5
+    rows=local.editions('/works/OL1W')
+    assert [r['key'] for r in rows]==['/books/OL3M','/books/OL2M','/books/OL1M','/books/OL5M']
+    [edition]=local.editions(isbn='978-0-307-38789-9')
+    assert edition['work_key']=='/works/OL1W' and edition['year']==2007
+    assert edition['publishers']==['Vintage'] and edition['isbns']==['0307387895','9780307387899']
+    assert edition['languages']==[dict(key='/languages/eng')]
+    assert local.search('The Road','Cormac McCarthy')[0]['original_year']==2006
+    assert local.search('Blood Meridian','Cormac McCarthy')[0]['original_year'] is None
+    assert local.editions(isbn='012345678X')[0]['work_key'] is None
+    assert local.editions(isbn='012345678X')[0]['works']==['/works/OL1W','/works/OL3W']
+    assert local.editions('/works/OL999W')==[] and local.editions(isbn='invalid')==[]
+    assert local.editions('unsafe')==[] and local.editions()==[]
+    from app.providers.openlibrary import OpenLibrary
+    published=OpenLibrary().edition_publishers('/works/OL1W')
+    assert [r['year'] for r in published]==[2006,2007]
+    assert published[-1]['isbns']==['0307387895','9780307387899']
+
+
+def test_editions_are_optional_and_failed_edition_import_preserves_published_index(dumps):
+    assert local.editions('/works/OL1W') is None
+    local.build(dumps)
+    assert local.editions('/works/OL1W') is None
+    with pytest.raises(ValueError,match='missing Open Library dump'):local.build(dumps,editions=True)
+    (dumps/'editions.txt.gz').write_bytes(b'corrupt gzip')
+    with pytest.raises(OSError):local.build(dumps,editions=True)
+    assert local.search('The Road','Cormac McCarthy')[0]['original_year']==2006
+    assert local.editions('/works/OL1W') is None
+
+
+def test_editions_cli_flag_imports_the_snapshot(dumps,capsys):
+    from app.cli import main
+    dump(dumps/'editions.txt.gz',[('/books/OL1M',dict(title='The Road',works=[dict(key='/works/OL1W')],publish_date='2006'))])
+    assert main(['openlibrary-import','--directory',str(dumps),'--editions'])==0
+    assert json.loads(capsys.readouterr().out)['counts']['editions']==1
+    assert local.editions('/works/OL1W')[0]['year']==2006
+
+
+@pytest.mark.parametrize('languages,keep', [([],True),(['/languages/eng'],True),(['/languages/fre'],False),(['/languages/ger','/languages/eng'],True),([''],True),(['/languages/not-a-code'],True),(['/languages/und'],True),(['/languages/mul'],True)])
+def test_edition_language_filter_keeps_english_and_unknown(languages,keep):
+    assert local.keep_edition(languages) is keep
+
+
+def test_import_excludes_explicit_foreign_editions_and_their_links(dumps):
+    dump(dumps/'editions.txt.gz',[(f'/books/OL{n}M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_10=[f'{n:010}'],languages=languages)) for n,languages in enumerate([
+        [dict(key='/languages/fre')],[dict(key='/languages/eng')],[],[dict(key='/languages/ger'),dict(key='/languages/eng')],[{}],
+    ],1)])
+    state=local.build(dumps,editions=True)
+    assert state['counts']['editions']==4 and state['edition_languages']=='english_or_unknown'
+    assert {r['key'] for r in local.editions('/works/OL1W')}=={'/books/OL2M','/books/OL3M','/books/OL4M','/books/OL5M'}
+    assert local.editions(isbn='0000000001')==[]
+
+
+def old_editions_index(dumps):
+    dump(dumps/'editions.txt.gz',[(f'/books/OL{n}M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_10=[f'{n:010}'])) for n in (1,2)])
+    local.build(dumps,editions=True)
+    c=sqlite3.connect(local.folder()/'index.sqlite')
+    with c:
+        snapshot=json.loads(c.execute("SELECT value FROM metadata WHERE key='snapshot'").fetchone()[0]);snapshot.pop('edition_languages')
+        c.execute("UPDATE metadata SET value=? WHERE key='snapshot'",(json.dumps(snapshot),))
+        c.execute("UPDATE editions SET languages=? WHERE key='/books/OL1M'",(json.dumps(['/languages/fre']),))
+        c.execute("UPDATE editions SET languages=? WHERE key='/books/OL2M'",(json.dumps(['/languages/und']),))
+    c.close()
+
+
+def test_compaction_removes_foreign_editions_links_and_reclaims_pages_atomically(dumps,capsys):
+    from app.cli import main
+    old_editions_index(dumps)
+    assert main(['openlibrary-compact'])==0
+    summary=json.loads(capsys.readouterr().out)
+    assert summary['counts']['editions']==1 and summary['editions_excluded']==1
+    assert local.status()['ready'] and local.status()['edition_languages']=='english_or_unknown'
+    assert [r['key'] for r in local.editions('/works/OL1W')]==['/books/OL2M']
+    assert local.editions(isbn='0000000001')==[]
+    assert local.search('The Road','Cormac McCarthy')[0]['original_year']==2006
+    assert local.compact_editions()==summary
+    assert not (local.folder()/'index.sqlite.compacting').exists()
+
+
+def test_failed_compaction_preserves_published_index(dumps,monkeypatch):
+    old_editions_index(dumps)
+    target=local.folder()/'index.sqlite';before=target.read_bytes();replace=Path.replace
+    def fail_publication(self,other):
+        if self.name=='index.sqlite.compacting':raise OSError('publication failed')
+        return replace(self,other)
+    monkeypatch.setattr(Path,'replace',fail_publication)
+    with pytest.raises(OSError,match='publication failed'):local.compact_editions()
+    assert target.read_bytes()==before and local.status()['ready']
+    assert len(local.editions('/works/OL1W'))==2
+    assert not (local.folder()/'index.sqlite.compacting').exists()
+
+
+def test_compaction_requires_a_published_editions_snapshot(dumps):
+    local.folder().mkdir(parents=True,exist_ok=True)
+    with pytest.raises(ValueError,match='no published'):local.compact_editions()
+    local.build(dumps)
+    with pytest.raises(ValueError,match='no editions'):local.compact_editions()
+
+
+@pytest.mark.parametrize('value,keys',[
+    ('0-307-38789-5',['0307387895','9780307387899']),
+    ('9780307387899',['9780307387899','0307387895']),
+    ('9780307387890',[]),('0307387890',[]),('not an isbn',[]),
+])
+def test_equivalent_isbn_keys_require_valid_checksums(value,keys):
+    assert local.isbn_keys(value)==keys
+
+
+def test_isbn_matching_traverses_all_duplicate_records_and_preserves_conflicting_authors(dumps):
+    from app.providers.openlibrary import OpenLibrary
+    from app.ingest import metadata as M
+    from app.ingest.observe import capture
+    dump(dumps/'editions.txt.gz',[
+        ('/books/OL1M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_10=['0307387895'],publish_date='2007',publishers=['Vintage'])),
+        ('/books/OL2M',dict(title='The Road',works=[dict(key='/works/OL2W')],isbn_13=['9780307387899'],publish_date='2008')),
+        ('/books/OL3M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_13=['9780307387899'],publish_date='2009')),
+    ])
+    local.build(dumps,editions=True)
+    assert {r['key'] for r in local.editions(isbn='0307387895')}=={'/books/OL1M','/books/OL2M','/books/OL3M'}
+    found=OpenLibrary().by_isbn('9780307387899')
+    assert {c['id'] for c in found['candidates']}=={'/works/OL1W','/works/OL2W'}
+    correct=[c for c in found['candidates'] if c['id']=='/works/OL1W']
+    assert all(c['original_year']==2006 for c in correct)
+    assert {e['year'] for e in found['editions']}=={2007,2008,2009}
+    book=dict(title='The Road',author='Cormac McCarthy')
+    assert any(M.compatible_work(book,c,found['candidates']) for c in correct)
+    assert not any(M.compatible_work(book,c,found['candidates']) for c in found['candidates'] if c['id']=='/works/OL2W')
+    results=dict(openlibrary=dict(status='ok',candidates=[]));events=[]
+    with capture(events.append):M.collect_isbn_matches(dict(book=book,evidence=[dict(tags=dict(isbn='0307387895'))]),results)
+    assert len(results['openlibrary']['isbn_editions'])==3
+    assert results['openlibrary']['isbn_queries']==['0307387895']
+    assert any(e.get('raw',{}).get('snapshot') for e in events)
+    c=sqlite3.connect(local.folder()/'index.sqlite')
+    assert any('editions_edition' in row[-1] for row in c.execute('EXPLAIN QUERY PLAN SELECT work FROM edition_works WHERE edition=?',('/books/OL1M',)))
+    c.close()
+    assert local.work_candidates(['invalid','/works/OL999W'])==[]
+    assert OpenLibrary().by_isbn('invalid')==dict(candidates=[],editions=[])

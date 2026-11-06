@@ -217,3 +217,85 @@ def test_pages_limit_ten_and_cursor_survives_reviewed_rows_disappearing(review):
     assert second['total']==2 and [r['id'] for r in second['rows']]==ids[10:]
     assert [r['id'] for r in R.page('automatic')['rows']]==ids[10:]
     with pytest.raises(ValueError,match='page changed'):R.page('automatic',after='missing')
+
+
+def test_restore_rejected_automatic_match_renews_only_book_consent(review):
+    p=policy.current();p['auto_approve_metadata']=True;policy.save(p)
+    P.approve_review(review['id'],'metadata',automatic=True);store.finish(review['id'],'quality_review')
+    current=store.get(review['id'])
+    store.event(review['id'],'audiobook_approval','done',data=dict(signature=P.review_signature(current,'audiobook'),automatic=False))
+    P.publish_run(review['id']);shown=R.detail(review['id'])
+    R.confirm(review['id'],shown['basis'])
+    R.reject(review['id'],R.detail(review['id'])['basis'])
+    rejected=R.detail(review['id'])
+    assert R.restore(review['id'],rejected['basis'])==dict(changed=True,confirmed=True)
+    current=store.get(review['id'])
+    assert P.book_confirmed(current) and P.approval_valid(current,'metadata')
+    assert not P.approval_valid(current,'audiobook')
+    assert not P.book_review_held(current) and current['state']=='audiobook_review'
+    with pytest.raises(ValueError,match='changed'):R.restore(review['id'],rejected['basis'])
+    with pytest.raises(ValueError,match='no longer rejected'):R.restore(review['id'],R.detail(review['id'])['basis'])
+
+
+def test_restore_shortlist_rejection_accepts_only_its_original_candidate(review,tmp_path):
+    shown=suggest(review,tmp_path)
+    R.reject(review['id'],shown['basis'])
+    result=R.restore(review['id'],R.detail(review['id'])['basis'])
+    assert result['changed'] and result['resume']
+    current=store.get(review['id'])
+    assert P.approval_valid(current,'metadata') and not P.book_review_held(current)
+    assert P.raw_stage(current,'metadata')['manual_selection']['candidate']['id']=='1'
+
+
+def test_restore_refuses_changed_candidate_or_source_bytes(review,tmp_path):
+    shown=suggest(review,tmp_path);R.reject(review['id'],shown['basis'])
+    rejected=R.detail(review['id']);suggestion=read_models.get('match_suggestion',review['id'])
+    read_models.save('match_suggestion',review['id'],dict(suggestion,candidate_key='replacement'))
+    with pytest.raises(ValueError,match='suggestion changed'):R.restore(review['id'],rejected['basis'])
+    read_models.save('match_suggestion',review['id'],suggestion)
+    Path(P.raw_stage(review,'inventory')['files'][0]['path']).write_bytes(b'changed audio!')
+    with pytest.raises(ValueError,match='source files changed'):R.restore(review['id'],rejected['basis'])
+    assert P.book_review_held(store.get(review['id']))
+
+
+def test_shortlist_acceptance_hashes_sources_once_without_skipping_integrity_checks(review,tmp_path,monkeypatch):
+    shown=suggest(review,tmp_path);validate=P._assert_review_inputs;calls=[]
+    def checked(run):
+        calls.append(run['id']);return validate(run)
+    monkeypatch.setattr(P,'_assert_review_inputs',checked)
+    assert R.accept(review['id'],shown['basis'])['changed']
+    assert calls==[review['id']]
+
+
+def test_deferred_shortlist_acceptance_stays_reversible_until_next(review,tmp_path):
+    from app.jobs import JobQueue
+    from app.server import tasks
+    shown=suggest(review,tmp_path);jobs=JobQueue(None)
+    accepted=tasks.execute(jobs,'ingest','match_review',dict(run_id=review['id'],action='accept',expected=shown['basis'],defer_continuation=True))
+    assert accepted['changed'] and accepted['basis']==R.detail(review['id'])['basis']
+    assert store.get(review['id'])['state']=='audiobook_review' and not jobs.tasks('ingest')
+    rejected=tasks.execute(jobs,'ingest','match_review',dict(run_id=review['id'],action='reject',expected=accepted['basis'],defer_continuation=True))
+    assert P.book_review_held(store.get(review['id']))
+    restored=tasks.execute(jobs,'ingest','match_review',dict(run_id=review['id'],action='restore',expected=rejected['basis'],defer_continuation=True))
+    assert restored['changed'] and P.book_confirmed(store.get(review['id']))
+    assert store.get(review['id'])['state']=='audiobook_review' and not jobs.tasks('ingest')
+
+
+def test_updated_model_withdraws_below_threshold_suggestion_without_rejecting_the_book(review,tmp_path):
+    from app.ingest.training_cache import input_key
+    shown=suggest(review,tmp_path)
+    record=dict(run_id=review['id'],candidate=shown['suggestion']['candidate'],above_threshold=False,model_score=.5,input_key=input_key(store.get(review['id'])))
+    path=tmp_path/'updated.jsonl';path.write_text(json.dumps(record)+'\n')
+    assert R.import_shortlist(path,replace=True)==dict(imported=0,withdrawn=1)
+    assert R.page('shortlist')['total']==0 and read_models.get('match_suggestion',review['id']) is None
+    assert not P.book_review_held(store.get(review['id']))
+    with pytest.raises(ValueError,match='changed'):R.accept(review['id'],shown['basis'])
+
+
+def test_model_refresh_does_not_replace_or_withdraw_predictions_from_stale_source_inputs(review,tmp_path):
+    shown=suggest(review,tmp_path)
+    path=tmp_path/'stale.jsonl'
+    for above in (False,True):
+        path.write_text(json.dumps(dict(run_id=review['id'],candidate=shown['suggestion']['candidate'],candidate_key='replacement',above_threshold=above,model_score=.999,features={},input_key='stale'))+'\n')
+        assert R.import_shortlist(path,replace=True)==dict(imported=0,withdrawn=0)
+        assert R.detail(review['id'])['basis']==shown['basis']

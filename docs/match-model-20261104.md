@@ -30,7 +30,7 @@ Cross-work negatives are generated only within their partition. Each work-group
 and class receives equal total training weight, so many edition aliases do not
 make one work dominate training.
 
-The model uses 19 raw features from the earlier 24-feature export. It excludes
+The initial version used 19 raw features from the earlier 24-feature export. It excluded
 `compatible`, `work_score`, `title_rule_score`, `title_rule_conflict` and
 `source_margin`, which directly encode the existing resolver. Title/author edit
 similarity, token overlap, missing fields, exact identifiers, subtitle presence,
@@ -136,3 +136,26 @@ and shortlisted 52. The canonical final artifacts are
 `data/match-model-20261104/final-verified/{report.json,model.ubj,dataset.jsonl,pending.jsonl,shortlist.json}`.
 `shortlist.json` contains one top recommendation per qualifying review rather
 than counting multiple editions as separate books.
+
+## Version 2: evidence and popularity features
+
+The expanded feature set includes the resolver’s compatibility, work/title scores, conflict flag and source margin as learned inputs. They are not hard vetoes, approval rules, or target labels. New raw evidence includes subtitle similarity, biography/annotation/adaptation markers and their differences from the local title, publication-year missingness/value, ISBN/publisher availability, and archived linked-edition facts. Edition evidence is used only when its work and edition IDs match the candidate.
+
+Ratings contribute five features: count presence, `log1p(count)`, count relative to the largest count among candidates from the same provider (in log space), average rating on a 0–1 scale, and average presence. Missing values, real zeroes and invalid values are distinct. Raw counts from different rating communities are not directly used as relative popularity. Popularity is a learned prior; it cannot establish book identity by itself or distinguish all editions of the same work.
+
+Frozen datasets can be extended with missing columns from their retained candidate, local identity and linked-edition evidence, without querying live providers or borrowing later metadata. Synthetic cross-work negatives get popularity calculated in the query’s candidate context, rather than an artificial zero value. Historical unknown candidates remain unknown; adding features does not manufacture rejection labels.
+
+Use `--feature-set legacy`, `--feature-set evidence` (everything except ratings) and `--feature-set expanded` to compare on one immutable database snapshot and frozen dataset. Each configuration chooses its model/threshold on calibration groups and is assessed on separate held-out groups. `data/match-features-20261104-221647/` retains this comparison’s source snapshot, datasets, reports and candidate predictions. No model experiment writes approvals.
+
+
+## Incremental training evidence
+
+The application maintains `data/training/features.sqlite` as a persistent SQLite sidecar. Candidate features are keyed by immutable inventory, identity and provider event IDs. Review decisions have a separate key: approval or revocation updates supervision without recomputing candidate comparisons. Publishing a run records a durable dirty marker; background maintenance caches evidence and training examples outside the review worker lane. Bootstrap recovers unfinished markers.
+
+Adding feature columns backfills only missing values from retained raw candidate, local identity and linked-edition evidence. Existing feature values and synthetic pairs are preserved. New queries are mined individually; pairs referencing withdrawn consent, changed foreign evidence or invalid group/split membership are regenerated. Training always checks current decision provenance. Intentionally changing an existing feature definition requires an explicit migration, rather than silently overwriting cached values.
+
+The completed comparison is in `data/match-features-cached-20261104-223752/`. Warm evidence and legacy experiments, including fitting and pending predictions, took 13.08 and 11.34 seconds. The expanded model accepted 536 correct and one incorrect held-out candidate at its calibration-selected threshold of 0.98. Without ratings it accepted 527 correct and one incorrect candidate; both covered 75 distinct held-out groups. These are candidate counts, not independent books. The older 19-feature model accepted 347 correct candidates and zero incorrect candidates across 41 groups. The biography suggestion for Great Expectations fell from 0.985 to 0.836, below threshold, without a title-specific exception. Recommendations remain subject to human review.
+
+The installed CPU XGBoost library fits these small models quickly (a representative 5,000-row fit took 0.34 seconds). The NVIDIA GPU would not address evidence preparation; retaining and incrementally updating evidence removes that repeated cost.
+
+A final no-dataset retrain completed in 15.76 seconds with the original feature-computation function replaced by a failure guard. All 48 features came from the persistent cache; it did not recompute existing comparisons.

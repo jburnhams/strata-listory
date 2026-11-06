@@ -2,10 +2,10 @@
 
 The Open Library provider checks a persistent local SQLite index first and falls back to its online API when no sufficiently close local match is available. Local and online Open Library results remain one source family. The importer never changes audiobook files or the main catalogue database.
 
-Download the works, authors and ratings dumps from <https://openlibrary.org/developers/dumps> into `data/openlibrary/dumps/`, named `works.txt.gz`, `authors.txt.gz` and `ratings.txt.gz`. Then run:
+Download the works, authors, ratings and editions dumps from <https://openlibrary.org/developers/dumps> into `data/openlibrary/dumps/`, named `works.txt.gz`, `authors.txt.gz`, `ratings.txt.gz` and `editions.txt.gz`. Then run:
 
 ```sh
-./app openlibrary-import
+./app openlibrary-import --editions
 ./app openlibrary-status
 ```
 
@@ -17,6 +17,28 @@ The published database is `data/openlibrary/index.sqlite`. A replacement is buil
 
 Store this database on local SSD storage. Keep the source `.gz` files for rebuilding; budget additional space for the published index and a replacement during updates. No process loads an entire dump into memory, and normal queries never import or decompress dumps.
 
-Publisher enrichment uses small cached edition API requests for the matched work, bounded to three pages. No editions dump is downloaded. Publishers are applied only from editions in the selected earliest publication year; later reprints cannot supply that publisher. Empty duplicate work records can be resolved through author/year/title-checked edition searches. Audio editions are excluded from book-publisher evidence.
+The optional `--editions` import streams edition records into indexed edition/work and ISBN tables. It retains publisher, publication date, language, format and edition identifiers separately from the work record; edition dates never overwrite the work index’s first-publication year. Publisher enrichment first uses bounded local edition lookups when available and otherwise uses small cached edition API requests, bounded to three pages. Publishers are applied only from editions in the selected earliest publication year; later reprints cannot supply that publisher. Empty duplicate work records can be resolved through author/year/title-checked edition searches. Audio editions are excluded from book-publisher evidence.
 
 The initial index stores work main titles. Search accepts a missing subtitle only when available subtitle evidence does not conflict or introduce ambiguity. Coauthor lookup searches each name independently, and joined title words such as ChiRunning are recognised. Numbered author-named collections can be discovered from subtitle-only tags; small cached work/attached-edition records supply their subtitles and edition references. Different volume numbers remain distinct books. These title enrichments reuse the existing index.
+
+## omarchy rebuild (2026-11-04)
+
+The Beelink migration omitted the dumps and index. Downloads for all four files in the official `2026-10-31` snapshot were started on omarchy (about 17.5 GB compressed, including about 12.6 GB editions). `scripts/fetch_openlibrary.py 2026-10-31` resumes `.part` transfers, verifies the Archive.org snapshot’s sizes and SHA-1 checksums, then publishes complete `.gz` files and provenance JSON. No expanded text copies are written.
+
+The temporary user units `listory-openlibrary-download` and `listory-openlibrary-import` run the transfer and `./app openlibrary-import --editions --wait` independently of the app, with low CPU/IO priority and memory limits. Inspect `journalctl --user -u listory-openlibrary-download -u listory-openlibrary-import` and `./app openlibrary-status`. Import status stays pending until all required inputs and indexes are complete; only the atomic published index is used for queries. The app continues using the online provider while no index is ready. Re-run the download script and import command after a reboot/interruption; the transient units are not boot services.
+
+## Edition language and index size
+
+Edition imports keep records explicitly tagged English (`/languages/eng`), including multilingual editions containing English, and records without a recognised language code. Explicitly non-English editions and their ISBN/work links are omitted before insertion. Authors, works, ratings and original work years remain intact. Snapshot metadata records `edition_languages: english_or_unknown`.
+
+For an older all-language index, run `./app openlibrary-compact`. It waits for any active import, copies the published database locally, removes explicitly non-English editions and their links, runs SQLite VACUUM to reclaim disk space, verifies the copy, then atomically replaces the index. Existing lookups continue using the old published file until replacement. An error leaves that file intact. Repeating the command on an already filtered index is a no-op. Budget temporary disk space for the copy and VACUUM; compressed source dumps remain available for rebuilding.
+
+On omarchy, `listory-openlibrary-compact.service` is scheduled after the initial import via the shared import lock. Check its journal alongside the import service and `./app openlibrary-status`; `filtering_editions` and `compacting_editions` mean a published index is already available while the smaller replacement is prepared.
+
+## ISBN-led matching
+
+Matching now gathers checksum-valid ISBNs from local identity/tag evidence, compatible provider candidates and indexed editions of up to three compatible suggested works. ISBN-10 and its equivalent 978 ISBN-13 are queried together; 979 identifiers remain ISBN-13. Up to twelve distinct ISBN queries per review use the local edition/ISBN index and exact linked-work lookups, retaining bounded duplicate records, edition titles, subtitles, dates, publisher/ISBN facts and snapshot provenance. Following a work then exposes its other editions; their formats need not share an ISBN.
+
+Conflicting title/author assertions are retained for the normal resolver and review checks. Multiple Open Library edition records remain one provider family and cannot create independent corroboration. Edition dates never overwrite a work's first-publication date. Matching archives the new ISBN evidence, and the incremental training cache records only affected source revisions.
+
+The reverse edition/work index `editions_edition(edition,work)` is included in new imports. It was also added to omarchy's existing index without rereading the dumps; live lookup plans now use that covering index. Read-only ISBN discovery for House of Cards (William D. Cohan, `0141039590`) and The Push (Tommy Caldwell, `0399562702`) completed in 0.185 and 0.115 seconds respectively, including initial work/edition lookup.
