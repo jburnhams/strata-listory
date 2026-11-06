@@ -337,3 +337,28 @@ it('starts shortlist recording work only on Next and retains the card if queuein
   expect(resumes).toEqual(['review1', 'review1'])
   expect(jobPolls).toBe(0)
 })
+
+it.each(['automatic', 'shortlist'] as const)('retains a full %s batch while its first decision is still saving', async mode => {
+  const original = reviewRows(12, mode)
+  let release: (() => void) | undefined
+  const continued: string[] = []
+  server.use(http.get('/api/match-reviews', ({ request }) => HttpResponse.json({ rows: new URL(request.url).searchParams.has('after') ? original.slice(10) : original.slice(0, 10), total: 12, offset: 0, limit: 10 })), http.post('/api/match-reviews/:id/:action', async () => {
+    await new Promise<void>(resolve => { release = resolve })
+    return HttpResponse.json({ changed: true, basis: 'b'.repeat(64) })
+  }), http.post('/api/ingest/runs/:id/resume', ({ params }) => { continued.push(String(params.id)); return HttpResponse.json({ queued: true }) }))
+  const { user } = setup(<MatchReviewPage mode={mode} />)
+  const first = await screen.findByRole('article', { name: 'Review Book 1' })
+  const batch = screen.getAllByRole('article')
+  await user.click(within(first).getByRole('button', { name: 'Approve' }))
+  await waitFor(() => expect(release).toBeDefined())
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  expect(screen.getAllByRole('article')).toEqual(batch)
+  expect(within(first).getByRole('button', { name: 'Saving…' })).toBeDisabled()
+  expect(within(screen.getByRole('article', { name: 'Review Book 2' })).getByRole('button', { name: 'Approve' })).toBeEnabled()
+  release!()
+  await waitFor(() => expect(within(first).getByRole('button', { name: 'Approve' })).toBeDisabled())
+  await user.click(screen.getByRole('button', { name: 'Next' }))
+  await screen.findByRole('article', { name: 'Review Book 11' })
+  expect(screen.queryByRole('article', { name: 'Review Book 1' })).toBeNull()
+  expect(continued).toEqual(mode === 'shortlist' ? ['batch-1'] : [])
+})

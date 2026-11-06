@@ -625,3 +625,9 @@ configuration, queued-work behavior, output rebuilding and the proxy/auth bounda
 - Queued an ISBN-enabled House of Cards refresh through the normal worker; its explicit manual-review hold is retained. New matching jobs use the ISBN path automatically.
 - The live refresh completed as run `8e458236f88e4966a34a4b58a35bbd3f`: two ISBN queries produced four linked edition records, retained William D. Cohan, and kept the explicit manual-review hold. Original year remains 2009 from independent Hardcover evidence; edition publication years are retained separately.
 - Validation: 901 unit tests passed at 96.21% coverage, plus all nine ingest integration tests. Focused discovery/audit/index tests (267) and Ruff/whitespace checks passed.
+
+## 2026-11-06 — PR #14 follow-up
+
+- Retain pending review decisions when Next is pressed on a full batch with no completed decisions, and protect pending cards throughout refill. Use the live in-flight set so a deferred shortlist acceptance remains visible until a later Next can queue its continuation.
+- Add automatic/shortlist regressions exercising Next before the first decision completes and confirming accepted shortlist work is subsequently resumed. Normalize the folder-evidence assertion with the platform's Path representation for Windows.
+- Validation: 116 frontend tests passed the coverage gate; typecheck/production build and all 76 grouping unit tests passed. Replacement cross-platform CI is monitored on PR #14.

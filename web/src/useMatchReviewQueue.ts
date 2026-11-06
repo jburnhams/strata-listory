@@ -64,17 +64,19 @@ export function useMatchReviewQueue(mode: 'automatic' | 'shortlist', query: stri
     current.current = { ...page, rows: page.rows.map(row => row.id === id && row.basis === basis ? { ...row, basis: nextBasis } : row) }
     setData(current.current)
   }
-  async function next(completed: Set<string> = new Set()) {
+  async function next(completed: Set<string> = new Set(), pending: Set<string> = new Set()) {
     const page = current.current
     if (!page) return
-    const removed = page.rows.filter(row => completed.has(row.id))
+    const removed = page.rows.filter(row => completed.has(row.id) && !pending.has(row.id))
     if (!removed.length && page.rows.length === REVIEW_PAGE_SIZE) {
+      // A deferred shortlist acceptance must remain visible until Next can resume it.
+      if (pending.size) return
       await load(page.offset + page.rows.length, ahead.current, page.total, true)
       return
     }
     const cached = ahead.current, version = ++generation.current
     ahead.current = null; setError(null)
-    const retained = page.rows.filter(row => !completed.has(row.id))
+    const retained = page.rows.filter(row => !completed.has(row.id) || pending.has(row.id))
     for (const row of removed) decided.current.add(`${row.id}:${row.basis}`)
     const total = Math.max(retained.length, page.total - removed.length)
     display({ ...page, rows: retained, total })

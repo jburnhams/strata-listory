@@ -1,5 +1,6 @@
 """Book boundaries follow file evidence, including mixed flat and nested collections."""
 import pytest
+from pathlib import Path
 from app.ingest import grouping as G,inventory as I
 
 
@@ -359,7 +360,7 @@ def test_explicit_folder_author_survives_untagged_disc_tracks(author,title):
     assert (group['title'],group['author'])==(title,author)
     identity,metrics=I.recover(dict(title=title,author=author,asin='',locked=[]),dict(root=root,files=files,sidecars=[],work_hint=group))
     assert identity['book']['author']==author and metrics['identity.conflicts']==0
-    assert dict(source='folder',path=root,title=title,author=author) in identity['evidence']
+    assert dict(source='folder',path=str(Path(root)),title=title,author=author) in identity['evidence']
 
 
 def test_blank_group_credit_preserves_same_work_author_but_not_collection_author():

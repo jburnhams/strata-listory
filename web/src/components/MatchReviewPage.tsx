@@ -97,7 +97,7 @@ export default function MatchReviewPage({ mode }: { mode: 'automatic' | 'shortli
     if (!data || advancing) return
     setAdvancing(true)
     try {
-      const completed = data.rows.filter(row => decisions[row.id]?.basis === row.basis && !pending.has(row.id))
+      const completed = data.rows.filter(row => decisions[row.id]?.basis === row.basis && !inFlight.current.has(row.id))
       const removable = new Set(completed.map(row => row.id))
       if (mode === 'shortlist') {
         await Promise.all(completed.filter(row => decisions[row.id].action === 'approve').map(async row => {
@@ -109,7 +109,7 @@ export default function MatchReviewPage({ mode }: { mode: 'automatic' | 'shortli
         }))
       }
       if (completed.length && !removable.size) return
-      await next(removable)
+      await next(removable, inFlight.current)
     } finally { setAdvancing(false) }
   }
   return <div className="space-y-4">
