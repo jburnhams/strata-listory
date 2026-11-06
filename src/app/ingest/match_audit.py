@@ -98,7 +98,7 @@ def candidate_inputs(run):
     if not book.get('title'):return book,{}, {},stages
     collected=metadata.work_edition_evidence(stages.get('providers') or dict(providers={}))
     cohort=[dict(c,source=name) for name,entry in collected['providers'].items() for c in entry.get('candidates',[]) if name in merge.WORK]
-    edition_evidence={name:entry.get('publisher_editions',[]) for name,entry in collected['providers'].items()}
+    edition_evidence={name:entry.get('publisher_editions',[])+entry.get('isbn_editions',[]) for name,entry in collected['providers'].items()}
     unique={json.dumps([c.get('source'),c.get('id'),c.get('title'),c.get('subtitle'),c.get('subtitle_edition')]):c for c in cohort}
     return book,unique,edition_evidence,stages
 

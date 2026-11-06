@@ -616,3 +616,12 @@ configuration, queued-work behavior, output rebuilding and the proxy/auth bounda
 - Full unit coverage reached 96.28% (891 passed; one existing backup-retention fixture failed because its two hourly examples crossed midnight). Made that fixture use a fixed noon clock and rechecked it independently with the edition/CLI tests; backup implementation is unchanged. Edition tests cover language placeholders, multilingual editions, link cleanup, repeat-safe compaction and preservation of the published file on failure.
 - Initial import has read 56,896,821 editions and is building indexes. The low-priority `listory-openlibrary-compact` unit is active and waiting on the shared import lock; no import restart or expanded dump copy was needed.
 - Final focused verification: all 45 edition, CLI and backup tests passed; Ruff and patch whitespace checks passed.
+
+## 2026-11-06 — ISBN-led edition matching
+
+- Wire the completed local editions index into matching: discover valid ISBNs from local tags/identity and compatible provider/work-edition evidence, match equivalent ISBN-10/13 values, traverse duplicate edition records to exact linked works, and retain alternate edition title/subtitle evidence. Bounded local queries archive their snapshot and records for review/training.
+- Keep conflicting authors/titles, work dates and edition dates separate. ISBNs broaden discovery; they do not bypass identity checks or turn duplicate Open Library records into independent providers. Existing consent versions remain unchanged.
+- Add the missing reverse edition/work index to future builds and the current live index (65.9-second low-priority maintenance, no dump re-import). Confirmed covering-index traversal and live read-only matches for William D. Cohan's House of Cards and Tommy Caldwell's The Push in under 0.2 seconds each.
+- Queued an ISBN-enabled House of Cards refresh through the normal worker; its explicit manual-review hold is retained. New matching jobs use the ISBN path automatically.
+- The live refresh completed as run `8e458236f88e4966a34a4b58a35bbd3f`: two ISBN queries produced four linked edition records, retained William D. Cohan, and kept the explicit manual-review hold. Original year remains 2009 from independent Hardcover evidence; edition publication years are retained separately.
+- Validation: 901 unit tests passed at 96.21% coverage, plus all nine ingest integration tests. Focused discovery/audit/index tests (267) and Ruff/whitespace checks passed.

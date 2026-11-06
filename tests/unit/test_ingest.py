@@ -2127,3 +2127,17 @@ def test_spaced_code_chapters_expand_from_one_selected_file_without_resplitting(
     (folder/'Other Novel.mp3').write_bytes(b'audio')
     inv,_=I.discover(b)
     assert [f['path'] for f in inv['files']]==[str(paths[0])]
+
+
+def test_isbn_discovery_uses_compatible_sources_and_deduplicates_equivalent_identifiers(monkeypatch):
+    calls=[]
+    class OL:
+        def by_isbn(self,isbn):calls.append(isbn);return dict(candidates=[],editions=[])
+    monkeypatch.setattr(providers,'get',lambda name:OL())
+    monkeypatch.setattr('app.providers.openlibrary_local.editions',lambda key:None)
+    book=dict(title='A Novel',author='A Writer')
+    good=candidate('hardcover',title='A Novel',authors=['A Writer'],isbns=['0307387895','9780307387899'])
+    wrong=candidate('hardcover',title='Another Book',authors=['Other Writer'],isbns=['9780141182636'])
+    results=dict(openlibrary=dict(candidates=[]),hardcover=dict(candidates=[good,wrong]))
+    M.collect_isbn_matches(dict(book=book),results)
+    assert calls==['0307387895']

@@ -64,6 +64,22 @@ class OpenLibrary(Provider):
         return [to_candidate(d) for d in (raw or {}).get('docs', [])]
 
 
+    def by_isbn(self,isbn):
+        """All bounded local edition/work matches, including conflicting ISBN assignments."""
+        from app.providers import openlibrary_local as local
+        if not local.isbn_keys(isbn):return dict(candidates=[],editions=[])
+        editions=local.editions(isbn=isbn) or []
+        works=local.work_candidates([key for edition in editions for key in edition['works']])
+        candidates=[];linked=[]
+        for work in works:
+            candidates.append(dict(work,isbn_match=isbn))
+            for edition in editions:
+                if work['id'] not in edition['works']:continue
+                linked.append(dict(edition,work_key=work['id']))
+                candidates.append(dict(work,title=edition['title'],subtitle=edition['subtitle'],subtitle_edition=edition['key'],isbns=edition['isbns'],language=edition_language(edition),isbn_match=isbn))
+        return dict(candidates=candidates,editions=linked)
+
+
     def edition_publishers(self,work_key):
         """Small cached edition lookups for a known work; no editions dump is required."""
         if not re.fullmatch(r'/works/OL\d+W',work_key or ''):return []

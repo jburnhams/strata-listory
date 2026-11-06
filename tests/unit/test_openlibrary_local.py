@@ -220,3 +220,43 @@ def test_compaction_requires_a_published_editions_snapshot(dumps):
     with pytest.raises(ValueError,match='no published'):local.compact_editions()
     local.build(dumps)
     with pytest.raises(ValueError,match='no editions'):local.compact_editions()
+
+
+@pytest.mark.parametrize('value,keys',[
+    ('0-307-38789-5',['0307387895','9780307387899']),
+    ('9780307387899',['9780307387899','0307387895']),
+    ('9780307387890',[]),('0307387890',[]),('not an isbn',[]),
+])
+def test_equivalent_isbn_keys_require_valid_checksums(value,keys):
+    assert local.isbn_keys(value)==keys
+
+
+def test_isbn_matching_traverses_all_duplicate_records_and_preserves_conflicting_authors(dumps):
+    from app.providers.openlibrary import OpenLibrary
+    from app.ingest import metadata as M
+    from app.ingest.observe import capture
+    dump(dumps/'editions.txt.gz',[
+        ('/books/OL1M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_10=['0307387895'],publish_date='2007',publishers=['Vintage'])),
+        ('/books/OL2M',dict(title='The Road',works=[dict(key='/works/OL2W')],isbn_13=['9780307387899'],publish_date='2008')),
+        ('/books/OL3M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_13=['9780307387899'],publish_date='2009')),
+    ])
+    local.build(dumps,editions=True)
+    assert {r['key'] for r in local.editions(isbn='0307387895')}=={'/books/OL1M','/books/OL2M','/books/OL3M'}
+    found=OpenLibrary().by_isbn('9780307387899')
+    assert {c['id'] for c in found['candidates']}=={'/works/OL1W','/works/OL2W'}
+    correct=[c for c in found['candidates'] if c['id']=='/works/OL1W']
+    assert all(c['original_year']==2006 for c in correct)
+    assert {e['year'] for e in found['editions']}=={2007,2008,2009}
+    book=dict(title='The Road',author='Cormac McCarthy')
+    assert any(M.compatible_work(book,c,found['candidates']) for c in correct)
+    assert not any(M.compatible_work(book,c,found['candidates']) for c in found['candidates'] if c['id']=='/works/OL2W')
+    results=dict(openlibrary=dict(status='ok',candidates=[]));events=[]
+    with capture(events.append):M.collect_isbn_matches(dict(book=book,evidence=[dict(tags=dict(isbn='0307387895'))]),results)
+    assert len(results['openlibrary']['isbn_editions'])==3
+    assert results['openlibrary']['isbn_queries']==['0307387895']
+    assert any(e.get('raw',{}).get('snapshot') for e in events)
+    c=sqlite3.connect(local.folder()/'index.sqlite')
+    assert any('editions_edition' in row[-1] for row in c.execute('EXPLAIN QUERY PLAN SELECT work FROM edition_works WHERE edition=?',('/books/OL1M',)))
+    c.close()
+    assert local.work_candidates(['invalid','/works/OL999W'])==[]
+    assert OpenLibrary().by_isbn('invalid')==dict(candidates=[],editions=[])

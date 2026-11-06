@@ -12,7 +12,7 @@ from app import book_titles, contributors, oslib, settings
 from app.providers.base import candidate
 from app.ingest.observe import emit
 
-VERSION=3
+VERSION=4
 
 
 def folder():return Path(settings.data_dir())/'openlibrary'
@@ -126,6 +126,7 @@ def build(dumps=None,wait=False,editions=False):
             _progress('indexing',records=0,counts=counts)
             connection.executescript('''CREATE INDEX editions_work ON edition_works(work,edition);
                 CREATE INDEX editions_isbn ON edition_isbns(isbn,edition);
+                CREATE INDEX editions_edition ON edition_works(edition,work);
                 CREATE INDEX works_title ON works(normalised);
                 CREATE INDEX work_authors_author ON work_authors(author,work);
                 CREATE VIRTUAL TABLE titles USING fts5(title,content='works',content_rowid='rowid',tokenize='unicode61 remove_diacritics 2');
@@ -208,6 +209,40 @@ def _editions(connection,batch,links,identifiers):
         connection.executemany('INSERT INTO edition_isbns VALUES(?,?)',identifiers)
 
 
+def isbn_keys(value):
+    """Validated, equivalent ISBN-10/13 keys; never infer other format identifiers."""
+    key=re.sub(r'[-\s]','',str(value or '')).upper()
+    if re.fullmatch(r'\d{9}[\dX]',key):
+        if sum((10-i)*(10 if c=='X' else int(c)) for i,c in enumerate(key))%11:return []
+        base='978'+key[:9];check=(-sum(int(c)*(1 if i%2==0 else 3) for i,c in enumerate(base)))%10
+        return [key,base+str(check)]
+    if not re.fullmatch(r'97[89]\d{10}',key) or sum(int(c)*(1 if i%2==0 else 3) for i,c in enumerate(key))%10:return []
+    if key.startswith('979'):return [key]
+    base=key[3:12];check=(-sum((10-i)*int(c) for i,c in enumerate(base)))%11
+    return [key,base+('X' if check==10 else str(check))]
+
+
+def work_candidates(keys):
+    """Exact linked work lookups; ISBN evidence must not depend on title search ranking."""
+    root=folder();path=root/'index.sqlite'
+    keys=list(dict.fromkeys(k for k in keys if re.fullmatch(r'/works/OL\d+W',k or '')))[:300]
+    if not keys or not path.is_file():return []
+    with (root/'index.lock').open('a+b') as reader,oslib.file_lock(reader):
+        c=sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True);c.row_factory=sqlite3.Row
+        try:
+            result=[]
+            for key in keys:
+                row=c.execute('SELECT * FROM works WHERE key=?',(key,)).fetchone()
+                if row is None:continue
+                people=[name[0] for author in json.loads(row['authors']) if (name:=c.execute('SELECT name FROM authors WHERE key=?',(author,)).fetchone())]
+                rating=c.execute('SELECT total,count FROM ratings WHERE work=?',(key,)).fetchone()
+                result.append(candidate('openlibrary',id=key,title=row['title'],authors=people,original_year=row['year'],genres=json.loads(row['subjects']),rating=rating[0]/rating[1] if rating else None,ratings_count=rating[1] if rating else None,url='https://openlibrary.org'+key))
+            snapshot=json.loads(c.execute("SELECT value FROM metadata WHERE key='snapshot'").fetchone()[0])
+            emit(source='Open Library offline linked works',query=dict(works=keys),cached=True,raw=dict(candidates=result,snapshot=snapshot))
+            return result
+        finally:c.close()
+
+
 def editions(work_key=None,*,isbn=None,limit=300):
     """Bounded edition facts, with work links and snapshot provenance. None means unavailable."""
     root=folder();path=root/'index.sqlite'
@@ -224,7 +259,8 @@ def editions(work_key=None,*,isbn=None,limit=300):
             if not snapshot.get('editions'):return None
             join='JOIN edition_works l ON l.edition=e.key' if work_key is not None else 'JOIN edition_isbns l ON l.edition=e.key'
             field='l.work' if work_key is not None else 'l.isbn'
-            rows=connection.execute(f'SELECT DISTINCT e.* FROM editions e {join} WHERE {field}=? ORDER BY e.year IS NULL,e.year,e.key LIMIT ?',(work_key if work_key is not None else isbn,max(1,min(limit,300))))
+            keys=[work_key] if work_key is not None else isbn_keys(isbn) or [isbn]
+            rows=connection.execute(f"SELECT DISTINCT e.* FROM editions e {join} WHERE {field} IN ({','.join('?' for _ in keys)}) ORDER BY e.year IS NULL,e.year,e.key LIMIT ?",keys+[max(1,min(limit,300))])
             result=[]
             for row in rows:
                 works=[v[0] for v in connection.execute('SELECT work FROM edition_works WHERE edition=?',(row['key'],))]
