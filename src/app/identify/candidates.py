@@ -87,6 +87,13 @@ def find(connection, title, author='', isbns=(), limit=60):
     return dict(list(hits.items())[:limit * 3]) if len(hits) > limit * 3 else hits
 
 
+def homonyms(connection, title):
+    """How many distinct works in the whole index carry exactly this title key: a measure of how generic the title is."""
+    key = tk.title_key(title)
+    if not key: return 0
+    return connection.execute('SELECT count(DISTINCT work) FROM (SELECT work FROM work_titles WHERE norm=? LIMIT 5000)', (key,)).fetchone()[0]
+
+
 def _titles(connection, work, limit=200):
     return [r['norm'] for r in connection.execute('SELECT norm FROM work_titles WHERE work=? ORDER BY n DESC LIMIT ?', (work, limit))]
 

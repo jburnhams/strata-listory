@@ -11,6 +11,7 @@ def test_find_by_title_author_isbn_and_redirect(tmp_path):
     assert cand.find(with_, 'The Hobbit', 'Nobody Else')['/works/OL1W'] == {'title'}
     assert 'author-fuzzy' in cand.find(with_, 'Hobbit Der', 'J.R.R. Tolkien')['/works/OL1W']
     assert cand.find(with_, 'The Hobbit', 'Tolkien')['/works/OL1W'] >= {'title+surname'}
+    assert cand.homonyms(with_, 'The Hobbit') == 1 and cand.homonyms(with_, '') == 0 and cand.homonyms(with_, 'nothing here') == 0
     assert cand.canonical(with_, ['/works/OL2W', '/works/OL1W']) == {'/works/OL2W': '/works/OL1W', '/works/OL1W': '/works/OL1W'}
 
 
@@ -25,6 +26,8 @@ def test_describe_and_features(tmp_path):
     surname = ft.item_features(dict(title='The Hobbit', author='Tolkien'), d, {'title+surname'})
     assert surname['author_single_token'] == 1 and surname['author_surname_share'] == 1 and surname['author_exact_all'] == 0
     assert ft.item_features(dict(title='x', author='John Tolkien'), d, set())['author_first_name_share'] == 0 and ft.item_features(dict(title='x', author='J. Tolkien'), d, set())['author_initial_share'] == 1
+    generic = ft.item_features(dict(title='Census'), dict(d, homonyms=400), set())
+    assert generic['title_generic_no_author'] == 1 and generic['title_homonyms_log'] > 5 and good['title_generic_no_author'] == 0
     rows = ft.add_context([(d, good), (dict(d, key='/works/OL5W', title='Other', titles={('other', 0): 1}), bad)])
     assert rows[0][1]['is_top_group'] == 1 and rows[0][1]['score_margin'] > 0 > rows[1][1]['score_margin']
     assert ft.add_context([]) == [] and 'title_best_sim' in ft.feature_names() and ft.feature_names() == sorted(ft.feature_names())

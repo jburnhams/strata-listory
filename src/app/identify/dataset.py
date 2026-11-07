@@ -62,10 +62,10 @@ def split_of(group_id):
 
 def candidates_for(connection, item):
     hits = cand.find(connection, item['title'], item['author'], item.get('isbns', ()))
-    mapping = cand.canonical(connection, list(hits)); described = []
+    mapping = cand.canonical(connection, list(hits)); described = []; generic = cand.homonyms(connection, item['title'])
     for key in dict.fromkeys(mapping.values()):
         d = cand.describe(connection, key)
-        if d: d['via'] = set().union(*(hits[k] for k in hits if mapping[k] == key)); described.append(d)
+        if d: d['homonyms'] = generic; d['via'] = set().union(*(hits[k] for k in hits if mapping[k] == key)); described.append(d)
     return described
 
 

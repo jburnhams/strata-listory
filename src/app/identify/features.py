@@ -66,7 +66,7 @@ def item_features(item, c, via):
     """All pair features except the within-query context added by `add_context`."""
     isbns = {k for i in item.get('isbns') or [] for k in tk.isbn_keys(i)}
     out = dict(title_features(item.get('title', ''), c), **author_features(item.get('author', ''), c), **popularity_features(c, item.get('year')))
-    out.update(isbn_match=int(bool(isbns & set(c['isbns']))), isbn_known=int(bool(isbns)), **{f'via_{v.replace("+", "_").replace("-", "_")}': int(v in via) for v in VIA})
+    out.update(title_homonyms_log=_log(c.get('homonyms', 0)), title_generic_no_author=int(len(tk.title_key(item.get('title', '')).split()) <= 2 and not tk.people(item.get('author', ''))), isbn_match=int(bool(isbns & set(c['isbns']))), isbn_known=int(bool(isbns)), **{f'via_{v.replace("+", "_").replace("-", "_")}': int(v in via) for v in VIA})
     local_series = tk.title_key(item.get('series', ''))
     out.update(series_match=int(bool(local_series) and local_series in (c.get('series') or [])), local_series_known=int(bool(local_series)))
     return out
