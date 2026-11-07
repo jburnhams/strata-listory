@@ -130,12 +130,12 @@ describe('Library ingest submission', () => {
     let body: unknown
     server.use(http.post('/api/ingest/run', async ({ request }) => { body = await request.json(); return HttpResponse.json({ queued: true }) }))
     const { user } = setup(<LibraryPage />)
-    await user.click(await screen.findByRole('button', { name: 'Select all shown (7)' }))
+    await user.click(await screen.findByRole('checkbox', { name: 'Select all shown' }))
     await user.click(screen.getByRole('checkbox', { name: 'Query metadata providers' }))
     await user.click(screen.getByRole('button', { name: 'Start ingest (7)' }))
     expect(await screen.findByText(/Ingest queued for 7 books/)).toBeInTheDocument()
     expect(body).toEqual({ ids: [10, 11, 12, 13, 14, 15, 16], online: false, limit: 7 })
-    expect(screen.getByText('0 selected')).toBeInTheDocument()
+    expect(screen.getByText('No books selected')).toBeInTheDocument()
   })
 
   it('keeps the selection when the server refuses, and clears it on request', async () => {
@@ -155,7 +155,7 @@ describe('Library ingest submission', () => {
     setup(<LibraryPage />)
     expect(await screen.findByRole('checkbox', { name: 'Select Handwritten (ID 20)' })).toBeDisabled()
     expect(screen.getByRole('checkbox', { name: 'Select Ignored one (ID 21)' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Select all shown (0)' })).toBeDisabled()
+    expect(screen.getByRole('checkbox', { name: 'Select all shown' })).toBeDisabled()
   })
 })
 

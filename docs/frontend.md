@@ -18,8 +18,8 @@ The identify model (Audible and Open Library together) settles what it is sure o
 ### Review
 
 * One endless list over `GET /api/identify/queue`, impact order from the server. Each card shows what the files say, what the model matched them to, how sure it is (a near tie with the runner-up reads as a close call whatever the score) and how many files one answer settles.
-* **Accept** records an `approve` label, **Not this book** a `reject` (a hard negative). Both fold the card away at once with a five second Undo; the answer is saved when the window closes, on the next answer, on leaving the page or before a retrain.
-* Pages are requested `after` the last group held, never by offset, so answers saved meanwhile cannot skip or repeat cards.
+* **Accept** records an `approve` label, **Not this book** a `reject` (a hard negative). Both fold the card away at once with a five second Undo; the answer is saved when the window closes, on the next answer or on leaving the page, and `flush()` saves it before a retrain. A failed save puts the card back and says so in the bar.
+* Built from strata-react's `useInfiniteLoad` / `InfiniteList`, `useUndoable`, `useActiveItem`, `useHotkeys` / `KeysLegend`. Pages are requested `after` the last group held, never by offset, so answers saved meanwhile cannot skip or repeat cards; the list refetches when you come back to the page.
 * Keys: `A` accept, `R` not this book, `J`/`K` next or previous card, `U` undo. Ignored while typing in a field.
 * **Retrain with my answers** runs `identify-refresh --train` as a job and reloads the list.
 
