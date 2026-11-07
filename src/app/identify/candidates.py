@@ -64,7 +64,13 @@ def find(connection, title, author='', isbns=(), limit=60):
         mapping = canonical(connection, titled)
         for work in titled:
             if work in by_author or mapping[work] in by_author: add(mapping[work], 'title+author')
-    if not every or not any('title+author' in v for v in hits.values()):
+    if not every and tk.people(author) and titled:
+        # Surname-only (or unknown-spelling) credit: let the title narrow the works, then compare surnames of their authors.
+        mapping = canonical(connection, titled); wanted = {tk.surname(p) for p in tk.people(author)}
+        for work in list(dict.fromkeys(mapping.values()))[:300]:
+            names = [r['name'] for r in connection.execute('SELECT a.name FROM work_authors w JOIN authors a ON a.key=w.author WHERE w.work=?', (work,))]
+            if wanted & {tk.surname(n) for n in names}: add(work, 'title+surname')
+    if not every or not any(v & {'title+author', 'title+surname'} for v in hits.values()):
         # No credited author, or none of them wrote a work with this title: keep the best-attested title-only hits as candidates so the model can see (and refuse) them.
         mapping = canonical(connection, titled)
         ranked = sorted(set(mapping.values()), key=lambda w: -(connection.execute('SELECT editions FROM works WHERE key=?', (w,)).fetchone() or [0])[0])

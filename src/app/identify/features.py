@@ -8,7 +8,7 @@ import re
 from app.identify import textkeys as tk
 
 KINDS = dict(work=0, work_full=1, edition=2, edition_full=3, full_title=4, other_title=5)
-VIA = ('isbn', 'title+author', 'title', 'author-fuzzy')
+VIA = ('isbn', 'title+author', 'title+surname', 'title', 'author-fuzzy')
 
 
 def _ratio(a, b): return difflib.SequenceMatcher(None, a, b).ratio() if a and b else 0.
@@ -46,9 +46,13 @@ def author_features(local_author, c):
     matched = [w for w in wanted if set(tk.person_variants(w)) & have_keys]
     surname_matched = [w for w in wanted if tk.surname(w) in have_surnames]
     sim = max((_ratio(tk.person_key(w), h) for w in wanted for h in have_keys), default=0.)
+    given = lambda name: tk.person_key(name).split()[:-1]
+    initial = [w for w in surname_matched if given(w) and any(given(a['name']) and given(w)[0][0] == given(a['name'])[0][0] for a in have if tk.surname(a['name']) == tk.surname(w))]
+    first = [w for w in surname_matched if given(w) and any(given(a['name']) and given(w)[0] == given(a['name'])[0] for a in have if tk.surname(a['name']) == tk.surname(w))]
     return dict(author_known=int(bool(wanted)), author_count=len(wanted), candidate_author_count=len(have), candidate_author_known=int(bool(have)),
                 author_match_share=len(matched) / len(wanted) if wanted else 0., author_surname_share=len(surname_matched) / len(wanted) if wanted else 0.,
-                author_exact_all=int(bool(wanted) and len(matched) == len(wanted)), author_candidate_covered=len(matched) / len(have) if have else 0., author_best_sim=sim)
+                author_exact_all=int(bool(wanted) and len(matched) == len(wanted)), author_single_token=int(bool(wanted) and all(len(tk.person_key(w).split()) == 1 for w in wanted)),
+                author_initial_share=len(initial) / len(wanted) if wanted else 0., author_first_name_share=len(first) / len(wanted) if wanted else 0., author_candidate_covered=len(matched) / len(have) if have else 0., author_best_sim=sim)
 
 
 def popularity_features(c, local_year=None):
