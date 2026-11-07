@@ -38,3 +38,11 @@ Downloading the dumps: `python scripts/fetch_openlibrary.py latest` fetches auth
 * Compact index (hashed aliases, main-title keys, redirects and deletes applied, filtered to about 20M works) and the monthly refresh timer.
 * Kind detection (radio versus book) and better disc/chapter grouping feeding this stage.
 * The old matcher and ingest rule engine are not removed yet.
+
+## Planned: Audible-first matching
+
+Once the local Audible index (ASIN, ISBN, title, authors, narrators, series, runtime) exists, audiobook matching runs first because it is more accurate and gives fewer false positives; Open Library becomes the fallback and the source of the original work. The pipeline is built to take that without a redesign:
+
+* An Audible hit is a candidate source in `candidates.find` (ASIN, ISBN, title and author against the Audible index) and contributes features per candidate: exact ASIN match, runtime agreement, narrator agreement, title/author match against the audiobook record, and the Audible record's ISBN linking to an Open Library work.
+* The Open Library work cluster stays the unit of identity, so an Audible match that carries an ISBN resolves straight to a work through `work_isbns`. Items with no ISBN link are scored on title and author as today.
+* The model is retrained with those features; strong Audible evidence should raise the share auto-accepted at the same zero-false-positive setting, which is then re-measured before any threshold changes.
