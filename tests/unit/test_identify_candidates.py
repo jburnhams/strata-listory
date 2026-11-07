@@ -51,3 +51,15 @@ def test_readings_cover_filename_styles():
     assert local.strip_numbers('1984') == '' and local.strip_numbers('Apollo 13') == 'Apollo'
     known = local.readings(dict(title='Author One - Title', author='Author One'))
     assert {r['reading'] for r in known} == {'raw', 'author_title'}
+
+
+def test_sibling_context_counts_numbered_parts():
+    from app.identify import context
+    rows = [(f'/a/Red Dragon/The Red Dragon CD01 {n:02}.mp3', f'The Red Dragon CD01 {n:02}') for n in range(1, 5)] + [('/a/Red Dragon/Other.mp3', 'Other')]
+    index = context.Index(rows)
+    got = index.annotate(dict(title='The Red Dragon CD01 03', path=rows[2][0]), members=1)
+    assert got['siblings'] == 4 and got['folder_files'] == 5 and got['numbered'] == 1
+    single = index.annotate(dict(title='Other', path=rows[4][0]), members=3)
+    assert single['siblings'] == 1 and single['members'] == 3 and single['numbered'] == 0
+    f = ft.item_features(got, dict(key='k', title='t', subtitle='', year=1, work_year=1, editions=1, audio_editions=0, ratings=0, rating_average=None, authors=[], titles={}, series=[], isbns=[], subjects=[]), set())
+    assert f['local_numbered'] == 1 and f['local_siblings_log'] > f['local_members_log']

@@ -86,6 +86,11 @@ def build(connection, runs, progress=None, blank_author=True):
         variants = [(run['run_id'], run['item'], 1.)] + ([(run['run_id'] + ':noauthor', dict(run['item'], author=''), .5)] if blank_author and run['item'].get('author') else [])
         for run_id, item, scale in variants:
             described = candidates_for(connection, item); ids = ft.cluster_ids(described)
+            if run['target'].get('reject'):      # a rejected suggestion: only its own cluster is a known negative
+                mapping = cand.canonical(connection, [run['target']['reject']] + [d['key'] for d in described]); bad = mapping[run['target']['reject']]
+                pairs = ft.add_context([(d, d['features']) for d in described])
+                rows.extend(dict(run_id=run_id, work=d['key'], cgroup=str(cid), features=f, label=0, weight=WEIGHT[run['origin']] * scale, origin=run['origin'], split=split_of(group_id), group=group_id) for cid, (d, f) in zip(ids, pairs) if mapping.get(d['key'], d['key']) == bad)
+                continue
             positives = positive_clusters(connection, run['target'], described, ids)
             if not positives:
                 if scale == 1.: misses.append(run)
