@@ -13,7 +13,7 @@ from app import db, oslib, settings
 
 CURRENT_JOB=ContextVar('current_job',default=None)
 # A stop we asked for (service restart, deploy, SIGTERM) says nothing against the job itself, unlike a timeout, a crash or an application error, so these failures are replayed on the next start. Capped per chain and per age so a job that really kills the server cannot loop.
-SHUTDOWN_ERRORS=('job interrupted by server shutdown','(exit -15)')
+SHUTDOWN_ERRORS=('job interrupted by server shutdown','job worker exited without a completed result (exit -15)')     # exact messages: fail() also cancels queued continuations with 'previous job failed: <error>', which must not be replayed on its own
 AUTO_RETRY_LIMIT=2
 AUTO_RETRY_WINDOW_HOURS=24
 
@@ -239,7 +239,7 @@ class JobQueue:
         c=db.connect();out=[]
         try:
             cutoff=(datetime.now(timezone.utc)-timedelta(hours=AUTO_RETRY_WINDOW_HOURS)).isoformat()
-            marker=' OR '.join('instr(j.error,?)>0' for _ in SHUTDOWN_ERRORS)
+            marker='j.error IN ('+','.join('?' for _ in SHUTDOWN_ERRORS)+')'
             candidates=[r[0] for r in c.execute(f"SELECT j.id FROM jobs j WHERE j.state='failed' AND j.finished>=? AND ({marker}) AND NOT EXISTS (SELECT 1 FROM job_work r WHERE r.kind='retry' AND r.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created) ORDER BY j.finished,j.id",(cutoff,*SHUTDOWN_ERRORS))]
             def attempts(ident):
                 n=0

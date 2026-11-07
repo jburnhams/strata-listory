@@ -373,10 +373,14 @@ def test_start_requeues_jobs_interrupted_by_shutdown_but_not_timeouts_or_errors(
         c=db.connect()
         with c:c.execute("UPDATE jobs SET state='running' WHERE id=?",(ident,))
         c.close();q.fail(ident,error)
+    cancelled=q.submit('system','scan',folder='/e')
+    c=db.connect()
+    with c:c.execute("UPDATE jobs SET state='failed',finished=?,error='previous job failed: job interrupted by server shutdown' WHERE id=?",(__import__('app.jobs',fromlist=['now']).now(),cancelled))
+    c.close()
     q.start()
     queued={t['options']['folder'] for t in q.tasks()}
     assert queued=={'/a','/b'}
-    assert {f['id'] for f in q.failures()}=={timeout,broken}
+    assert {f['id'] for f in q.failures()}=={timeout,broken,cancelled}
     q.stop()
 
 
