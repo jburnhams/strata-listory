@@ -1,27 +1,24 @@
-import { sourceFolder, inFolder } from '../../src/components/FolderTree'
 import { describe, expect, it, vi } from 'vitest'
-import { parse, href } from '../../src/route'
+import { href } from '../../src/route'
 import { api, booksUrl, coverUrl, withBase } from '../../src/api'
 import { formatBytes } from '../../src/components/BookPage'
 import { describeCount, formatDuration, matchLabel } from '../../src/components/LibraryPage'
 
-describe('routes', () => {
-  it('parses library and settings pages', () => {
-    expect(parse('')).toEqual({ page: 'library' })
-    expect(parse('#/')).toEqual({ page: 'library' })
-    expect(parse('#/settings')).toEqual({ page: 'settings' })
-    expect(parse('#/book/12')).toEqual({ page: 'book', id: 12 })
-    expect(parse('#/book/x')).toEqual({ page: 'library' })
-    expect(parse('#/book')).toEqual({ page: 'library' })
-    expect(parse('#/process')).toEqual({ page: 'process' })
-    expect(href.process()).toBe('#/process')
-    expect(parse('#/proposed')).toEqual({ page: 'proposed' })
-    expect(href.proposed()).toBe('#/proposed')
-    expect(href.library()).toBe('#/')
-    expect(parse('#/nonsense/1')).toEqual({ page: 'library' })
+describe('links', () => {
+  it('builds hash links to every page, with stages as tabs', () => {
+    expect(href.library()).toBe('#/library')
+    expect(href.review()).toBe('#/')
     expect(href.book(3)).toBe('#/book/3')
-    expect(href.library()).toBe('#/')
+    expect(href.process()).toBe('#/processing')
+    expect(href.proposed()).toBe('#/processing?tab=plans')
+    expect(href.finished()).toBe('#/processing?tab=finished')
     expect(href.settings()).toBe('#/settings')
+    expect(href.metadata()).toBe('#/pipeline?tab=book')
+    expect(href.ingest()).toBe('#/pipeline?tab=book')
+    expect(href.audiobook()).toBe('#/pipeline?tab=audiobook')
+    expect(href.quality()).toBe('#/pipeline?tab=quality')
+    expect(href.automatic()).toBe('#/pipeline?tab=automatic')
+    expect(href.shortlist()).toBe('#/pipeline?tab=shortlist')
   })
 })
 
@@ -56,32 +53,6 @@ describe('book page helpers', () => {
     expect(coverUrl(7)).toBe('/api/books/7/cover')
   })
 })
-
-it('routes separate identification pages and preserves old metadata links', () => {
-  expect(parse('#/book-identification')).toEqual({ page: 'metadata' })
-  expect(parse('#/audiobook-identification')).toEqual({ page: 'audiobook' })
-  expect(parse('#/metadata')).toEqual({ page: 'metadata' })
-  expect(href.metadata()).toBe('#/book-identification')
-  expect(href.audiobook()).toBe('#/audiobook-identification')
-})
-
-
-describe('source folder paths', () => {
-  it('normalises file paths and respects directory boundaries across platforms', () => {
-    expect(sourceFolder('/audio/book.M4B')).toBe('/audio')
-    expect(sourceFolder('/audio/Books/')).toBe('/audio/Books')
-    expect(sourceFolder('/book.mp3')).toBe('/')
-    expect(sourceFolder('C:\\Books\\Novel.mp3')).toBe('C:/Books')
-    expect(inFolder('c:/BOOKS/Novel.mp3', 'C:/Books')).toBe(true)
-    expect(inFolder('//server/share/books/title.flac', '//server/share')).toBe(true)
-    expect(inFolder('/audio/Bookshelf/book.mp3', '/audio/Books')).toBe(false)
-    expect(inFolder('/audio/book.mp3', '/')).toBe(true)
-    expect(inFolder('', null)).toBe(true)
-    expect(inFolder('', '')).toBe(true)
-    expect(inFolder('/audio', '')).toBe(false)
-  })
-})
-
 
 it('awaits queued work through lightweight status requests and returns its result', async () => {
   vi.useFakeTimers()

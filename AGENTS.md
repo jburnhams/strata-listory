@@ -2,6 +2,7 @@
 
 Strata Listory, an app to catalogue and process audiobooks, built on the template extracted from `strata-360` and `strata-stills`: Python backend (FastAPI + CLI) and React frontend (TypeScript + Vite + Tailwind CSS v4), with hermetic unit and integration test suites, coverage ratchets and multi-OS GitHub Actions CI.
 
+- The web app is built on `strata-react` (see `docs/frontend.md`): use its components (`DataView`, `DataTable`, `Field`, `AsyncButton`, `UndoBar`, ...) and role tokens (`bg-card`, `text-muted-foreground`, `type-body-sm`); Tailwind's stock colours and sizes do not compile. Read `node_modules/strata-react` types or the strata-react `CLAUDE.md` before adding UI.
 - Python application code lives in `src/app/`; the React web app lives in `web/src/` and builds into `src/app/server/static/`, which `./app serve` serves at `/`.
 - Python tests live under `tests/`, grouped by type:
   - `tests/unit/`: fast, isolated tests of pure logic and mocked boundaries (synthetic data, fakes). No external processes or network.

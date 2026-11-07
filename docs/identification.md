@@ -21,7 +21,7 @@ python -m pip install -r requirements-model.txt         # optional; training and
 ./app identify-decide GROUP approve|reject [--work /works/OL…W]
 ```
 
-API: `GET /api/identify/queue`, `POST /api/identify/decisions` (`retrain: true` queues a retrain and rescore), `POST /api/identify/refresh`.
+API: `GET /api/identify/queue?limit=&after=<last group held>` (pages without offsets, so answers given meanwhile cannot shift the next page), `POST /api/identify/decisions` (`retrain: true` queues a retrain and rescore), `POST /api/identify/refresh`.
 
 Downloading the dumps: `python scripts/fetch_openlibrary.py latest` fetches authors, works, editions, ratings, redirects and deletes for the newest monthly snapshot; build with `olindex.build()`.
 
@@ -34,7 +34,7 @@ Downloading the dumps: `python scripts/fetch_openlibrary.py latest` fetches auth
 
 ## Not done yet
 
-* No UI for the queue (CLI and API only).
+* The queue UI is the Review page (see [frontend.md](frontend.md)); decisions there only record training labels, they do not yet approve a book in the ingest pipeline (the Pipeline pages still do that).
 * Compact index (hashed aliases, main-title keys, redirects and deletes applied, filtered to about 20M works) and the monthly refresh timer.
 * Kind detection (radio versus book) and better disc/chapter grouping feeding this stage.
 * The old matcher and ingest rule engine are not removed yet.

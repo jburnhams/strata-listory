@@ -6,11 +6,16 @@ import Player from '../../src/components/Player'
 import { setup, screen } from '../utils/render'
 import { server } from '../utils/server'
 
-it('shows finished books with a link to the processing queue', async () => {
+it('shows finished books, each linking to its book page', async () => {
   server.use(http.get('/api/finished', () => HttpResponse.json([{ book_id: 1, title: 'Dune', author: 'Frank Herbert', result: { status: 'done', chapters: 2 } }])))
   setup(<FinishedPage />)
-  expect(await screen.findByRole('link', { name: 'Dune' })).toHaveAttribute('href', '#/book/1')
-  expect(screen.getByRole('link', { name: 'Processing queue' })).toHaveAttribute('href', '#/process')
+  expect(await screen.findByRole('link', { name: 'Dune' })).toHaveAttribute('href', '/book/1')
+})
+
+it('teaches the next step when nothing is finished', async () => {
+  server.use(http.get('/api/finished', () => HttpResponse.json([])))
+  setup(<FinishedPage />)
+  expect(await screen.findByText('No audiobooks finished yet')).toBeInTheDocument()
 })
 
 it('plays selected chapters and displays finished metadata', async () => {

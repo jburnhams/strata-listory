@@ -1,5 +1,9 @@
 # Progress log
 
+## 2026-11-07: frontend redesign on strata-react, Review as home
+
+The web app now runs on [strata-react](https://github.com/jburnhams/strata-react) (AppShell, DataView, DataTable, Field, AsyncButton, Tabs, UndoBar, Done, TanStack Query, React Router with hash routing) with a theme generated from a book-cloth brown. Home is **Review**: one endless list of every doubtful identify decision, most impactful first, with Accept and Not this book on each card, keyboard shortcuts, an undo window and retrain. Page map, decisions and what is left: [frontend.md](frontend.md). The identify queue API now pages with `after=<last group>` and decisions look any group up in the cached queue (they were limited to the first 50). Validation: web typecheck, 134 tests, coverage gate and build; unit tests for the paged queue.
+
 ## 2026-11-04: PR #12 CI and lifecycle review fixes
 
 Resolved two review findings: a failed job superseded by explicit retry or newer completed work no longer blocks future submissions; unresolved retry failures still require another explicit retry. Isolated workers watch a private pipe owned by the supervisor and kill their process group/tools on EOF, including abrupt server death. Completed supervisors close their pipe handles. macOS CI exposed inherited negative niceness: set an absolute nice target of 19 instead of adding 19 to the inherited value, while preserving an already lower priority.

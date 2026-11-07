@@ -1,46 +1,63 @@
 import { describe, expect, it } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import App from '../../src/App'
-import { Card } from '../../src/components/ui'
 import { setup, screen, within } from '../utils/render'
 import { server } from '../utils/server'
 
-const open = (hash: string) => { window.location.hash = hash; return setup(<App />) }
+const open = (route: string) => setup(<App />, { route })
+const nav = () => screen.getByRole('navigation', { name: /main|primary|site/i })
 
-describe('App navigation and header', () => {
-  it('shows the server version and navigates between Library and Settings', async () => {
-    open('#/')
+describe('App shell', () => {
+  it('shows the server version and Review as home', async () => {
+    open('/')
     expect(await screen.findByText('v0.1.0')).toBeInTheDocument()
-    expect(await screen.findByText('Dune')).toBeInTheDocument()
-
-    window.location.hash = '#/settings'
-    window.dispatchEvent(new HashChangeEvent('hashchange'))
-    expect(await screen.findByText('Application settings')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Review' })).toBeInTheDocument()
   })
 
-  it('renders cleanly when the health check fails and exercises the Card link', async () => {
+  it('renders cleanly when the health check fails', async () => {
     server.use(http.get('/api/health', () => new HttpResponse(null, { status: 500 })))
-    open('#/')
-    expect(await screen.findByText('Dune')).toBeInTheDocument()
+    open('/')
+    expect(await screen.findByRole('heading', { name: 'Review' })).toBeInTheDocument()
     expect(screen.queryByText('v0.1.0')).toBeNull()
-
-    setup(<Card to="#/settings">Go settings</Card>)
-    expect(screen.getByRole('link', { name: 'Go settings' })).toHaveAttribute('href', '#/settings')
   })
-})
 
+  it('lists Review first and moves between sections from the side navigation', async () => {
+    const { user } = open('/')
+    expect(within(nav()).getAllByRole('link').map(a => a.textContent)).toEqual(['Review', 'Library', 'Pipeline', 'Processing', 'Settings'])
+    await user.click(within(nav()).getByRole('link', { name: 'Library' }))
+    expect(await screen.findByRole('heading', { name: 'Library' })).toBeInTheDocument()
+    await user.click(within(nav()).getByRole('link', { name: 'Settings' }))
+    expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument()
+  })
 
-it('orders the workflow navigation and gives final proposals their own page', async () => {
-  const { user } = open('#/process')
-  const nav = screen.getByRole('navigation', { name: 'Main navigation' })
-  expect(within(nav).getAllByRole('link').map(a => a.textContent)).toEqual(['Library','Processing','Book identification','Automatic approvals','Match shortlist','Audiobook identification','Quality','Proposed','Finished','Settings'])
-  await screen.findByRole('heading', { name: 'Processing' })
-  expect(screen.queryByLabelText('Select Dune')).toBeNull()
-  await user.click(within(nav).getByRole('link', { name: 'Proposed' }))
-  expect(await screen.findByRole('heading', { name: 'Proposed' })).toBeInTheDocument()
-  expect(await screen.findByLabelText('Select Dune')).toBeEnabled()
-  expect(screen.queryByRole('checkbox', { name: 'Show completed' })).toBeNull()
-  await user.click(within(nav).getByRole('link', { name: 'Processing' }))
-  expect(await screen.findByRole('heading', { name: 'Processing' })).toBeInTheDocument()
-  expect(screen.queryByLabelText('Select Dune')).toBeNull()
+  it('gives plans and finished books their own tabs under Processing', async () => {
+    const { user } = open('/processing')
+    expect(await screen.findByRole('heading', { name: 'Processing' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Select Dune')).toBeNull()
+    await user.click(screen.getByRole('tab', { name: 'Plans to approve' }))
+    expect(await screen.findByLabelText('Select Dune')).toBeEnabled()
+    await user.click(screen.getByRole('tab', { name: 'Queue' }))
+    await screen.findByText('Process approved (0)')
+    expect(screen.queryByLabelText('Select Dune')).toBeNull()
+  })
+
+  it('keeps the old page addresses working', async () => {
+    open('/book-identification')
+    expect(await screen.findByRole('heading', { name: 'Pipeline' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Book', selected: true })).toBeInTheDocument()
+  })
+
+  it('moves through the pipeline stages as tabs', async () => {
+    const { user } = open('/pipeline')
+    await screen.findByRole('heading', { name: 'Pipeline' })
+    for (const name of ['Audiobook', 'Quality', 'Automatic approvals', 'Match shortlist']) {
+      await user.click(screen.getByRole('tab', { name }))
+      expect(screen.getByRole('tab', { name, selected: true })).toBeInTheDocument()
+    }
+  })
+
+  it('sends unknown paths to Review', async () => {
+    open('/nowhere')
+    expect(await screen.findByRole('heading', { name: 'Review' })).toBeInTheDocument()
+  })
 })

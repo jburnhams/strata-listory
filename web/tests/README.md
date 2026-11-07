@@ -5,7 +5,7 @@ vitest 4, Testing Library, user-event, msw (backend mocks). Run from `web/`: `np
 ## Layout
 
 - `unit/`: node environment, no DOM. Pure functions (`logic.test.ts`).
-- `integration/`: jsdom. Components rendered with Testing Library against a mocked backend (`App.test.tsx`, `LibraryPage.test.tsx`, `SettingsPage.test.tsx`).
+- `integration/`: jsdom. Components rendered with Testing Library against a mocked backend (`App.test.tsx`, `ReviewPage.test.tsx`, `LibraryPage.test.tsx`, `SettingsPage.test.tsx`); `setup()` renders inside a router and query client via `strata-react/testing`, so pass `{ route: '/library?q=x' }` to start elsewhere.
 - `utils/`: `server.ts` is the one msw server and its default happy-path handlers: **every endpoint the app calls needs a handler there** (an unmocked request fails the test); `setup.ts` is the jsdom setup; `render.tsx` provides `setup()` (Testing Library `render` + `userEvent.setup()`).
 - One test file per area of the app; add to the existing file if there is one.
 
@@ -32,7 +32,8 @@ vitest 4, Testing Library, user-event, msw (backend mocks). Run from `web/`: `np
 | `src/components/ProcessPage.tsx` | 98 | done | Covered by integration/ProcessPage.test.tsx |
 | `src/components/LibraryPage.tsx` | 100 | done | Covered by integration/LibraryPage.test.tsx |
 | `src/components/SettingsPage.tsx` | 100 | done | Covered by integration/SettingsPage.test.tsx |
-| `src/components/ui.tsx` | 100 | done | Shared UI primitives |
+| `src/components/ui.tsx` | 100 | done | Shared UI primitives for the older pages |
+| `src/components/ReviewPage.tsx` | 99 | done | integration/ReviewPage.test.tsx (queue, undo, keyboard, paging, retrain) |
 
 Quick-review regressions in `MatchReviewPage.test.tsx` cover local/proposed identity,
 lazy evidence, exact decision tokens, accept/unapprove feedback, stale failures,

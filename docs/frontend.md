@@ -1,0 +1,39 @@
+# Frontend (strata-react)
+
+The web app (`web/`) is built on [strata-react](https://github.com/jburnhams/strata-react): its components, token contract and TanStack Query bridge, with a product theme (`web/src/theme.generated.css` from `palette.mjs` with the seed `#8a4b2a`, a book-cloth brown; `web/src/theme.css` for the status roles). Design rules come from [ux-research](https://github.com/jburnhams/ux-research): one question and one finding per screen, states in the types, one filled button per view, filters and tabs in the URL, reversible actions with Undo.
+
+## The user journey
+
+The identify model (Audible and Open Library together) settles what it is sure of. What is left is a ranked list of doubtful matches. So the app opens on that list and the rest of the app supports it:
+
+| Page | Route | One question |
+|---|---|---|
+| **Review** (home) | `#/` | Which of the model's guesses do I need to confirm? |
+| Library | `#/library` | Which books do I have, and which should go into the pipeline next? Search, match, listening and workflow filters are in the URL. |
+| Book | `#/book/:id` | Everything known about one book, with the player when it is finished. |
+| Pipeline | `#/pipeline?tab=` | The older per-book approval stages (book, audiobook, quality, automatic approvals, match shortlist). |
+| Processing | `#/processing?tab=` | What is being turned into finished audiobooks: queue, plans to approve, finished. |
+| Settings | `#/settings` | Where does the app read and write? |
+
+### Review
+
+* One endless list over `GET /api/identify/queue`, impact order from the server. Each card shows what the files say, what the model matched them to, how sure it is (a near tie with the runner-up reads as a close call whatever the score) and how many files one answer settles.
+* **Accept** records an `approve` label, **Not this book** a `reject` (a hard negative). Both fold the card away at once with a five second Undo; the answer is saved when the window closes, on the next answer, on leaving the page or before a retrain.
+* Pages are requested `after` the last group held, never by offset, so answers saved meanwhile cannot skip or repeat cards.
+* Keys: `A` accept, `R` not this book, `J`/`K` next or previous card, `U` undo. Ignored while typing in a field.
+* **Retrain with my answers** runs `identify-refresh --train` as a job and reloads the list.
+
+### What was kept, merged or replaced
+
+* Replaced: the "Book identification", "Automatic approvals", "Match shortlist" and "Audiobook identification" top-level pages as a way to *decide what a book is*. Review does that for every book in one list. Old addresses (`#/book-identification`, `#/automatic-approvals`, ...) redirect.
+* Kept, as tabs under **Pipeline**: those same pages, because they are still what moves a book through the ingest pipeline. The identify decisions only record training labels today (see [identification.md](identification.md)); once they approve books, Pipeline can shrink to quality review and be merged into Processing.
+* Merged: Processing, Proposed and Finished into one Processing page with tabs; Quality into Pipeline.
+* Dropped from Library: the folder tree, the cover-only filter and paging (the table virtualises; search matches paths).
+
+### Migration status
+
+Rewritten on Strata components: shell, Review, Library, Settings, Finished, Book (frame). Moved to Strata *tokens* but still on their original markup: Pipeline pages, Processing queue, the Book sections. Moving those onto `DataView`/`DataTable`/`Field` is the next step, with the Pipeline tabs reduced as above.
+
+## Running it
+
+`cd web && npm run dev` (proxies `/api` to `./app serve` on 8360). Tests: `npm run test:integration`; gate: `npm run test:coverage:gate`. `renderWithStrata` (via `tests/utils/render.tsx`) supplies the router and query client; every endpoint the app calls needs an msw handler in `tests/utils/server.ts`, including `/api/identify/*`.

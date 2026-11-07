@@ -43,8 +43,7 @@ describe('BookPage', () => {
     const { unmount } = setup(<BookPage id={99} />)
     expect(await screen.findByRole('alert')).toHaveTextContent('no such book')
     unmount()
-    window.location.hash = '#/'
-    const { user } = setup(<App />)
+    const { user } = setup(<App />, { route: '/library' })
     await user.click(await screen.findByRole('link', { name: 'Dune' }))
     expect(await screen.findByRole('heading', { name: 'Dune' })).toBeInTheDocument()
   })
