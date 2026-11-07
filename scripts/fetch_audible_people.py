@@ -6,11 +6,12 @@ For each person, `author=<name>` (people with the Author role) and `narrator=<na
     scripts/fetch_audible_people.py [--people data/audiobookdb/people.sqlite] [--db data/audible/audible.sqlite] [--region us] [--rate 1] [--limit N] [--min-credits N] [--name NAME]
 
 Order is by AudiobookDB credit count, highest first. Progress is a row per (person, role, region) in `query`, so it resumes and a later run can refresh queries older than `--refresh-days`. Private, personal use; keep the rate low."""
-import argparse, json, os, sqlite3, sys, time, unicodedata, urllib.error, urllib.parse, urllib.request
+import argparse, json, os, zlib, sqlite3, sys, time, unicodedata, urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 
 TLD = {'us': 'com', 'uk': 'co.uk', 'au': 'com.au', 'ca': 'ca', 'de': 'de', 'fr': 'fr', 'in': 'in', 'it': 'it', 'es': 'es', 'jp': 'co.jp', 'br': 'com.br'}
-GROUPS = 'contributors,product_attrs,series,media,rating'
+GROUPS = 'contributors,product_attrs,series,media,rating,product_desc,product_extended_attrs,product_details,category_ladders,relationships,customer_rights,rights,sample'
+GV = 2      # version of GROUPS: queries recorded with a lower one are fetched again (v1 lacked ISBN, copyright, summaries, genres, relationships, rights/state)
 UA = 'Mozilla/5.0 (strata-listory personal audiobook index)'
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -30,6 +31,8 @@ def open_db(path: str) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS credit (asin TEXT NOT NULL, region TEXT NOT NULL, role TEXT NOT NULL, name TEXT NOT NULL, person_asin TEXT, PRIMARY KEY (asin, region, role, name));
         CREATE INDEX IF NOT EXISTS credit_name ON credit(name, role);
         CREATE TABLE IF NOT EXISTS query (person_id TEXT NOT NULL, role TEXT NOT NULL, region TEXT NOT NULL, name TEXT NOT NULL, pages INTEGER, returned INTEGER, matched INTEGER, capped INTEGER, fetched TEXT NOT NULL, PRIMARY KEY (person_id, role, region));''')
+    if 'gv' not in {r[1] for r in c.execute('PRAGMA table_info(query)')}: c.execute('ALTER TABLE query ADD COLUMN gv INTEGER NOT NULL DEFAULT 1')
+    if 'isbn' not in {r[1] for r in c.execute('PRAGMA table_info(product)')}: c.execute('ALTER TABLE product ADD COLUMN isbn TEXT')
     return c
 
 
@@ -53,10 +56,10 @@ class Audible:
 
 def store(c: sqlite3.Connection, region: str, p: dict) -> None:
     sp = (p.get('series') or [{}])[0]; rt = p.get('rating') or {}; ov = rt.get('overall_distribution') or {}
-    c.execute('INSERT OR REPLACE INTO product VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (
+    c.execute('INSERT OR REPLACE INTO product (asin, region, title, subtitle, authors, narrators, series, series_asin, series_position, runtime_min, language, format_type, release_date, publisher, rating, rating_count, raw, fetched, isbn) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (
         p['asin'], region, p.get('title'), p.get('subtitle'), json.dumps([a['name'] for a in p.get('authors') or []]), json.dumps([n['name'] for n in p.get('narrators') or []]),
         sp.get('title'), sp.get('asin'), sp.get('sequence'), p.get('runtime_length_min'), p.get('language'), p.get('format_type'), p.get('release_date') or p.get('issue_date'), p.get('publisher_name'),
-        ov.get('display_average_rating') and float(ov['display_average_rating']), ov.get('num_ratings'), json.dumps(p, separators=(',', ':')), now()))
+        ov.get('display_average_rating') and float(ov['display_average_rating']), ov.get('num_ratings'), zlib.compress(json.dumps(p, separators=(',', ':')).encode(), 6), now(), p.get('isbn')))      # raw is the complete response, zlib-compressed (older v1 rows hold plain text)
     for role, key in (('Author', 'authors'), ('Narrator', 'narrators')):
         for x in p.get(key) or []: c.execute('INSERT OR IGNORE INTO credit VALUES (?,?,?,?,?)', (p['asin'], region, role, x['name'], x.get('asin')))
 
@@ -104,10 +107,10 @@ def main(argv=None) -> int:
             have = set(json.loads(roles)); have |= {'Author'} if have & {'Contributor', 'Translator', 'Illustrator'} else set()      # AudiobookDB's other credit roles are mostly authors on Audible (see docs/audible-people-index.md)
             for role in want:
                 if role not in have or len(name) < 3: continue
-                q = c.execute('SELECT fetched FROM query WHERE person_id=? AND role=? AND region=?', (pid, role, a.region)).fetchone()
-                if q and not (cutoff and q[0] < cutoff): continue
+                q = c.execute('SELECT fetched, gv FROM query WHERE person_id=? AND role=? AND region=?', (pid, role, a.region)).fetchone()
+                if q and q[1] >= GV and not (cutoff and q[0] < cutoff): continue
                 pages, returned, matched, capped = fetch_person(c, api, a.region, pid, name, role); todo += 1; done += 1
-                with c: c.execute('INSERT OR REPLACE INTO query VALUES (?,?,?,?,?,?,?,?,?)', (pid, role, a.region, name, pages, returned, matched, capped, now()))
+                with c: c.execute('INSERT OR REPLACE INTO query (person_id, role, region, name, pages, returned, matched, capped, fetched, gv) VALUES (?,?,?,?,?,?,?,?,?,?)', (pid, role, a.region, name, pages, returned, matched, capped, now(), GV))
                 if done % 25 == 0 or a.limit and done >= a.limit:
                     print(f'{now()} queries={done} products={c.execute("SELECT count(*) FROM product WHERE region=?", (a.region,)).fetchone()[0]} last={name!r} ({role}, {matched}/{returned})', flush=True)
                 if a.limit and done >= a.limit: return 0
