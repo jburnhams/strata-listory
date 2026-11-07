@@ -299,3 +299,48 @@ def test_model_refresh_does_not_replace_or_withdraw_predictions_from_stale_sourc
         path.write_text(json.dumps(dict(run_id=review['id'],candidate=shown['suggestion']['candidate'],candidate_key='replacement',above_threshold=above,model_score=.999,features={},input_key='stale'))+'\n')
         assert R.import_shortlist(path,replace=True)==dict(imported=0,withdrawn=0)
         assert R.detail(review['id'])['basis']==shown['basis']
+
+
+def queue_entry(run,**local):
+    return dict(item=dict(run_id=run['id'],members=1,siblings=1,**local),work='/works/OL1W',title='Dune',authors=['Frank Herbert'],score=.97)
+
+
+def test_identify_accept_approves_the_book_as_the_models_work_and_reject_withdraws_it(review):
+    from app.identify import service
+    out=service.apply(queue_entry(review),'approve','/works/OL1W')
+    assert out['status']=='approved' and out['changed']
+    run=store.get(review['id']);meta=P.raw_stage(run,'metadata')
+    assert meta['manual_selection']['candidate']['id']=='/works/OL1W' and meta['work']['resolved']['title']=='Dune' and P.approval_valid(run,'metadata')
+    assert service.apply(queue_entry(review),'approve','/works/OL1W')['status']=='skipped'      # the run is still running its next stage
+    store.finish(review['id'],'audiobook_review')
+    again=service.apply(queue_entry(review),'approve','/works/OL1W')
+    assert again['status']=='confirmed' and not again.get('changed')
+    assert P.book_confirmed(store.get(review['id']))
+    assert service.apply(queue_entry(review),'reject','/works/OL1W')['status']=='withdrawn'
+    assert P.book_review_held(store.get(review['id']))
+
+
+def test_identify_reject_of_a_book_that_was_never_approved_only_labels_it(review):
+    from app.identify import service
+    assert service.apply(queue_entry(review),'reject','/works/OL1W')['status']=='labelled'
+    assert not P.raw_stage(store.get(review['id']),'metadata_approval')
+
+
+def test_identify_skips_what_cannot_become_one_approved_book(review):
+    from app.identify import service
+    assert service.apply(dict(item=dict(members=1,siblings=1)),'approve')['status']=='skipped'
+    fragment=dict(item=dict(run_id=review['id'],members=1,siblings=40),work='/works/OL1W',title='Dune',authors=['Frank Herbert'])
+    out=service.apply(fragment,'approve');assert out['status']=='skipped' and 'not grouped' in out['note']
+    assert not P.raw_stage(store.get(review['id']),'metadata_approval')
+    entry=queue_entry(review);entry['title']='';entry['authors']=[]
+    out=service.apply(entry,'approve','/works/OL1W');assert out['status']=='skipped' and 'title and author' in out['note']
+
+
+def test_identify_never_confirms_a_different_approved_work(review):
+    from app.identify import service
+    assert service.apply(queue_entry(review),'approve','/works/OL1W')['status']=='approved'
+    store.finish(review['id'],'audiobook_review')
+    other=dict(queue_entry(review),work='/works/OL999W',title='Dune Messiah')
+    out=service.apply(other,'approve','/works/OL999W')
+    assert out['status']=='skipped' and 'already approved as Dune' in out['note']
+    assert not P.book_confirmed(store.get(review['id']))

@@ -21,6 +21,11 @@ def execute(jobs,domain,kind,options):
 def _execute(jobs,domain,kind,options):
     if domain=='ingest':
         options=dict(options);recovered=options.pop('_recovered',False)
+        if kind=='identify_decision':
+            from app.identify import service
+            outcome=service.apply(options['item'],options['decision'],options.get('work',''))
+            if outcome.get('changed'):jobs.submit('ingest','continue',run_id=options['item']['item']['run_id'])
+            return dict(recorded=options['decision'],pipeline=outcome)
         if kind=='match_review':
             from app.ingest import match_review
             action=options.pop('action');defer_continuation=options.pop('defer_continuation',False)

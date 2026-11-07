@@ -230,6 +230,13 @@ def accept(run_id,expected):
     return result
 
 
+def accept_work(run_id,candidate,score=None):
+    """Approve the book of `run_id` as the given work (the identify model's answer, which a person has just confirmed in Review). It saves the answer as the run's match suggestion and then takes the ordinary `accept` path, so every check there (newer run, active job, locked fields, unchanged inputs) still applies."""
+    run=store.get(run_id)
+    read_models.save('match_suggestion',run_id,dict(candidate=chosen_fields(candidate),score=score,features={},basis=basis(run),candidate_key='identify:'+str(candidate.get('id')),model='identify'))
+    return accept(run_id,basis(run))
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('shortlist',nargs='?');parser.add_argument('--replace',action='store_true',help='withdraw covered old suggestions now below the model threshold');args=parser.parse_args()
     if args.shortlist:print(json.dumps(import_shortlist(args.shortlist,replace=args.replace)))

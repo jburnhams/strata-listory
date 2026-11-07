@@ -39,10 +39,21 @@ def test_api_queue_and_decision_roundtrip():
     write_cache([first, second]); client = TestClient(create_app())
     assert len(client.get('/api/identify/queue?limit=1').json()['items']) == 1
     out = client.post('/api/identify/decisions', json=dict(group=first['group'], decision='approve')).json()
-    assert out['recorded'] == 'approve' and [i['title'] for i in out['next']['items']] == ['Book 2']
+    assert out['recorded'] == 'approve' and out['pipeline']['status'] == 'skipped' and 'no ingest run' in out['pipeline']['note']
     assert client.post('/api/identify/decisions', json=dict(group='nope', decision='reject')).status_code == 404
     assert client.post('/api/identify/decisions', json=dict(group=second['group'], decision='maybe')).status_code == 422
     with sqlite3.connect(queue.labels_path()) as c: assert c.execute('SELECT decision, work FROM labels').fetchall() == [('approve', '/works/OL1W')]
+
+
+def test_decision_job_is_scoped_to_its_run(monkeypatch):
+    item = entry(1, 9); item['item'] = dict(item['item'], run_id='run-1'); write_cache([item])
+    submitted = []
+    client = TestClient(create_app())
+    from app import jobs as J
+    original = J.JobQueue.submit
+    monkeypatch.setattr(J.JobQueue, 'submit', lambda self, domain, kind, retry=False, **options: (submitted.append((domain, kind, options)), original(self, domain, kind, retry, **options))[1])
+    client.post('/api/identify/decisions', json=dict(group=item['group'], decision='approve'))
+    assert submitted[0][:2] == ('ingest', 'identify_decision') and submitted[0][2]['run_id'] == 'run-1'
 
 
 def test_library_items_reads_latest_book_runs(tmp_path):

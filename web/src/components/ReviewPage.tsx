@@ -2,7 +2,7 @@
 // Why it is shaped this way: the identify model decides everything it is sure of (Audible and Open Library together) and leaves only the doubtful groups, already ordered by how much a single answer is worth (files settled, model doubt, other books by the same author).
 // So the screen is one endless list of those guesses with two actions per card, Accept and Not this book, both on the keyboard, and answering never leaves the list: the card folds away with an Undo window and the next one is already under it.
 // Built from strata-react's useInfiniteLoad/InfiniteList (cursor "after the last group held", never an offset, because answered groups drop out of the queue), useUndoable (answers are saved when the window closes, and flush() before a retrain), useActiveItem and useHotkeys.
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, X } from 'lucide-react'
 import { AsyncButton, Button, Done, EmptyState, InfiniteList, KeysLegend, Metric, MetricStrip, PageHeader, Skeleton, Status, UndoBar, format, useActiveItem, useAsyncAction, useHotkeys, useInfiniteLoad, useUndoable, type ActiveItem } from 'strata-react'
@@ -69,6 +69,7 @@ export default function ReviewPage() {
     isRemoved: undoable.isRemoved,
     staleTime: 0,          // coming back to the page refetches, so cards answered meanwhile do not return
   })
+  const [note, setNote] = useState<string | null>(null)       // what happened to the pipeline when the last answer was saved, if it could not be approved
   const summaryQuery = useQuery({ queryKey: ['identify-summary'], queryFn: async () => (await identifyApi.queue(undefined, 1)).summary, staleTime: 0 })
   const summary = summaryQuery.data
   const items = useMemo(() => (load.status === 'ready' ? load.data : []), [load])
@@ -79,7 +80,11 @@ export default function ReviewPage() {
     message: `${decision === 'approve' ? 'Accepted' : 'Rejected'} ${it.title ?? 'the match'} for ${format.count(it.files, 'file')}.`,
     failure: `${it.title ?? 'The match'} is back in the list: the answer was not saved.`,
     onError: () => undefined,          // the hook restores the card and says so in the bar; this only marks the failure as handled when the page was left meanwhile
-    commit: async () => { await identifyApi.decide(it.group, decision, it.work ?? ''); await qc.invalidateQueries({ queryKey: ['identify-summary'] }) },
+    commit: async () => {
+      const { pipeline } = await identifyApi.decide(it.group, decision, it.work ?? '')
+      setNote(pipeline.status === 'skipped' ? `Saved for training, but ${it.title ?? 'the book'} was not approved in the pipeline: ${pipeline.note}.` : null)
+      await qc.invalidateQueries({ queryKey: ['identify-summary'] })
+    },
   })
   const accept = () => active.activeItem && answer(active.activeItem, 'approve')
   const reject = () => active.activeItem && answer(active.activeItem, 'reject')
@@ -121,6 +126,7 @@ export default function ReviewPage() {
           : <Done title={`Answered ${format.count(answeredNow, 'doubtful match', 'doubtful matches')}`} next="Retrain so the model learns from your answers and the next scoring run shows what is still unsure." actions={retrainButton('default')} />}>
         {it => <Card it={it} active={it.group === active.activeKey} itemProps={active.itemProps(it.group)} onAccept={() => answer(it, 'approve')} onReject={() => answer(it, 'reject')} />}
       </InfiniteList>
+      {note && <p role="status" className="type-body-sm text-warning">{note}</p>}
       <KeysLegend shortcuts={shortcuts} />
       <UndoBar undoable={undoable} />
     </div>

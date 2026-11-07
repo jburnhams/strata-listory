@@ -66,6 +66,34 @@ def find(group):
     return None if group in queue.decided() else next((s for s in cached['queue'] if s['group'] == group), None)
 
 
+def apply(item, decision, work=''):
+    """Carry a person's decision on a queue entry into the ingest pipeline; returns dict(status, note). Never raises for a book that simply cannot be approved yet: the label is already saved, the note says why.
+
+    approve: a run waiting for book identification is approved as the model's work (the ordinary `accept` path); a run whose book is already approved gets the human confirmation recorded. reject: only withdraws an approval that exists; a run still waiting needs nothing but the hard-negative label.
+    A group whose files are still separate catalogue entries (no grouped run) is not approved: one answer would have to approve each fragment as its own book."""
+    from app.identify import textkeys as tk
+    from app.ingest import match_review, pipeline, store
+    local = item.get('item') or {}; run_id = local.get('run_id')
+    if not run_id: return dict(status='skipped', note='no ingest run for these files yet')
+    if local.get('members', 1) <= 1 and local.get('siblings', 1) > 1: return dict(status='skipped', note='the files are not grouped into one book yet, so there is no single book to approve')
+    try:
+        run = store.get(run_id); approved = pipeline.raw_stage(run, 'metadata_approval') and not pipeline.book_review_held(run)
+        if decision == 'reject':
+            if not approved: return dict(status='labelled', note='nothing was approved, so nothing to withdraw')
+            match_review.revoke(run_id, match_review.basis(run)); return dict(status='withdrawn', note='the book approval was withdrawn')
+        if approved:
+            # Confirm only the book that is approved: a different approved work must be changed in Pipeline, never marked human-confirmed by an answer about another work.
+            meta = pipeline.raw_stage(run, 'metadata') or {}; chosen = (meta.get('manual_selection') or {}).get('candidate') or {}; resolved = (meta.get('work') or {}).get('resolved') or {}
+            same = chosen.get('id') == (work or item.get('work')) if chosen else (tk.title_key(resolved.get('title') or '') == tk.title_key(item.get('title') or '') and bool(resolved.get('title')))
+            if not same: return dict(status='skipped', note=f"the book is already approved as {resolved.get('title') or 'a different work'}; change it in Pipeline if that is wrong")
+            return dict(status='confirmed' if match_review.confirm(run_id, match_review.basis(run)).get('changed') else 'approved', note='the book was already approved')
+        if run['state'] not in ('metadata_review', 'review', 'eligible'): return dict(status='skipped', note=f"the run is {run['state'].replace('_', ' ')}, not waiting for book identification")
+        candidate = dict(source='openlibrary', id=work or item['work'], url='https://openlibrary.org' + (work or item['work']), title=item.get('title') or '', authors=list(item.get('authors') or []), original_year=None)
+        result = match_review.accept_work(run_id, candidate, item.get('score'))
+        return dict(status='approved', note='the book was approved and the pipeline continues', changed=bool(result.get('changed')))
+    except (ValueError, KeyError, OSError) as error: return dict(status='skipped', note=str(error))
+
+
 def train(catalogue_db):  # pragma: no cover - needs the optional model dependencies
     """Retrain from approvals plus stored decisions (manual, highest weight), save the model and refresh the queue."""
     runs = dataset.labelled_runs(catalogue_db) + queue.label_runs()
