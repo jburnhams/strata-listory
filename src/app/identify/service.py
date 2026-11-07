@@ -49,12 +49,21 @@ def refresh(catalogue_db, predict=None):
     return summary
 
 
-def page(limit=10):
-    """Next undecided groups by impact, from the cache; decisions made since the last refresh are skipped immediately."""
+def page(limit=10, after=None):
+    """Undecided groups by impact from the cache, continuing after the group `after` (the review screen scrolls through all of them and sends the last group it holds, so answers given meanwhile cannot shift the next page); decisions made since the last refresh are skipped immediately."""
     try: cached = json.loads((folder() / 'queue.json').read_text())
     except (OSError, ValueError): return dict(summary=None, items=[])
-    done = queue.decided(); items = [s for s in cached['queue'] if s['group'] not in done]
-    return dict(summary=dict(cached['summary'], remaining=len(items), decided=len(done)), items=items[:max(1, min(limit, 50))])
+    done = queue.decided(); entries = cached['queue']
+    start = next((i + 1 for i, s in enumerate(entries) if s['group'] == after), 0) if after else 0
+    items = [s for s in entries if s['group'] not in done]
+    return dict(summary=dict(cached['summary'], remaining=len(items), decided=len(done)), items=[s for s in entries[start:] if s['group'] not in done][:max(1, min(limit, 50))])
+
+
+def find(group):
+    """One cached queue entry by group key, wherever it sits in the queue (None if unknown or already decided)."""
+    try: cached = json.loads((folder() / 'queue.json').read_text())
+    except (OSError, ValueError): return None
+    return None if group in queue.decided() else next((s for s in cached['queue'] if s['group'] == group), None)
 
 
 def train(catalogue_db):  # pragma: no cover - needs the optional model dependencies

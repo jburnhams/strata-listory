@@ -110,7 +110,7 @@ it('shows ingest queues and failures by default and completed operations on requ
   expect(screen.getByText('Audio analysis')).toBeInTheDocument()
   expect(screen.getByText('Provider unavailable')).toBeInTheDocument()
   expect(screen.queryByText('Earlier operation')).toBeNull()
-  expect(screen.getByRole('link', { name: 'Review quality' })).toHaveAttribute('href', '#/quality')
+  expect(screen.getByRole('link', { name: 'Review quality' })).toHaveAttribute('href', '#/pipeline?tab=quality')
   await user.click(screen.getByRole('button', { name: 'Retry analysis' }))
   expect(retried).toBe(1)
   await user.click(screen.getByRole('checkbox', { name: 'Show completed' }))

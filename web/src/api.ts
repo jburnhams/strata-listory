@@ -49,7 +49,6 @@ export const api = {
   settings: () => req<Settings>('/api/settings'),
   saveSettings: (s: Partial<Settings>) => req<Settings>('/api/settings', send('PUT', s)),
   books: (f: Filters = {}) => req<Book[]>(booksUrl(f).slice(BASE.length)),
-  libraryCovers: () => req<{ ids: number[] }>('/api/library/covers'),
   libraryWorkflow: () => req<{ books: Record<string, LibraryStage[]> }>('/api/library/workflow'),
   addBook: (b: NewBook) => req<Book>('/api/books', send('POST', b)),
   setStatus: (id: number, status: Status) => req<Book>(`/api/books/${id}`, send('PATCH', { status })),
@@ -59,13 +58,11 @@ export const api = {
   details: (id: number) => req<BookDetails>(`/api/books/${id}/details`),
   source: (id: number) => req<SourceFilesInfo>(`/api/books/${id}/source`),
   enrichBook: (id: number) => req<{ found: boolean; extras: Extras }>(`/api/books/${id}/enrich`, { method: 'POST' }),
-  enrich: (limit = 25) => req<{ tried: number; enriched: number; not_found: number; remaining: number }>(`/api/enrich?limit=${limit}`, { method: 'POST' }),
   queue: () => req<QueueView>('/api/process'),
   retryJob: (id: string) => req<unknown>(`/api/jobs/${id}/retry`, send('POST', {})),
   operations: (completed = false) => req<OperationsView>(`/api/operations?completed=${completed}`),
   finished: () => req<{ book_id: number; title: string; author: string; result: Processed }[]>('/api/finished'),
   output: (id: number) => req<Output>(`/api/books/${id}/output`),
-  propose: (limit = 5) => req<Record<string, number>>(`/api/process/propose?limit=${limit}`, { method: 'POST' }),
   approve: (ids: number[]) => req<{ changed: number[] }>('/api/process/approve', send('POST', { ids })),
   reject: (ids: number[]) => req<{ changed: number[] }>('/api/process/reject', send('POST', { ids })),
   repropose: (ids: number[]) => req<{ changed: number[] }>('/api/process/repropose', send('POST', { ids })),
@@ -119,7 +116,6 @@ export const ingestApi = {
   approveStage: (id: string, phase: 'metadata' | 'audiobook' | 'quality') => req(`/api/ingest/runs/${encodeURIComponent(id)}/approve/${phase}`, { method: 'POST' }),
   evaluate: (id: string) => req<IngestEvaluation>(`/api/ingest/runs/${encodeURIComponent(id)}/evaluate`, { method: 'POST' }),
   rateQuality: (id: string, rating: string) => req(`/api/ingest/runs/${encodeURIComponent(id)}/quality`, send('PUT', { rating })),
-  enqueue: (id: string) => req(`/api/ingest/runs/${encodeURIComponent(id)}/enqueue`, { method: 'POST' }),
   savePolicy: (policy: IngestPolicy) => req<IngestPolicy>('/api/ingest/policy', send('PUT', policy)),
   details: (id: string) => req<object>(`/api/ingest/runs/${encodeURIComponent(id)}`),
 }
@@ -144,4 +140,18 @@ export const matchReviewApi = {
   details: (id: string) => req<MatchReview>(`/api/match-reviews/${encodeURIComponent(id)}`),
   decide: (id: string, action: 'accept' | 'unapprove' | 'confirm' | 'reject' | 'restore', basis: string, defer = false) => req<{ changed: boolean; basis?: string }>(`/api/match-reviews/${encodeURIComponent(id)}/${action}`, send('POST', { basis, ...(defer ? { defer_continuation: true } : {}) })),
   advance: (id: string) => req(`/api/ingest/runs/${encodeURIComponent(id)}/resume`, { method: 'POST' }, false),
+}
+
+// Identification review queue (src/app/identify): every undecided model decision, most impactful first.
+export interface IdentifyItem {
+  group: string; files: number; decision: 'review' | 'accept'; reason?: string; score: number; margin: number; impact: number
+  work: string | null; title?: string; authors?: string[]; editions?: number; candidates: number
+  item: { title: string; author: string; narrator?: string; path: string; asin?: string; year?: number | null; runtime_min?: number; language?: string; members?: number; siblings?: number; folder_files?: number }
+}
+export interface IdentifySummary { queue: number; accepted: number; accepted_files: number; queue_files: number; remaining: number; decided: number }
+export interface IdentifyPage { summary: IdentifySummary | null; items: IdentifyItem[] }
+export const identifyApi = {
+  queue: (after?: string, limit = 20) => req<IdentifyPage>(`/api/identify/queue?${new URLSearchParams({ limit: String(limit), ...(after ? { after } : {}) })}`),
+  decide: (group: string, decision: 'approve' | 'reject', work = '') => req<{ recorded: string }>('/api/identify/decisions', send('POST', { group, decision, work })),
+  refresh: (train = false) => req<unknown>(`/api/identify/refresh?train=${train}`, { method: 'POST' }),
 }

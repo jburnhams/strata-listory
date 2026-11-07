@@ -105,11 +105,10 @@ describe('quick match review', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Review index unavailable')
   })
 
-  it('routes both review pages from the main navigation', async () => {
-    window.location.hash = '#/automatic-approvals'
-    const { user } = setup(<App />)
+  it('routes both review pages as pipeline tabs', async () => {
+    const { user } = setup(<App />, { route: '/automatic-approvals' })
     expect(await screen.findByRole('heading', { name: 'Automatic approvals' })).toBeInTheDocument()
-    await user.click(screen.getByRole('link', { name: 'Match shortlist' }))
+    await user.click(screen.getByRole('tab', { name: 'Match shortlist' }))
     expect(await screen.findByRole('heading', { name: 'Match shortlist' })).toBeInTheDocument()
   })
 })

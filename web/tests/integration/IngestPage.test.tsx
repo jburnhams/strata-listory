@@ -4,7 +4,7 @@ import IngestPage from '../../src/components/IngestPage'
 import App from '../../src/App'
 import { setup, screen, waitFor, act, within } from '../utils/render'
 import { ingestFixture, server } from '../utils/server'
-import { href, parse } from '../../src/route'
+import { href } from '../../src/route'
 
 afterEach(() => vi.restoreAllMocks())
 const qualityFixture = () => { const f = ingestFixture(); f.runs[0].review_phase = 'quality'; f.runs[0].reviews.metadata.approved = true; f.runs[0].reviews.audiobook.approved = true; return f }
@@ -179,8 +179,8 @@ describe('staged ingest', () => {
     expect(screen.getByText(/1.3s/)).toBeInTheDocument()
   })
   it('navigates to ingest from the app', async () => {
-    expect(parse('#/ingest')).toEqual({ page: 'metadata' }); expect(href.ingest()).toBe('#/metadata')
-    window.location.hash = '#/ingest'; setup(<App />)
+    expect(href.ingest()).toBe('#/pipeline?tab=book')
+    setup(<App />, { route: '/ingest' })
     expect(await screen.findByText('Dune · review')).toBeInTheDocument()
   })
   it('shows empty and server-error states', async () => {
@@ -254,21 +254,20 @@ it('moves through book, audiobook and quality pages with distinct approvals', as
     else { f.runs[0].reviews.quality.approved = true; f.runs[0].review_phase = 'processing' }
     return HttpResponse.json({ queued: true })
   }))
-  window.location.hash = '#/metadata'
-  const { user } = setup(<App />)
+  const { user } = setup(<App />, { route: '/pipeline' })
   await user.click(await screen.findByRole('button', { name: 'Approve book and identify audiobook' }))
   expect(await screen.findByText('No books awaiting review.')).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Approve quality and propose processing' })).toBeNull()
-  await user.click(screen.getByRole('link', { name: 'Audiobook identification' }))
+  await user.click(screen.getByRole('tab', { name: 'Audiobook' }))
   await user.click(await screen.findByRole('button', { name: 'Approve audiobook and analyse quality' }))
   expect(await screen.findByText('No books awaiting review.')).toBeInTheDocument()
-  await user.click(screen.getByRole('link', { name: 'Quality' }))
+  await user.click(screen.getByRole('tab', { name: 'Quality' }))
   expect(await screen.findByRole('heading', { name: 'Quality review' })).toBeInTheDocument()
   await user.click(await screen.findByRole('button', { name: 'Approve quality and propose processing' }))
   expect(await screen.findByText('No books awaiting review.')).toBeInTheDocument()
   expect(screen.queryByRole('searchbox')).toBeNull()
   await user.click(screen.getByRole('link', { name: 'Library' }))
-  expect(await screen.findByRole('heading', { name: 'Library · choose books to ingest' })).toBeInTheDocument()
+  expect(await screen.findByRole('heading', { name: 'Library' })).toBeInTheDocument()
 })
 
 it('keeps incomplete or unsupported metadata unapprovable and shows unknown recording fields', async () => {

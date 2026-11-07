@@ -1,60 +1,39 @@
+// The one question: "Where does the app read and write?" The finding: the three folders in use right now.
+// Fields start empty with the current value as the placeholder, so saving with a blank field keeps what is set rather than clearing it.
 import { useState, type FormEvent } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { AsyncButton, DataView, Field, Input, PageHeader, Skeleton, useAsyncAction, useLoad } from 'strata-react'
 import { api } from '../api'
-import { href, useLoad } from '../route'
-import { Card, Crumbs, Err, btn, input } from './ui'
 
 export default function SettingsPage() {
-  const { data, error, reload } = useLoad(() => api.settings(), [])
-  const [libraryDir, setLibraryDir] = useState('')
-  const [dataDir, setDataDir] = useState('')
-  const [backupDir, setBackupDir] = useState('')
-  const [saved, setSaved] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault(); setErr(null); setSaved(false)
+  const qc = useQueryClient()
+  const load = useLoad({ queryKey: ['settings'], queryFn: api.settings })
+  const [libraryDir, setLibraryDir] = useState(''), [dataDir, setDataDir] = useState(''), [backupDir, setBackupDir] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const current = load.status === 'ready' ? load.data : null
+  const [phase, save] = useAsyncAction(async () => {
+    setError(null)
     try {
-      await api.saveSettings({
-        library_dir: libraryDir.trim() || data?.library_dir,
-        data_dir: dataDir.trim() || data?.data_dir,
-        backup_dir: backupDir.trim() || data?.backup_dir,
-      })
-      setSaved(true); reload()
-    } catch (x) { setErr(String((x as Error).message || x)) }
-  }
-
+      await api.saveSettings({ library_dir: libraryDir.trim() || current?.library_dir, data_dir: dataDir.trim() || current?.data_dir, backup_dir: backupDir.trim() || current?.backup_dir })
+      setLibraryDir(''); setDataDir(''); setBackupDir(''); await qc.invalidateQueries({ queryKey: ['settings'] })
+    } catch (x) { setError((x as Error).message); throw x }
+  })
+  const onSubmit = (e: FormEvent) => { e.preventDefault(); save().catch(() => {}) }
   return (
-    <div>
-      <Crumbs items={[{ label: 'Home', to: href.library() }, { label: 'Settings' }]} />
-      <Card>
-        <h2 className="text-base font-medium mb-3">Application settings</h2>
-        {data && (
-          <div className="text-sm text-stone-500 mb-3 space-y-1">
-            <div>Current audiobook folder: <span className="font-mono text-stone-800 dark:text-stone-200">{data.library_dir || '(not set)'}</span></div>
-            <div>Current backup folder: <span className="font-mono text-stone-800 dark:text-stone-200">{data.backup_dir}</span></div>
-            <div>Current data folder: <span className="font-mono text-stone-800 dark:text-stone-200">{data.data_dir}</span></div>
-          </div>
+    <div className="space-y-5">
+      <PageHeader title="Settings" scope="Folders"
+        finding={current ? { text: <>Audiobooks are read from <span className="font-mono">{current.library_dir || '(not set)'}</span>. Data lives in <span className="font-mono">{current.data_dir}</span>.</> } : undefined} />
+      <DataView state={load} isEmpty={() => false} skeleton={<Skeleton className="h-64 w-full max-w-xl" />} empty={null}>
+        {d => (
+          <form onSubmit={onSubmit} className="max-w-xl space-y-4">
+            <Field label="Audiobook folder" hint={`Current: ${d.library_dir || 'not set'}`}><Input placeholder={d.library_dir || '/path/to/audiobooks'} value={libraryDir} onChange={e => setLibraryDir(e.target.value)} /></Field>
+            <Field label="Data folder" hint={`Current: ${d.data_dir}`}><Input placeholder={d.data_dir || '/path/to/data'} value={dataDir} onChange={e => setDataDir(e.target.value)} /></Field>
+            <Field label="Backup folder" hint={`Current: ${d.backup_dir}`}><Input placeholder={d.backup_dir || '/path/to/backups'} value={backupDir} onChange={e => setBackupDir(e.target.value)} /></Field>
+            {error && <p role="alert" className="type-body-sm text-danger">{error}</p>}
+            <AsyncButton type="submit" variant="default" phase={phase} labels={{ idle: 'Save settings', pending: 'Saving…', done: 'Saved' }} />
+          </form>
         )}
-        <form onSubmit={onSubmit} className="space-y-3">
-          <div className="flex flex-col gap-1">
-            <label htmlFor="setting-library" className="text-sm">Audiobook folder</label>
-            <input id="setting-library" className={input} placeholder={data?.library_dir || '/path/to/audiobooks'} value={libraryDir} onChange={e => setLibraryDir(e.target.value)} />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label htmlFor="setting-datadir" className="text-sm">Data folder</label>
-            <input id="setting-datadir" className={input} placeholder={data?.data_dir || '/path/to/data'} value={dataDir} onChange={e => setDataDir(e.target.value)} />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label htmlFor="setting-backupdir" className="text-sm">Backup folder</label>
-            <input id="setting-backupdir" className={input} placeholder={data?.backup_dir || '/path/to/backups'} value={backupDir} onChange={e => setBackupDir(e.target.value)} />
-          </div>
-          <div className="flex items-center gap-3">
-            <button type="submit" className={btn}>Save settings</button>
-            {saved && <span className="text-sm text-green-600 dark:text-green-400">Saved</span>}
-          </div>
-        </form>
-        <Err msg={err || error} />
-      </Card>
+      </DataView>
     </div>
   )
 }

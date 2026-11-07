@@ -7,6 +7,16 @@ export const initialBooks: Book[] = [
   { id: 1, title: 'Dune', author: 'Frank Herbert', narrator: '', series: 'Dune', series_position: 1, duration_seconds: 75600, path: '', status: 'unlistened', added: '2026-10-29T12:00:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null, year: null, year_source: '' },
 ]
 
+/** A review queue of `n` doubtful matches, most impactful first (impact falls with the number). */
+export function identifyQueue(n: number): import('../../src/api').IdentifyItem[] {
+  return Array.from({ length: n }, (_, i) => ({
+    group: `/audio/Books/Author ${i + 1}/Title ${i + 1}|title ${i + 1}|`, files: 40 - i, decision: 'review' as const, score: i % 3 === 0 ? .95 : i % 3 === 1 ? .84 : .6, margin: i % 3 === 0 ? .01 : .4, impact: 100 - i,
+    work: `/works/OL${i + 1}W`, title: `Title ${i + 1}`, authors: [`Author ${i + 1}`], editions: 12 + i, candidates: 5,
+    item: { title: `Title ${i + 1} CD01 01`, author: i % 2 ? '' : `Author ${i + 1}`, path: `/audio/Books/Author ${i + 1}/Title ${i + 1}/CD01 01.mp3` },
+  }))
+}
+export const identifyState: { queue: import('../../src/api').IdentifyItem[]; decided: { group: string; decision: string; work: string }[]; accepted: number; refreshes: string[] } = { queue: identifyQueue(3), decided: [], accepted: 520, refreshes: [] }
+
 export const hardcover = {
   id: '375699', url: 'https://hardcover.app/books/dune', description: 'A desert planet saga.', pages: 612, rating: 4.31, ratings_count: 12345, reviews_count: 99, readers: 5000, finished: 4000,
   genres: ['Science Fiction'], moods: ['adventurous'], tags: ['classic'], content_warnings: ['Violence'], series: [{ name: 'Dune Chronicles', position: 1 }], audiobook_editions: [{ asin: 'B0A', hours: 21, publisher: 'Macmillan Audio', released: '2007-01-01', format: 'Audible' }],
@@ -38,6 +48,7 @@ export const mock: { settings: Settings; books: Book[]; extras: Record<string, {
 }
 
 export const resetMock = () => {
+  identifyState.queue = identifyQueue(3); identifyState.decided = []; identifyState.refreshes = []
   mock.settings = { ...defaultSettings }
   mock.books = [...initialBooks]
   mock.extras = {}
@@ -69,7 +80,6 @@ export const handlers = [
     const u = new URL(request.url), q = (u.searchParams.get('q') || '').toLowerCase(), status = u.searchParams.get('status'), review = u.searchParams.get('review'), kind = u.searchParams.get('kind')
     return HttpResponse.json(mock.books.filter(b => (!status || b.status === status) && (!review || b.review === review) && (!kind || b.kind === kind) && (!q || `${b.title} ${b.author}`.toLowerCase().includes(q))))
   }),
-  http.get('/api/library/covers', () => HttpResponse.json({ ids: [] })),
   http.get('/api/library/workflow', () => HttpResponse.json({ books: {} })),
   http.get('/api/books/:id/source', ({ params }) => {
     const book = mock.books.find(b => b.id === Number(params.id))
@@ -165,6 +175,19 @@ export const handlers = [
 ]
 
 export const server = setupServer(
+  http.get('/api/identify/queue', ({ request }) => {
+    const u = new URL(request.url), after = u.searchParams.get('after'), limit = Number(u.searchParams.get('limit') || 10)
+    const open = identifyState.queue.filter(i => !identifyState.decided.some(d => d.group === i.group))
+    const start = after ? identifyState.queue.findIndex(i => i.group === after) + 1 : 0
+    return HttpResponse.json({ summary: identifyState.queue.length ? { queue: identifyState.queue.length, accepted: identifyState.accepted, accepted_files: 1446, queue_files: 562, remaining: open.length, decided: identifyState.decided.length } : null, items: identifyState.queue.slice(start).filter(i => !identifyState.decided.some(d => d.group === i.group)).slice(0, limit) })
+  }),
+  http.post('/api/identify/decisions', async ({ request }) => {
+    const b = (await request.json()) as { group: string; decision: string; work: string }
+    if (!identifyState.queue.some(i => i.group === b.group)) return HttpResponse.json({ detail: 'no such queued group; refresh the queue' }, { status: 404 })
+    identifyState.decided.push(b)
+    return HttpResponse.json({ recorded: b.decision })
+  }),
+  http.post('/api/identify/refresh', ({ request }) => { identifyState.refreshes.push(new URL(request.url).searchParams.get('train') ?? ''); return HttpResponse.json({ queue: identifyState.queue.length }) }),
   http.get('/api/jobs/:id', () => HttpResponse.json({ state: 'done', result: {}, error: '' })),
   http.get('/api/ingest', () => HttpResponse.json(ingestFixture())),
   http.post('/api/ingest/run', () => HttpResponse.json({ queued: true })),

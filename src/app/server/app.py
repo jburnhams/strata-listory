@@ -268,15 +268,15 @@ def create_app():
         return queued('ingest','match_review',run_id=run_id,action=action,expected=b.basis,**(dict(defer_continuation=True) if b.defer_continuation else {}))
 
     @app.get('/api/identify/queue')
-    def identify_queue(limit:int=Query(default=10,ge=1,le=50)):
+    def identify_queue(limit:int=Query(default=10,ge=1,le=50),after:str|None=None):
         from app.identify import service
-        return service.page(limit)
+        return service.page(limit,after)
 
     @app.post('/api/identify/decisions')
     def identify_decide(b:IdentifyDecisionIn):
         """Record a confirm/reject for a queued group; returns the next batch. `retrain` also queues a retrain + rescore so the following batch reflects the answer."""
         from app.identify import queue, service
-        item=next((s for s in service.page(50)['items'] if s['group']==b.group),None)
+        item=service.find(b.group)
         if item is None:raise HTTPException(404,'no such queued group; refresh the queue')
         queue.decide(item['item'],b.decision,b.work or item['work'],item['files'],item['title'],', '.join(item['authors']))
         out=dict(recorded=b.decision,next=service.page(10))

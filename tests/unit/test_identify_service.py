@@ -24,6 +24,16 @@ def test_page_orders_skips_decided_and_handles_missing_cache():
     assert [i['title'] for i in got['items']] == ['Book 2'] and got['summary']['decided'] == 1 and got['summary']['remaining'] == 1
 
 
+def test_page_after_and_find_reach_beyond_the_first_page():
+    entries = [entry(n, 100 - n) for n in range(1, 61)]; write_cache(entries)
+    assert [i['title'] for i in service.page(3, entries[9]['group'])['items']] == ['Book 11', 'Book 12', 'Book 13']
+    queue.decide(entries[10]['item'], 'approve', entries[10]['work'], 1, 'Book 11', 'A B')
+    assert [i['title'] for i in service.page(2, entries[9]['group'])['items']] == ['Book 12', 'Book 13'] and service.page(2, 'unknown')['items'][0]['title'] == 'Book 1'
+    assert service.find(entries[59]['group'])['title'] == 'Book 60' and service.find('nope') is None
+    queue.decide(entries[59]['item'], 'reject', entries[59]['work'], 1, 'Book 60', 'A B')
+    assert service.find(entries[59]['group']) is None
+
+
 def test_api_queue_and_decision_roundtrip():
     first, second = entry(1, 9), entry(2, 5)
     write_cache([first, second]); client = TestClient(create_app())
