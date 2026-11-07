@@ -28,3 +28,9 @@ def test_describe_and_features(tmp_path):
     rows = ft.add_context([(d, good), (dict(d, key='/works/OL5W', title='Other', titles={('other', 0): 1}), bad)])
     assert rows[0][1]['is_top_group'] == 1 and rows[0][1]['score_margin'] > 0 > rows[1][1]['score_margin']
     assert ft.add_context([]) == [] and 'title_best_sim' in ft.feature_names() and ft.feature_names() == sorted(ft.feature_names())
+
+
+def test_cluster_ids_merge_same_title_shared_author_only():
+    def work(key, title, *authors): return dict(key=key, title=title, authors=[dict(key=a, name=a) for a in authors])
+    ids = ft.cluster_ids([work('1', 'North', 'a'), work('2', 'north', 'a', 'b'), work('3', 'North', 'c'), work('4', 'North'), work('5', 'North')])
+    assert ids[0] == ids[1] and len({ids[0], ids[2], ids[3], ids[4]}) == 4

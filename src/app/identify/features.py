@@ -73,22 +73,37 @@ def item_features(item, c, via):
 
 
 def group_key(c):
-    """Duplicate catalogue works of one book (same main title, same authors) form one group; margins are measured between groups."""
+    """Exact-duplicate key (same title key and author set); `cluster_ids` is the looser, per-query notion actually used for margins and labels."""
     return (tk.title_key(c['title']), tuple(sorted(a['key'] for a in c['authors'])) or ('',))
 
 
+def cluster_ids(cands):
+    """Duplicate catalogue works of one book: same title key and at least one shared author. Authorless records are never merged (they could be anything)."""
+    parent = list(range(len(cands)))
+    def find(i):
+        while parent[i] != i: parent[i] = parent[parent[i]]; i = parent[i]
+        return i
+    seen = {}
+    for i, c in enumerate(cands):
+        title = tk.title_key(c['title'])
+        for a in c['authors']:
+            j = seen.setdefault((title, a['key']), i)
+            if j != i: parent[find(i)] = find(j)
+    return [find(i) for i in range(len(cands))]
+
+
 def add_context(rows):
-    """Within-query context: how much better is this candidate than the best *different* work? `rows` = [(candidate, features)]; mutates features."""
+    """Within-query context: how much better is this candidate than the best *different* book? `rows` = [(candidate, features)]; mutates features."""
     if not rows: return rows
     score = lambda f: f['title_best_sim'] * (.5 + .5 * f['author_surname_share']) + f['title_exact'] * .5 + f['isbn_match']
-    groups = {}
-    for c, f in rows: groups.setdefault(group_key(c), []).append(score(f))
+    ids = cluster_ids([c for c, _ in rows]); groups = {}
+    for i, (c, f) in zip(ids, rows): groups.setdefault(i, []).append(score(f))
     best = {k: max(v) for k, v in groups.items()}; top = max(best.values()); max_editions = max(c['editions'] for c, _ in rows) or 1
-    exact_groups = sum(1 for c, f in rows if f['title_exact'] and f['author_match_share'] > 0)
-    distinct_exact = len({group_key(c) for c, f in rows if f['title_exact']})
-    for c, f in rows:
-        mine = best[group_key(c)]; others = [v for k, v in best.items() if k != group_key(c)]
-        f.update(query_candidates=_log(len(rows)), query_groups=_log(len(groups)), group_size=len(groups[group_key(c)]), score_margin=mine - max(others, default=0.), is_top_group=int(mine >= top),
+    exact_groups = len({i for i, (c, f) in zip(ids, rows) if f['title_exact'] and f['author_match_share'] > 0})
+    distinct_exact = len({i for i, (c, f) in zip(ids, rows) if f['title_exact']})
+    for i, (c, f) in zip(ids, rows):
+        mine = best[i]; others = [v for k, v in best.items() if k != i]
+        f.update(query_candidates=_log(len(rows)), query_groups=_log(len(groups)), group_size=len(groups[i]), score_margin=mine - max(others, default=0.), is_top_group=int(mine >= top),
                  exact_title_groups=distinct_exact, exact_title_author_candidates=exact_groups, editions_relative=c['editions'] / max_editions)
     return rows
 

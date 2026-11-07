@@ -44,14 +44,15 @@ def labelled_runs(catalogue_db):
     return out
 
 
-def positive_groups(connection, target, described):
-    """Group keys of candidates that are the approved work: the recorded OL work (through redirects), else same title and a shared author."""
+def positive_clusters(connection, target, described, ids):
+    """Cluster ids that are the approved book: any candidate that is the recorded OL work (through redirects), else same title and a shared author; whole duplicate clusters inherit."""
     if target['work']:
         mapping = cand.canonical(connection, [target['work']] + [d['key'] for d in described])
         wanted = mapping[target['work']]
-        return {ft.group_key(d) for d in described if mapping.get(d['key'], d['key']) == wanted or d['key'] == target['work']}
+        hit = {i for i, d in zip(ids, described) if mapping.get(d['key'], d['key']) == wanted or d['key'] == target['work']}
+        if hit: return hit
     want = tk.title_key(target['title']); people = {k for a in target['authors'] for k in tk.person_variants(a)}
-    return {ft.group_key(d) for d in described if (tk.title_key(d['title']) == want or any(n == want for (n, _), _c in d['titles'].items())) and people & {tk.person_key(a['name']) for a in d['authors']}}
+    return {i for i, d in zip(ids, described) if (tk.title_key(d['title']) == want or any(n == want for (n, _), _c in d['titles'].items())) and people & {tk.person_key(a['name']) for a in d['authors']}}
 
 
 def split_of(group_id):
@@ -59,20 +60,30 @@ def split_of(group_id):
     return 'test' if bucket == 0 else 'calibration' if bucket == 1 else 'train'
 
 
-def build(connection, runs, progress=None):
-    """Rows: dict(run_id, features, label, weight, origin, split, group). Also reports runs whose approved work never appeared as a candidate (candidate recall misses)."""
+def candidates_for(connection, item):
+    hits = cand.find(connection, item['title'], item['author'], item.get('isbns', ()))
+    mapping = cand.canonical(connection, list(hits)); described = []
+    for key in dict.fromkeys(mapping.values()):
+        d = cand.describe(connection, key)
+        if d: d['via'] = set().union(*(hits[k] for k in hits if mapping[k] == key)); described.append(d)
+    return described
+
+
+def build(connection, runs, progress=None, blank_author=True):
+    """Rows: dict(run_id, features, label, weight, origin, split, group). Also reports runs whose approved work never appeared as a candidate (candidate recall misses).
+    With `blank_author`, every run also yields a copy whose local author is unknown, with half the weight, so the model learns how little a title alone proves."""
     rows = []; misses = []
     for i, run in enumerate(runs):
-        item = run['item']; hits = cand.find(connection, item['title'], item['author'], run['item'].get('isbns', ()))
-        mapping = cand.canonical(connection, list(hits)); described = []
-        for key in dict.fromkeys(mapping.values()):
-            d = cand.describe(connection, key)
-            if d: d['via'] = set().union(*(hits[k] for k in hits if mapping[k] == key)); described.append(d)
-        positives = positive_groups(connection, run['target'], described)
-        if not positives: misses.append(run); continue
-        pairs = ft.add_context([(d, ft.item_features(item, d, d['via'])) for d in described])
         group_id = hashlib.sha256(json.dumps([tk.title_key(run['target']['title']), sorted(tk.person_key(a) for a in run['target']['authors'])]).encode()).hexdigest()
-        for d, f in pairs:
-            rows.append(dict(run_id=run['run_id'], work=d['key'], cgroup=hashlib.sha256(json.dumps(ft.group_key(d)).encode()).hexdigest()[:16], features=f, label=int(ft.group_key(d) in positives), weight=WEIGHT[run['origin']], origin=run['origin'], split=split_of(group_id), group=group_id))
+        variants = [(run['run_id'], run['item'], 1.)] + ([(run['run_id'] + ':noauthor', dict(run['item'], author=''), .5)] if blank_author and run['item'].get('author') else [])
+        for run_id, item, scale in variants:
+            described = candidates_for(connection, item); ids = ft.cluster_ids(described)
+            positives = positive_clusters(connection, run['target'], described, ids)
+            if not positives:
+                if scale == 1.: misses.append(run)
+                continue
+            pairs = ft.add_context([(d, ft.item_features(item, d, d['via'])) for d in described])
+            for cid, (d, f) in zip(ids, pairs):
+                rows.append(dict(run_id=run_id, work=d['key'], cgroup=str(cid), features=f, label=int(cid in positives), weight=WEIGHT[run['origin']] * scale, origin=run['origin'], split=split_of(group_id), group=group_id))
         if progress and i % 50 == 0: progress(i, len(runs))
     return rows, misses
