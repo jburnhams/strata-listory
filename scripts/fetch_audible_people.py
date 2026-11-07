@@ -68,8 +68,8 @@ def fetch_person(c, api: Audible, region: str, pid: str, name: str, role: str) -
     """All of a person's products, matched by exact credited name. A person with more than CAP products is listed again in other sort orders (newest, oldest, A-Z, Z-A), each reaching a different 500, so up to ~2,000 are found; `capped` is 1 when even that left the last sort full."""
     key = 'authors' if role == 'Author' else 'narrators'; want = norm(name); seen, ids, pages, capped = set(), set(), 0, 0
     for sort in ('-ReleaseDate', 'ReleaseDate', 'Title', '-Title'):
-        got, pg = set(), 0
-        while pg < 12:
+        got, pg = set(), -1
+        while pg < 20:      # Audible pages count from 0 (page=1 is the second page)
             pg += 1; pages += 1; ps = api.page(role.lower(), name, pg, sort); fresh = [p for p in ps if p['asin'] not in got]; got.update(p['asin'] for p in ps)
             with c:
                 for p in fresh:
