@@ -281,7 +281,7 @@ def create_app():
         work=b.work or item['work']
         queue.decide(item['item'],b.decision,work,item['files'],item['title'],', '.join(item['authors']))
         if b.retrain:jobs.submit('system','identify',train=True)
-        return queued('ingest','identify_decision',item=item,decision=b.decision,work=work)
+        return queued('ingest','identify_decision',item=item,decision=b.decision,work=work,**({'run_id':item['item']['run_id']} if item['item'].get('run_id') else {}))      # run_id at the top level scopes the job's lock to that run, like the Pipeline reviews
 
     @app.post('/api/identify/refresh')
     def identify_refresh(train:bool=False):return queued('system','identify',train=train)

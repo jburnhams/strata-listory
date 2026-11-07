@@ -334,3 +334,13 @@ def test_identify_skips_what_cannot_become_one_approved_book(review):
     assert not P.raw_stage(store.get(review['id']),'metadata_approval')
     entry=queue_entry(review);entry['title']='';entry['authors']=[]
     out=service.apply(entry,'approve','/works/OL1W');assert out['status']=='skipped' and 'title and author' in out['note']
+
+
+def test_identify_never_confirms_a_different_approved_work(review):
+    from app.identify import service
+    assert service.apply(queue_entry(review),'approve','/works/OL1W')['status']=='approved'
+    store.finish(review['id'],'audiobook_review')
+    other=dict(queue_entry(review),work='/works/OL999W',title='Dune Messiah')
+    out=service.apply(other,'approve','/works/OL999W')
+    assert out['status']=='skipped' and 'already approved as Dune' in out['note']
+    assert not P.book_confirmed(store.get(review['id']))
