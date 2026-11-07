@@ -1,11 +1,11 @@
 // The one question: "Which of the model's guesses do I need to confirm?" The finding: how many books are waiting and how many files one answer settles.
 // Why it is shaped this way: the identify model decides everything it is sure of (Audible and Open Library together) and leaves only the doubtful groups, already ordered by how much a single answer is worth (files settled, model doubt, other books by the same author).
 // So the screen is one endless list of those guesses with two actions per card, Accept and Not this book, both on the keyboard, and answering never leaves the list: the card folds away with an Undo window and the next one is already under it.
-// Pages are requested "after" the last group held, never by offset, because answered groups drop out of the queue and would shift an offset.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useInfiniteQuery } from '@tanstack/react-query'
+// Built from strata-react's useInfiniteLoad/InfiniteList (cursor "after the last group held", never an offset, because answered groups drop out of the queue), useUndoable (answers are saved when the window closes, and flush() before a retrain), useActiveItem and useHotkeys.
+import { useMemo } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, X } from 'lucide-react'
-import { AsyncButton, Button, Done, EmptyState, Metric, MetricStrip, PageHeader, Skeleton, Status, UndoBar, format, useAsyncAction, useUndoable } from 'strata-react'
+import { AsyncButton, Button, Done, EmptyState, InfiniteList, KeysLegend, Metric, MetricStrip, PageHeader, Skeleton, Status, UndoBar, format, useActiveItem, useAsyncAction, useHotkeys, useInfiniteLoad, useUndoable, type ActiveItem } from 'strata-react'
 import { identifyApi, type IdentifyItem } from '../api'
 
 const PAGE = 20
@@ -22,13 +22,11 @@ export function confidence(score: number, margin: number): { tone: 'success' | '
   return { tone: 'info', word: `Unsure · ${Math.round(score * 100)}%` }
 }
 
-function Card({ it, active, onAccept, onReject, onFocus }: { it: IdentifyItem; active: boolean; onAccept: () => void; onReject: () => void; onFocus: () => void }) {
+function Card({ it, active, itemProps, onAccept, onReject }: { it: IdentifyItem; active: boolean; itemProps: ReturnType<ActiveItem<IdentifyItem>['itemProps']>; onAccept: () => void; onReject: () => void }) {
   const c = confidence(it.score, it.margin), local = it.item
   const authors = it.authors?.join(', ') || 'unknown author'
-  const ref = useRef<HTMLLIElement>(null)
-  useEffect(() => { if (active) ref.current?.scrollIntoView?.({ block: 'nearest' }) }, [active])
   return (
-    <li ref={ref} onClick={onFocus} aria-current={active ? 'true' : undefined} className={`rounded-surface border bg-card p-4 transition-state ${active ? 'border-ring' : 'border-border'}`}>
+    <article {...itemProps} aria-label={it.title ?? 'Match'} className={`mb-3 rounded-surface border bg-card p-4 transition-state ${active ? 'border-ring' : 'border-border'}`}>
       <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
         <div className="min-w-0 flex-1 basis-72 space-y-3">
           <section aria-label="What the files say">
@@ -53,7 +51,7 @@ function Card({ it, active, onAccept, onReject, onFocus }: { it: IdentifyItem; a
         <Button variant={active ? 'default' : 'outline'} onClick={onAccept} aria-label={`Accept ${it.title}`}><Check aria-hidden className="size-4" /> Accept</Button>
         <Button variant="outline" onClick={onReject} aria-label={`Not ${it.title}`}><X aria-hidden className="size-4" /> Not this book</Button>
       </div>
-    </li>
+    </article>
   )
 }
 
@@ -62,79 +60,52 @@ function Skeletons() {
 }
 
 export default function ReviewPage() {
-  const query = useInfiniteQuery({
+  const qc = useQueryClient()
+  const undoable = useUndoable()
+  const load = useInfiniteLoad({
     queryKey: ['identify-queue'],
-    initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => identifyApi.queue(pageParam, PAGE),
-    getNextPageParam: last => last.items.length >= PAGE ? last.items[last.items.length - 1].group : undefined,
-    staleTime: Infinity,
-    gcTime: 0,          // leaving the page drops the list, so coming back never shows cards that were answered meanwhile
+    queryFn: ({ cursor }) => identifyApi.queue(cursor, PAGE),
+    items: page => page.items, itemKey: item => item.group, hasMore: page => page.items.length >= PAGE,
+    isRemoved: undoable.isRemoved,
+    staleTime: 0,          // coming back to the page refetches, so cards answered meanwhile do not return
   })
-  const [gone, setGone] = useState<Set<string>>(new Set())            // answered (or waiting out the undo window), hidden at once
-  const [answered, setAnswered] = useState(0)
-  const [error, setError] = useState<string | null>(null)
-  const [activeGroup, setActiveGroup] = useState<string | null>(null)
-  const { pending, schedule, undo } = useUndoable(5000)
-  // An answer still inside its undo window is saved by `flush` before a retrain, so the retrain learns from every answer given.
-  const flush = useRef<(() => Promise<void>) | null>(null)
-  const [retrainPhase, retrain] = useAsyncAction(async () => { await flush.current?.(); if (flush.current) undo(); flush.current = null; await identifyApi.refresh(true); setGone(new Set()); setAnswered(0); await query.refetch() }, 4000)
+  const summaryQuery = useQuery({ queryKey: ['identify-summary'], queryFn: async () => (await identifyApi.queue(undefined, 1)).summary, staleTime: 0 })
+  const summary = summaryQuery.data
+  const items = useMemo(() => (load.status === 'ready' ? load.data : []), [load])
+  const active = useActiveItem(items, i => i.group, { noun: 'match' })
 
-  const items = useMemo(() => {
-    const seen = new Set<string>(), out: IdentifyItem[] = []
-    for (const p of query.data?.pages ?? []) for (const i of p.items) if (!seen.has(i.group) && !gone.has(i.group)) { seen.add(i.group); out.push(i) }
-    return out
-  }, [query.data, gone])
-  const summary = query.data?.pages[0]?.summary
-  const active = items.find(i => i.group === activeGroup) ?? items[0]
-
-  const answer = useCallback((it: IdentifyItem, decision: 'approve' | 'reject') => {
-    setError(null)
-    // Next card takes the focus so the keyboard flow never stops.
-    const idx = items.findIndex(i => i.group === it.group); setActiveGroup(items[idx + 1]?.group ?? items[idx - 1]?.group ?? null)
-    setGone(g => new Set(g).add(it.group))
-    let saved: Promise<void> | null = null
-    const save = () => saved ??= identifyApi.decide(it.group, decision, it.work ?? '').then(() => setAnswered(n => n + 1), e => { setError(`Could not save that answer for ${it.title}: ${e.message}`); setGone(g => { const n = new Set(g); n.delete(it.group); return n }) })
-    flush.current = save
-    schedule({ id: it.group, message: `${decision === 'approve' ? 'Accepted' : 'Rejected'} ${it.title ?? 'the match'} for ${format.count(it.files, 'file')}.`, commit: () => { void save() } })
-  }, [items, schedule])
-  const undoAnswer = () => { flush.current = null; if (pending) setGone(g => { const n = new Set(g); n.delete(pending.id); return n }); setActiveGroup(pending?.id ?? null); undo() }
-
-  // Keep the list full: load the next page when the end of the list scrolls near.
-  const sentinel = useRef<HTMLDivElement>(null)
-  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query
-  useEffect(() => {
-    const el = sentinel.current
-    if (!el || !hasNextPage || typeof IntersectionObserver === 'undefined') return
-    const io = new IntersectionObserver(e => { if (e[0].isIntersecting && !isFetchingNextPage) fetchNextPage() }, { rootMargin: '600px' })
-    io.observe(el); return () => io.disconnect()
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage, items.length])
-  // Fewer cards left than a screen but more on the server: fetch rather than wait for a scroll that cannot happen.
-  useEffect(() => { if (items.length < 4 && hasNextPage && !isFetchingNextPage) fetchNextPage() }, [items.length, hasNextPage, isFetchingNextPage, fetchNextPage])
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null
-      if (e.metaKey || e.ctrlKey || e.altKey || t?.closest('input, textarea, select, [contenteditable]')) return
-      const i = active ? items.findIndex(x => x.group === active.group) : -1
-      if (e.key === 'j') setActiveGroup(items[Math.min(i + 1, items.length - 1)]?.group ?? null)
-      else if (e.key === 'k') setActiveGroup(items[Math.max(i - 1, 0)]?.group ?? null)
-      else if (e.key === 'a' && active) answer(active, 'approve')
-      else if (e.key === 'r' && active) answer(active, 'reject')
-      else if (e.key === 'u' && pending) undoAnswer()
-    }
-    window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey)
+  const answer = (it: IdentifyItem, decision: 'approve' | 'reject') => undoable.schedule({
+    id: it.group,
+    message: `${decision === 'approve' ? 'Accepted' : 'Rejected'} ${it.title ?? 'the match'} for ${format.count(it.files, 'file')}.`,
+    failure: `${it.title ?? 'The match'} is back in the list: the answer was not saved.`,
+    onError: () => undefined,          // the hook restores the card and says so in the bar; this only marks the failure as handled when the page was left meanwhile
+    commit: async () => { await identifyApi.decide(it.group, decision, it.work ?? ''); await qc.invalidateQueries({ queryKey: ['identify-summary'] }) },
   })
+  const accept = () => active.activeItem && answer(active.activeItem, 'approve')
+  const reject = () => active.activeItem && answer(active.activeItem, 'reject')
+  const shortcuts = [
+    { keys: ['a'], label: 'Accept', run: accept, disabled: !active.activeItem },
+    { keys: ['r'], label: 'Not this book', run: reject, disabled: !active.activeItem },
+    ...active.shortcuts,
+    { keys: ['u'], label: 'Undo', run: undoable.undo, disabled: !undoable.pending },
+  ]
+  useHotkeys(shortcuts)
 
-  const answeredNow = (summary?.decided ?? 0) + answered + (pending ? 1 : 0)
-  const remaining = summary ? Math.max(0, summary.remaining - gone.size) : 0
-  const finding = query.status === 'success' && summary
-    ? { text: remaining > 0 ? `${format.count(remaining, 'book')} to check. The first one settles ${format.count(active?.files ?? 0, 'file')}.` : 'Every doubtful match has an answer.' }
-    : undefined
+  const retrain = useAsyncAction(async () => {
+    await undoable.flush()          // the retrain learns from every answer given, including one still inside its undo window
+    await identifyApi.refresh(true)
+    await Promise.all([qc.invalidateQueries({ queryKey: ['identify-queue'] }), qc.invalidateQueries({ queryKey: ['identify-summary'] })])
+  }, { settleMs: 4000 })
+  const retrainButton = (variant: 'outline' | 'default') => <AsyncButton variant={variant} phase={retrain.phase} error={retrain.error} onClick={() => void retrain.run()} labels={{ idle: 'Retrain with my answers', pending: 'Retraining…', done: 'Retrained', error: 'Retrain failed' }} />
+
+  const pendingCount = undoable.pending ? 1 : 0
+  const remaining = summary ? Math.max(0, summary.remaining - pendingCount) : 0
+  const answeredNow = (summary?.decided ?? 0) + pendingCount
+  const finding = summary ? { text: remaining > 0 ? `${format.count(remaining, 'book')} to check. The first one settles ${format.count(active.activeItem?.files ?? items[0]?.files ?? 0, 'file')}.` : 'Every doubtful match has an answer.' } : undefined
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Review" scope="Doubtful matches, most useful first" finding={finding}
-        actions={<AsyncButton variant="outline" phase={retrainPhase} onClick={() => retrain()} labels={{ idle: 'Retrain with my answers', pending: 'Retraining…', done: 'Retrained', error: 'Retrain failed' }} />} />
+      <PageHeader title="Review" scope="Doubtful matches, most useful first" finding={finding} actions={retrainButton('outline')} />
       {summary && (
         <MetricStrip label="Where identification stands">
           <Metric label="Waiting for you" value={format.integer.format(remaining)} note={`${format.count(summary.queue_files, 'file')} in the last scoring run`} />
@@ -142,27 +113,16 @@ export default function ReviewPage() {
           <Metric label="Accepted automatically" value={format.integer.format(summary.accepted)} note={`${format.count(summary.accepted_files, 'file')} the model was sure of`} />
         </MetricStrip>
       )}
-      {error && <p role="alert" className="type-body text-danger">{error}</p>}
-      {query.status === 'pending' && <Skeletons />}
-      {query.status === 'error' && <div role="alert" className="space-y-2"><p className="type-body">Could not load the review queue: {query.error.message}</p><Button onClick={() => query.refetch()}>Try again</Button></div>}
-      {query.status === 'success' && !summary && (
-        <EmptyState title="Nothing has been scored yet" action={<Button variant="default" onClick={() => identifyApi.refresh(false).then(() => query.refetch())}>Score the library</Button>}>
-          The review list is built from the model's scores for every book in the library. Score the library once and the doubtful matches appear here.
-        </EmptyState>
-      )}
-      {query.status === 'success' && summary && items.length === 0 && !hasNextPage && (
-        <Done title={`Answered ${format.count(answeredNow, 'doubtful match', 'doubtful matches')}`} next="Retrain so the model learns from your answers and the next scoring run shows what is still unsure."
-          actions={<AsyncButton variant="default" phase={retrainPhase} onClick={() => retrain()} labels={{ idle: 'Retrain with my answers', pending: 'Retraining…', done: 'Retrained' }} />} />
-      )}
-      {items.length > 0 && (
-        <ul aria-label="Matches to review" className="space-y-3">
-          {items.map(it => <Card key={it.group} it={it} active={it.group === active?.group} onFocus={() => setActiveGroup(it.group)} onAccept={() => answer(it, 'approve')} onReject={() => answer(it, 'reject')} />)}
-        </ul>
-      )}
-      <div ref={sentinel} aria-hidden className="h-px" />
-      {isFetchingNextPage && <Skeletons />}
-      {items.length > 0 && <p className="type-caption text-muted-foreground">Keys: <kbd>A</kbd> accept, <kbd>R</kbd> not this book, <kbd>J</kbd>/<kbd>K</kbd> next or previous, <kbd>U</kbd> undo.</p>}
-      <UndoBar pending={pending} onUndo={undoAnswer} />
+      <InfiniteList state={load} label="Matches to review" skeleton={<Skeletons />} moreSkeleton={<Skeletons />} moreLabel="Show more matches" estimateSize={230} height={Math.max(480, Math.round(window.innerHeight * 0.75))} keepAtLeast={4}
+        empty={!summary
+          ? <EmptyState title="Nothing has been scored yet" action={<Button variant="default" onClick={() => identifyApi.refresh(false).then(() => { void qc.invalidateQueries({ queryKey: ['identify-queue'] }); void qc.invalidateQueries({ queryKey: ['identify-summary'] }) })}>Score the library</Button>}>
+              The review list is built from the model's scores for every book in the library. Score the library once and the doubtful matches appear here.
+            </EmptyState>
+          : <Done title={`Answered ${format.count(answeredNow, 'doubtful match', 'doubtful matches')}`} next="Retrain so the model learns from your answers and the next scoring run shows what is still unsure." actions={retrainButton('default')} />}>
+        {it => <Card it={it} active={it.group === active.activeKey} itemProps={active.itemProps(it.group)} onAccept={() => answer(it, 'approve')} onReject={() => answer(it, 'reject')} />}
+      </InfiniteList>
+      <KeysLegend shortcuts={shortcuts} />
+      <UndoBar undoable={undoable} />
     </div>
   )
 }

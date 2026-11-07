@@ -1,19 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { installFakeIntersectionObserver, installLayoutShims, type FakeIntersectionObserverControls } from 'strata-react/testing'
 import { act, cleanup } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import ReviewPage, { confidence, folderOf } from '../../src/components/ReviewPage'
 import { setup, screen, within, waitFor } from '../utils/render'
 import { server, identifyQueue, identifyState } from '../utils/server'
 
-// jsdom has no IntersectionObserver: a stand-in the test can fire, to scroll to the end of the list.
-let observers: { callback: IntersectionObserverCallback; el: Element }[] = []
-class FakeObserver { constructor(public callback: IntersectionObserverCallback) {} observe(el: Element) { observers.push({ callback: this.callback, el }) } disconnect() { observers = observers.filter(o => o.callback !== this.callback) } unobserve() {} takeRecords() { return [] } root = null; rootMargin = ''; thresholds = [] }
-const scrollToEnd = () => act(() => { for (const o of observers) o.callback([{ isIntersecting: true, target: o.el } as IntersectionObserverEntry], {} as IntersectionObserver) })
-beforeEach(() => { observers = []; ;(globalThis as { IntersectionObserver?: unknown }).IntersectionObserver = FakeObserver })
+// jsdom has no IntersectionObserver or layout: strata-react/testing supplies stand-ins the test can fire.
+let io: FakeIntersectionObserverControls
+let uninstallLayout: () => void
+beforeEach(() => { io = installFakeIntersectionObserver(); uninstallLayout = installLayoutShims({ width: 800, height: 5000 }) })
+const scrollToEnd = () => act(() => { io.scrollToEnd() })
 // Leaving the page saves an answer still inside its undo window; let that request land before the next test resets the fake server.
-afterEach(async () => { delete (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver; cleanup(); await new Promise(r => setTimeout(r, 40)) })
+afterEach(async () => { io.uninstall(); uninstallLayout(); cleanup(); await new Promise(r => setTimeout(r, 40)) })
 
-const cards = () => within(screen.getByRole('list', { name: 'Matches to review' })).getAllByRole('listitem')
+const cards = () => within(screen.getByRole('list', { name: 'Matches to review' })).getAllByRole('article')
 
 describe('ReviewPage', () => {
   it('lists the doubtful matches most impactful first, with the model\'s match and how sure it is', async () => {
@@ -49,8 +50,7 @@ describe('ReviewPage', () => {
     unmount()
     await waitFor(() => expect(identifyState.decided).toHaveLength(1))
     setup(<ReviewPage />, { client })
-    await screen.findByRole('list', { name: 'Matches to review' })
-    expect(cards()).toHaveLength(2)
+    await waitFor(() => expect(cards()).toHaveLength(2))            // the cached list shows for a moment, then the refetch drops the answered card
     expect(screen.queryByText('Title 1')).toBeNull()
   })
 
@@ -101,7 +101,7 @@ describe('ReviewPage', () => {
   it('keeps loading further pages as the end of the list scrolls into view, continuing after the last group it holds', async () => {
     identifyState.queue = identifyQueue(45)
     const seen: (string | null)[] = []
-    server.use(http.get('/api/identify/queue', ({ request }) => { seen.push(new URL(request.url).searchParams.get('after')); return undefined }))
+    server.use(http.get('/api/identify/queue', ({ request }) => { const u = new URL(request.url); if (u.searchParams.get('limit') === '20') seen.push(u.searchParams.get('after')); return undefined }))
     setup(<ReviewPage />)
     await screen.findByRole('list', { name: 'Matches to review' })
     expect(cards()).toHaveLength(20)
@@ -133,10 +133,11 @@ describe('ReviewPage', () => {
     await user.keyboard('a'); await user.keyboard('a')              // the first answer is saved at once, the second after the undo window
     await waitFor(() => expect(identifyState.decided).toHaveLength(1))
     await scrollToEnd()
-    await waitFor(() => expect(cards()).toHaveLength(38))           // 20 - 2 answered + the next 20, nothing skipped or repeated
-    expect(new Set(cards().map(c => c.textContent)).size).toBe(38)
-    expect(within(cards()[17]).getByText('Title 20')).toBeInTheDocument()
-    expect(within(cards()[18]).getByText('Title 21')).toBeInTheDocument()
+    await waitFor(() => expect(cards().length).toBeGreaterThan(38))   // everything after the two answered cards arrives, nothing skipped or repeated
+    const titles = cards().map(c => c.getAttribute('aria-label'))
+    expect(new Set(titles).size).toBe(titles.length)
+    expect(titles.slice(0, 20)).toEqual(Array.from({ length: 20 }, (_, i) => `Title ${i + 3}`))
+    expect(titles.slice(0, 40).slice(18, 22)).toEqual(['Title 21', 'Title 22', 'Title 23', 'Title 24'])
   })
 
   it('shows a finished moment once every match has an answer, and offers to retrain', async () => {
@@ -153,9 +154,9 @@ describe('ReviewPage', () => {
     server.use(http.post('/api/identify/decisions', () => HttpResponse.json({ detail: 'no such queued group; refresh the queue' }, { status: 404 })))
     const { user } = setup(<ReviewPage />)
     await screen.findByRole('list', { name: 'Matches to review' })
-    await user.keyboard('a'); await user.keyboard('a')
-    expect(await screen.findByRole('alert')).toHaveTextContent('Could not save that answer for Title 1: no such queued group; refresh the queue')
-    expect(cards()).toHaveLength(2)
+    await user.keyboard('a'); await user.keyboard('a'); await user.keyboard('u')       // the first answer fails when the second is given; undoing the second leaves the failure showing
+    expect(await screen.findByText(/Title 1 is back in the list: the answer was not saved/)).toBeInTheDocument()
+    expect(cards()).toHaveLength(3)
     expect(within(cards()[0]).getByText('Title 1')).toBeInTheDocument()
   })
 

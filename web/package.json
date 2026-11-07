@@ -20,7 +20,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router": "^8.5.1",
-    "strata-react": "github:jburnhams/strata-react"
+    "strata-react": "github:jburnhams/strata-react#main"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
