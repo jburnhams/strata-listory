@@ -68,6 +68,7 @@ export default function ReviewPage() {
     queryFn: ({ pageParam }) => identifyApi.queue(pageParam, PAGE),
     getNextPageParam: last => last.items.length >= PAGE ? last.items[last.items.length - 1].group : undefined,
     staleTime: Infinity,
+    gcTime: 0,          // leaving the page drops the list, so coming back never shows cards that were answered meanwhile
   })
   const [gone, setGone] = useState<Set<string>>(new Set())            // answered (or waiting out the undo window), hidden at once
   const [answered, setAnswered] = useState(0)

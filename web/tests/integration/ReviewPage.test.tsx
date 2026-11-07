@@ -42,6 +42,18 @@ describe('ReviewPage', () => {
     expect(screen.getByText('Rejected Title 2 for 39 files.')).toBeInTheDocument()
   })
 
+  it('does not bring an answered card back after leaving and returning', async () => {
+    const { user, unmount, client } = setup(<ReviewPage />)
+    await screen.findByRole('list', { name: 'Matches to review' })
+    await user.click(screen.getByRole('button', { name: 'Accept Title 1' }))
+    unmount()
+    await waitFor(() => expect(identifyState.decided).toHaveLength(1))
+    setup(<ReviewPage />, { client })
+    await screen.findByRole('list', { name: 'Matches to review' })
+    expect(cards()).toHaveLength(2)
+    expect(screen.queryByText('Title 1')).toBeNull()
+  })
+
   it('brings the card back on undo and saves nothing', async () => {
     const { user } = setup(<ReviewPage />)
     await screen.findByRole('list', { name: 'Matches to review' })
