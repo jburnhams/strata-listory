@@ -78,7 +78,7 @@ def group_key(c):
 
 
 def cluster_ids(cands):
-    """Duplicate catalogue works of one book: same title key and at least one shared author. Authorless records are never merged (they could be anything)."""
+    """Duplicate catalogue works of one book: same title key and at least one shared author name. Authorless records are never merged (they could be anything)."""
     parent = list(range(len(cands)))
     def find(i):
         while parent[i] != i: parent[i] = parent[parent[i]]; i = parent[i]
@@ -87,7 +87,7 @@ def cluster_ids(cands):
     for i, c in enumerate(cands):
         title = tk.title_key(c['title'])
         for a in c['authors']:
-            j = seen.setdefault((title, a['key']), i)
+            j = seen.setdefault((title, tk.person_key(a['name']) or a['key']), i)      # by name: OL often holds several author records for one person
             if j != i: parent[find(i)] = find(j)
     return [find(i) for i in range(len(cands))]
 

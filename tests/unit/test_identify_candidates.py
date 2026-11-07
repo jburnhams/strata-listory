@@ -31,6 +31,6 @@ def test_describe_and_features(tmp_path):
 
 
 def test_cluster_ids_merge_same_title_shared_author_only():
-    def work(key, title, *authors): return dict(key=key, title=title, authors=[dict(key=a, name=a) for a in authors])
+    def work(key, title, *authors): return dict(key=key, title=title, authors=[dict(key=a + key, name=a) for a in authors])
     ids = ft.cluster_ids([work('1', 'North', 'a'), work('2', 'north', 'a', 'b'), work('3', 'North', 'c'), work('4', 'North'), work('5', 'North')])
     assert ids[0] == ids[1] and len({ids[0], ids[2], ids[3], ids[4]}) == 4
