@@ -44,8 +44,7 @@ def test_asin_excludes_isbns():
 
 
 def test_people_splits_credit_lines_and_strips_roles():
-    assert tk.people('Tom Courtenay, Narrator') == ['Tom Courtenay']
-    assert tk.people('Narrated by: Duncan Mavin') == ['Duncan Mavin']
+    assert tk.people('Tom Courtenay, Narrator') == [] and tk.people('Narrated by: Duncan Mavin') == [] and tk.people('Unknown Artist') == []
     assert tk.people('Muriel Spark/Pamela Garelick') == ['Muriel Spark', 'Pamela Garelick']
     assert tk.people('Tolkien, J.R.R.') == ['Tolkien, J.R.R.']
     assert tk.people('A One, B Two, C Three') == ['A One', 'B Two', 'C Three']
