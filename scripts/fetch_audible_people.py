@@ -95,15 +95,18 @@ def main(argv=None) -> int:
     ap.add_argument('--refresh-days', type=float, default=0, help='re-run queries older than this (0 = never, resume only)')
     ap.add_argument('--name', help='only this person (exact name)')
     ap.add_argument('--roles', default='Author,Narrator', help='comma-separated roles to query, in this order of priority per person (default Author,Narrator); Contributor/Translator/Illustrator people are queried as authors')
+    ap.add_argument('--shard', default='0/1', help='I/N: handle only people whose id hashes to I of N, so N processes can share the work (each keeps its own --rate)')
     ap.add_argument('--follow', action='store_true', help='when the people index is exhausted, keep waiting for the crawl to add more (poll every 10 minutes)')
     a = ap.parse_args(argv)
     c, api = open_db(a.db), Audible(a.region, a.rate)
+    si, sn = (int(x) for x in a.shard.split('/'))
     done, want = 0, [r.strip() for r in a.roles.split(',') if r.strip()]
     while True:
         p = sqlite3.connect(f'file:{a.people}?mode=ro', uri=True, timeout=60)
         rows = p.execute('SELECT id, name, roles, COALESCE(credits,0) FROM person WHERE COALESCE(credits,0) >= ? ' + ('AND name = ? ' if a.name else '') + 'ORDER BY credits DESC, id', (a.min_credits, *([a.name] if a.name else []))).fetchall(); p.close()
         todo, cutoff = 0, (datetime.now(timezone.utc) - timedelta(days=a.refresh_days)).isoformat() if a.refresh_days else None
         for pid, name, roles, credits in rows:
+            if sn > 1 and zlib.crc32(pid.encode()) % sn != si: continue
             have = set(json.loads(roles)); have |= {'Author'} if have & {'Contributor', 'Translator', 'Illustrator'} else set()      # AudiobookDB's other credit roles are mostly authors on Audible (see docs/audible-people-index.md)
             for role in want:
                 if role not in have or len(name) < 3: continue
