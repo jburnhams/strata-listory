@@ -39,7 +39,7 @@ Downloading the dumps: `python scripts/fetch_openlibrary.py latest` fetches auth
 * Kind detection (radio versus book) and better disc/chapter grouping feeding this stage.
 * The old matcher and ingest rule engine are not removed yet.
 
-## Planned: Audible-first matching
+## Audible-first matching (wired in; limited by index coverage so far)
 
 Once the local Audible index (ASIN, ISBN, title, authors, narrators, series, runtime) exists, audiobook matching runs first because it is more accurate and gives fewer false positives; Open Library becomes the fallback and the source of the original work. The pipeline is built to take that without a redesign:
 
@@ -48,3 +48,5 @@ Once the local Audible index (ASIN, ISBN, title, authors, narrators, series, run
 * The model is retrained with those features; strong Audible evidence should raise the share auto-accepted at the same zero-false-positive setting, which is then re-measured before any threshold changes.
 
 Strictness rule for the Audible stage: some audiobooks are older tape or CD recordings that are not on Audible, so an Audible match is never accepted on title alone. It needs corroboration from at least one independent signal (author, narrator, runtime within the usual tolerance, or an exact ASIN/ISBN); a title-only Audible hit counts for nothing and the item falls back to Open Library. This is enforced twice: the Audible candidate's features carry no "title only" shortcut (a title-only hit has all corroboration features at zero), and auto-accept still requires the model's calibrated score and margin, with the zero-false-positive measurement repeated on items known not to be on Audible.
+
+Status (2026-11-07): `audible.py` looks every item up in `audibleindex` first. The index returns title-only candidates with evidence flags and the model decides; only a corroborated hit (exact ASIN, strong grade, or full title with agreeing narrator or runtime and nothing conflicting) adds a reading that searches Open Library with the audiobook's author, title and ISBN, which is how a one-word title like *Census* gets resolved. Local runtime and language come from the ingest inventory. With the current 162k-book index, 58 of 1,450 library items have a corroborated hit (10 by ASIN), so the model has seen few examples and the accepted share barely moved (516 to 520 groups); retrain with `./app identify-train` as the index grows.
