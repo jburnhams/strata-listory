@@ -37,3 +37,15 @@ def test_cluster_ids_merge_same_title_shared_author_only():
     def work(key, title, *authors): return dict(key=key, title=title, authors=[dict(key=a + key, name=a) for a in authors])
     ids = ft.cluster_ids([work('1', 'North', 'a'), work('2', 'north', 'a', 'b'), work('3', 'North', 'c'), work('4', 'North'), work('5', 'North')])
     assert ids[0] == ids[1] and len({ids[0], ids[2], ids[3], ids[4]}) == 4
+
+
+def test_readings_cover_filename_styles():
+    from app.identify import local
+    assert [r['reading'] for r in local.readings(dict(title='The Red Dragon CD01 07', author=''))] == ['raw', 'stripped']
+    got = {(r['reading'], r['title'], r['author']) for r in local.readings(dict(title="Jonathan Coe - The Rotters' Club 09", author=''))}
+    assert {('stripped', "Jonathan Coe - The Rotters' Club", ''), ('author_title', "The Rotters' Club", 'Jonathan Coe'), ('title_author', 'Jonathan Coe', "The Rotters' Club")} <= got
+    only = local.readings(dict(title='Dune', author='Unknown Artist'))
+    assert [r['reading'] for r in only] == ['raw'] and only[0]['author'] == ''
+    assert local.strip_numbers('1984') == '' and local.strip_numbers('Apollo 13') == 'Apollo'
+    known = local.readings(dict(title='Author One - Title', author='Author One'))
+    assert {r['reading'] for r in known} == {'raw', 'author_title'}

@@ -8,7 +8,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from app.identify import candidates as cand, features as ft, textkeys as tk
+from app.identify import candidates as cand, features as ft, local, textkeys as tk
 
 WEIGHT = dict(manual=3., automatic=1.)
 STAGES = ('identity', 'metadata', 'metadata_approval', 'metadata_revocation', 'match_review_decision')
@@ -61,12 +61,18 @@ def split_of(group_id):
 
 
 def candidates_for(connection, item):
-    hits = cand.find(connection, item['title'], item['author'], item.get('isbns', ()))
-    mapping = cand.canonical(connection, list(hits)); described = []; generic = cand.homonyms(connection, item['title'])
-    for key in dict.fromkeys(mapping.values()):
-        d = cand.describe(connection, key)
-        if d: d['homonyms'] = generic; d['via'] = set().union(*(hits[k] for k in hits if mapping[k] == key)); described.append(d)
-    return described
+    """Candidates over every reading of the local item: a work found by several readings keeps the reading that matched it best (highest title similarity)."""
+    best = {}
+    for reading in local.readings(item):
+        hits = cand.find(connection, reading['title'], reading['author'], reading.get('isbns', ()))
+        mapping = cand.canonical(connection, list(hits)); generic = cand.homonyms(connection, reading['title'])
+        for key in dict.fromkeys(mapping.values()):
+            d = cand.describe(connection, key)
+            if not d: continue
+            d.update(homonyms=generic, reading=reading, via=set().union(*(hits[k] for k in hits if mapping[k] == key)))
+            d['features'] = ft.item_features(reading, d, d['via'])
+            if key not in best or d['features']['title_best_sim'] > best[key]['features']['title_best_sim']: best[key] = d
+    return list(best.values())
 
 
 def build(connection, runs, progress=None, blank_author=True):
@@ -82,7 +88,7 @@ def build(connection, runs, progress=None, blank_author=True):
             if not positives:
                 if scale == 1.: misses.append(run)
                 continue
-            pairs = ft.add_context([(d, ft.item_features(item, d, d['via'])) for d in described])
+            pairs = ft.add_context([(d, d['features']) for d in described])
             for cid, (d, f) in zip(ids, pairs):
                 rows.append(dict(run_id=run_id, work=d['key'], cgroup=str(cid), features=f, label=int(cid in positives), weight=WEIGHT[run['origin']] * scale, origin=run['origin'], split=split_of(group_id), group=group_id))
         if progress and i % 50 == 0: progress(i, len(runs))

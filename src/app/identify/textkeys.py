@@ -7,6 +7,7 @@ import unicodedata
 HONORIFICS = {'mr', 'mrs', 'ms', 'miss', 'dr', 'doctor', 'prof', 'professor', 'sir', 'dame', 'rev', 'reverend'}
 ARTICLES = {'the', 'a', 'an'}
 RECORDING_LABELS = {'unabridged', 'abridged'}
+PLACEHOLDERS = {'unknown', 'unknown artist', 'unknown author', 'various', 'various artists', 'various authors', 'anonymous', 'audiobook', 'audiobooks', 'narrator'}
 ROLE_WORDS = r'narrators?|narrated|read|reader|translators?|editors?|illustrators?|foreword|introduction|afterword|performed'
 ROLE_PREFIX = re.compile(rf'^(?:{ROLE_WORDS})(?:\s+by)?\s*[:\-]\s*|^(?:narrated|read|performed)\s+by\s+', re.I)
 ROLE_SUFFIX = re.compile(rf'(?:\s*[,\-–]\s*|\s*\()(?:{ROLE_WORDS})\)?\s*$', re.I)
@@ -89,7 +90,7 @@ def people(value):
     """Split a credit line into individual names: `A and B`, `A; B`, `A & B`, `A, B, C`; but `Tolkien, J.R.R.` stays one name."""
     if isinstance(value, (list, tuple)): return [p for v in value for p in people(v)]
     text = ROLE_PREFIX.sub('', str(value or '').strip()); text = ROLE_SUFFIX.sub('', text).strip(' ,;')
-    if not text or re.fullmatch(ROLE_WORDS, text, re.I): return []
+    if not text or re.fullmatch(ROLE_WORDS, text, re.I) or text.casefold() in PLACEHOLDERS: return []
     parts = [p.strip() for p in re.split(r'\s*(?:;|&|/|\band\b)\s*', text, flags=re.I) if p.strip()]
     out = []
     for part in parts:
