@@ -355,3 +355,47 @@ def test_background_training_backfill_yields_to_requested_ingest_work():
     assert q.run_one() and q.get(requested)['state']=='done'
     assert q.get(cache)['state']=='queued'
     assert q.run_one() and q.get(cache)['state']=='done'
+
+
+def _no_threads(monkeypatch):
+    class Thread:
+        def __init__(self,**kw):pass
+        def start(self):pass
+        def join(self,**kw):pass
+    monkeypatch.setattr('app.jobs.threading.Thread',Thread)
+
+
+def test_start_requeues_jobs_interrupted_by_shutdown_but_not_timeouts_or_errors(monkeypatch):
+    _no_threads(monkeypatch)
+    q=JobQueue(lambda *a:None)
+    stopped=q.submit('system','scan',folder='/a');sigterm=q.submit('system','scan',folder='/b');timeout=q.submit('system','scan',folder='/c');broken=q.submit('system','scan',folder='/d')
+    for ident,error in ((stopped,'job interrupted by server shutdown'),(sigterm,'job worker exited without a completed result (exit -15)'),(timeout,'job exceeded its 1800 second time limit'),(broken,'source changed')):
+        c=db.connect()
+        with c:c.execute("UPDATE jobs SET state='running' WHERE id=?",(ident,))
+        c.close();q.fail(ident,error)
+    q.start()
+    queued={t['options']['folder'] for t in q.tasks()}
+    assert queued=={'/a','/b'}
+    assert {f['id'] for f in q.failures()}=={timeout,broken}
+    q.stop()
+
+
+def test_interrupted_jobs_are_retried_a_bounded_number_of_times_and_not_when_old(monkeypatch):
+    _no_threads(monkeypatch)
+    q=JobQueue(lambda *a:None)
+    ident=q.submit('system','scan',folder='/a')
+    for attempt in range(4):
+        c=db.connect()
+        with c:c.execute("UPDATE jobs SET state='running' WHERE id=?",(ident,))
+        c.close();q.fail(ident,'job interrupted by server shutdown')
+        retried=q.recover_interrupted()
+        if attempt<2:assert len(retried)==1;ident=retried[0]
+        else:assert retried==[] and q.get(ident)['state']=='failed';break
+    old=q.submit('system','scan',folder='/old')
+    c=db.connect()
+    with c:c.execute("UPDATE jobs SET state='running' WHERE id=?",(old,))
+    c.close();q.fail(old,'job interrupted by server shutdown')
+    c=db.connect()
+    with c:c.execute("UPDATE jobs SET finished='2000-01-01T00:00:00+00:00' WHERE id=?",(old,))
+    c.close()
+    assert q.recover_interrupted()==[] and q.get(old)['state']=='failed'

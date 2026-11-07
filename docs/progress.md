@@ -631,3 +631,8 @@ configuration, queued-work behavior, output rebuilding and the proxy/auth bounda
 - Retain pending review decisions when Next is pressed on a full batch with no completed decisions, and protect pending cards throughout refill. Use the live in-flight set so a deferred shortlist acceptance remains visible until a later Next can queue its continuation.
 - Add automatic/shortlist regressions exercising Next before the first decision completes and confirming accepted shortlist work is subsequently resumed. Normalize the folder-evidence assertion with the platform's Path representation for Windows.
 - Validation: 116 frontend tests passed the coverage gate; typecheck/production build and all 76 grouping unit tests passed. Replacement cross-platform CI is monitored on PR #14.
+
+## 2026-11-07 — Replay jobs interrupted by a server stop
+
+- Diagnosis of the "stalled" Processing page on omarchy: the queue was empty, not stuck. The 10:35 restart had failed the in-flight `bootstrap` and `reconcile` jobs with "job interrupted by server shutdown" / "exit -15" and nothing re-queued them; the rest of the backlog is review-state ingest runs waiting on a person.
+- `JobQueue.recover_interrupted` (called from `start()`) now retries jobs whose error says the server was stopped (shutdown message or SIGTERM exit). Timeouts, crashes (dead owner) and application errors still need an explicit retry. Bounded to 2 automatic retries per chain and to failures from the last 24 hours, so a job that really takes the server down cannot loop.

@@ -1,5 +1,5 @@
 """Durable shared queue. HTTP submits small records; only bounded workers execute them."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -12,6 +12,10 @@ from contextlib import nullcontext
 from app import db, oslib, settings
 
 CURRENT_JOB=ContextVar('current_job',default=None)
+# A stop we asked for (service restart, deploy, SIGTERM) says nothing against the job itself, unlike a timeout, a crash or an application error, so these failures are replayed on the next start. Capped per chain and per age so a job that really kills the server cannot loop.
+SHUTDOWN_ERRORS=('job interrupted by server shutdown','(exit -15)')
+AUTO_RETRY_LIMIT=2
+AUTO_RETRY_WINDOW_HOURS=24
 
 
 def bind_work(connection,kind,owner):
@@ -230,6 +234,24 @@ class JobQueue:
                         self._submit('ingest','run',False,remainder,connection=c)
         finally:c.close()
 
+    def recover_interrupted(self):
+        """Re-queue jobs that failed only because the server was stopped; returns the new job ids."""
+        c=db.connect();out=[]
+        try:
+            cutoff=(datetime.now(timezone.utc)-timedelta(hours=AUTO_RETRY_WINDOW_HOURS)).isoformat()
+            marker=' OR '.join('instr(j.error,?)>0' for _ in SHUTDOWN_ERRORS)
+            candidates=[r[0] for r in c.execute(f"SELECT j.id FROM jobs j WHERE j.state='failed' AND j.finished>=? AND ({marker}) AND NOT EXISTS (SELECT 1 FROM job_work r WHERE r.kind='retry' AND r.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created) ORDER BY j.finished,j.id",(cutoff,*SHUTDOWN_ERRORS))]
+            def attempts(ident):
+                n=0
+                while (r:=c.execute("SELECT owner FROM job_work WHERE kind='retry' AND job_id=?",(ident,)).fetchone()):ident=r[0];n+=1
+                return n
+            candidates=[i for i in candidates if attempts(i)<AUTO_RETRY_LIMIT]
+        finally:c.close()
+        for ident in candidates:
+            try:out.append(self.retry(ident))
+            except ValueError:pass            # superseded meanwhile (for example the same work was submitted again)
+        return out
+
     def start(self):
         if self.threads:return
         c=db.connect()
@@ -241,6 +263,7 @@ class JobQueue:
                         # that may have killed or stalled its previous owner.
                         self.fail(row['id'],'job interrupted: previous worker stopped')
         finally:c.close()
+        self.recover_interrupted()
         for n in range(self.workers+1):
             thread=threading.Thread(target=self._loop,kwargs=dict(isolated=True),name=f'job-worker-{n}',daemon=True);self.threads.append(thread);thread.start()
 
