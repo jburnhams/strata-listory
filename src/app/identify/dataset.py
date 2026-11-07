@@ -73,6 +73,6 @@ def build(connection, runs, progress=None):
         pairs = ft.add_context([(d, ft.item_features(item, d, d['via'])) for d in described])
         group_id = hashlib.sha256(json.dumps([tk.title_key(run['target']['title']), sorted(tk.person_key(a) for a in run['target']['authors'])]).encode()).hexdigest()
         for d, f in pairs:
-            rows.append(dict(run_id=run['run_id'], work=d['key'], features=f, label=int(ft.group_key(d) in positives), weight=WEIGHT[run['origin']], origin=run['origin'], split=split_of(group_id), group=group_id))
+            rows.append(dict(run_id=run['run_id'], work=d['key'], cgroup=hashlib.sha256(json.dumps(ft.group_key(d)).encode()).hexdigest()[:16], features=f, label=int(ft.group_key(d) in positives), weight=WEIGHT[run['origin']], origin=run['origin'], split=split_of(group_id), group=group_id))
         if progress and i % 50 == 0: progress(i, len(runs))
     return rows, misses
