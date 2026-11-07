@@ -8,10 +8,10 @@ import re
 import sqlite3
 from pathlib import Path
 
-from app.identify import candidates as cand, context, features as ft, local, textkeys as tk
+from app.identify import audible, candidates as cand, context, features as ft, local, textkeys as tk
 
 WEIGHT = dict(manual=3., automatic=1.)
-STAGES = ('identity', 'metadata', 'metadata_approval', 'metadata_revocation', 'match_review_decision')
+STAGES = ('inventory', 'identity', 'metadata', 'metadata_approval', 'metadata_revocation', 'match_review_decision')
 
 
 def work_key(url):
@@ -41,7 +41,7 @@ def labelled_runs(catalogue_db):
         if not resolved.get('title') or not resolved.get('authors'): continue
         book = identity.get('book') or {}
         manual = not json.loads(approval[2]).get('automatic') or any(e[0] == 'match_review_decision' and json.loads(e[2]).get('action') == 'approve' for e in items)
-        out.append(dict(run_id=run_id, item=index.annotate(dict(title=book.get('title', ''), author=book.get('author', ''), narrator=book.get('narrator', ''), series=book.get('series', ''), asin=book.get('asin', ''), year=book.get('year'), path=book.get('path', '')), members.get(run_id, 1)),
+        out.append(dict(run_id=run_id, item=index.annotate(dict(title=book.get('title', ''), author=book.get('author', ''), narrator=book.get('narrator', ''), series=book.get('series', ''), asin=book.get('asin', ''), year=book.get('year'), path=book.get('path', ''), **context.facts(identity, next((json.loads(e[2]) for e in reversed(items) if e[0] == 'inventory'), None))), members.get(run_id, 1)),
                         target=dict(title=resolved['title'], authors=resolved['authors'], work=work_key((records.get('openlibrary') or {}).get('url'))), origin='manual' if manual else 'automatic'))
     return out
 
@@ -64,8 +64,11 @@ def split_of(group_id):
 
 def candidates_for(connection, item):
     """Candidates over every reading of the local item: a work found by several readings keeps the reading that matched it best (highest title similarity)."""
-    best = {}
-    for reading in local.readings(item):
+    best = {}; hit = audible.lookup(item); readings = local.readings(item)
+    extra = audible.reading(item, hit)
+    if extra: readings.append(extra)
+    for reading in readings:
+        reading = dict(reading, audible=hit)
         hits = cand.find(connection, reading['title'], reading['author'], reading.get('isbns', ()))
         mapping = cand.canonical(connection, list(hits)); generic = cand.homonyms(connection, reading['title']); person = int(cand.is_person_name(connection, reading['title']))
         for key in dict.fromkeys(mapping.values()):

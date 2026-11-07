@@ -37,7 +37,8 @@ def library_items(catalogue_db):
             data = json.loads(row[0]) if row else {}
             if data.get('kind') != 'book': continue
             b = data.get('book') or {}
-            items.append(index.annotate(dict(title=b.get('title', ''), author=b.get('author', ''), narrator=b.get('narrator', ''), series=b.get('series', ''), asin=b.get('asin', ''), year=b.get('year'), path=b.get('path', ''), run_id=run_id), members.get(run_id, 1)))
+            inventory = c.execute("SELECT data FROM ingest_events WHERE run_id=? AND stage='inventory' AND status='done' ORDER BY id DESC LIMIT 1", (run_id,)).fetchone()
+            items.append(index.annotate(dict(title=b.get('title', ''), author=b.get('author', ''), narrator=b.get('narrator', ''), series=b.get('series', ''), asin=b.get('asin', ''), year=b.get('year'), path=b.get('path', ''), run_id=run_id, **context.facts(data, json.loads(inventory[0]) if inventory else None)), members.get(run_id, 1)))
     return items
 
 

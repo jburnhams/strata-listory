@@ -38,3 +38,9 @@ def load(catalogue_db):
             if row and json.loads(row[0]).get('kind') == 'book':
                 book = json.loads(row[0]).get('book') or {}; rows.append((book.get('path', ''), book.get('title', '')))
     return Index(rows)
+
+
+def facts(identity, inventory):
+    """Audiobook facts for the model from the ingest identity and inventory events: total runtime in minutes (the longest representation) and language."""
+    seconds = max((r.get('duration') or 0 for r in (inventory or {}).get('representations') or []), default=0)
+    return dict(runtime_min=round(seconds / 60, 2) if seconds else None, language=(identity or {}).get('language') or '')
