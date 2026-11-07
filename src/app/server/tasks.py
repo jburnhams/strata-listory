@@ -96,6 +96,11 @@ def _execute(jobs,domain,kind,options):
                     for row in rows:jobs.submit('system','inspect',book_id=row['id'])
             finally:c.close()
             return result
+        if kind=='identify':
+            from app.identify import service
+            db=os.path.join(settings.data_dir(),'catalogue.db')
+            if options.get('train'):service.train(db)
+            return service.refresh(db)
         if kind=='match':return matcher.match_pending(options['limit'],providers.enabled(options.get('providers')))
         if kind=='enrich':return enrich.enrich_pending(options['limit'])
         if kind=='enrich_book':

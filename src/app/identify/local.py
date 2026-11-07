@@ -14,6 +14,13 @@ def strip_numbers(title):
     return out if tk.title_key(out) and re.search(r'[^\W\d_]', out) else ''
 
 
+def strip_parts(title):
+    """Like `strip_numbers`, but only for disc/track/part markers (`CD01 07`, `Part 3`, `13 of 16`, two trailing numbers); a bare trailing number (`Discworld 3`) is a volume and stays."""
+    match = TRAILING_NUMBERS.search(str(title or ''))
+    if match and (re.search(r'[a-z]', match[0], re.I) or len(re.findall(r'\d+', match[0])) >= 2): return strip_numbers(title)
+    return str(title or '').strip()
+
+
 def readings(item):
     """[item with a 'reading' name], raw first; duplicates (same title/author key) are dropped."""
     title = str(item.get('title') or ''); author = ', '.join(tk.people(item.get('author', ''))); base = dict(item, author=author)

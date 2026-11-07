@@ -63,3 +63,10 @@ def test_sibling_context_counts_numbered_parts():
     assert single['siblings'] == 1 and single['members'] == 3 and single['numbered'] == 0
     f = ft.item_features(got, dict(key='k', title='t', subtitle='', year=1, work_year=1, editions=1, audio_editions=0, ratings=0, rating_average=None, authors=[], titles={}, series=[], isbns=[], subjects=[]), set())
     assert f['local_numbered'] == 1 and f['local_siblings_log'] > f['local_members_log']
+
+
+def test_strip_parts_keeps_volumes():
+    from app.identify import context, local
+    assert local.strip_parts('Discworld 3') == 'Discworld 3' and local.strip_parts('The Red Dragon CD01 07') == 'The Red Dragon' and local.strip_parts("Summer's Lease 13 of 16") == "Summer's Lease" and local.strip_parts('Part 3 Title') == 'Part 3 Title'
+    assert context.sibling_key('/a/x.mp3', 'Discworld 3', strict=True) != context.sibling_key('/a/y.mp3', 'Discworld 4', strict=True)
+    assert context.sibling_key('/a/x.mp3', 'Discworld 3') == context.sibling_key('/a/y.mp3', 'Discworld 4')

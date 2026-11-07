@@ -293,6 +293,22 @@ def cmd_openlibrary(args):
     print(json.dumps(result,indent=2));return 0
 
 
+def cmd_identify(args):
+    from app import settings
+    from app.identify import queue, service
+    db = os.path.join(settings.data_dir(), 'catalogue.db')
+    try:
+        if args.cmd == 'identify-train': result = service.train(db)
+        elif args.cmd == 'identify-refresh': result = service.refresh(db)
+        elif args.cmd == 'identify-queue': result = service.page(args.limit)
+        else:
+            item = next((s for s in service.page(50)['items'] if s['group'] == args.group), None)
+            if item is None: sys.exit('no such queued group (refresh the queue?)')
+            queue.decide(item['item'], args.decision, args.work or item['work'], item['files'], item['title'], ', '.join(item['authors'])); result = dict(recorded=args.decision, group=args.group)
+    except (ValueError, OSError, FileNotFoundError, ImportError) as e: sys.exit(str(e))
+    print(json.dumps(result, indent=2, default=str)); return 0
+
+
 def cmd_serve(args):
     from app.server import app as server_app
     server_app.main(['--host', args.host, '--port', str(args.port)]); return 0
@@ -310,6 +326,10 @@ def main(argv=None):
     ip=sub.add_parser('ingest-policy',help='show or save versioned thresholds');ip.add_argument('file',nargs='?');ip.set_defaults(fn=cmd_ingest)
     ip=sub.add_parser('ingest-approve',help='approve metadata or quality and advance to the next review');ip.add_argument('run_id');ip.add_argument('phase',choices=('metadata','audiobook','quality'));ip.set_defaults(fn=cmd_ingest)
     sub.add_parser('ingest-status',help='stage metrics, runs and current thresholds').set_defaults(fn=cmd_ingest)
+    sub.add_parser('identify-train', help='train the identification model from approvals and stored review decisions (needs requirements-model.txt)').set_defaults(fn=cmd_identify)
+    sub.add_parser('identify-refresh', help='score the library and cache the review queue').set_defaults(fn=cmd_identify)
+    iq = sub.add_parser('identify-queue', help='next uncertain books by impact'); iq.add_argument('--limit', type=int, default=10); iq.set_defaults(fn=cmd_identify)
+    idc = sub.add_parser('identify-decide', help='confirm or reject the suggested work for a queued group'); idc.add_argument('group'); idc.add_argument('decision', choices=('approve', 'reject')); idc.add_argument('--work', help='OpenLibrary work key (default: the suggestion)'); idc.set_defaults(fn=cmd_identify)
     check=sub.add_parser('doctor', help='check the environment');check.add_argument('--audio',action='store_true',help='also check NumPy, SciPy and native audio tools');check.set_defaults(fn=doctor)
     def book_fields(sp, edit=False):
         sp.add_argument('--title' if edit else 'title', **(dict(help='new title') if edit else {})); sp.add_argument('--author'); sp.add_argument('--narrator'); sp.add_argument('--series'); sp.add_argument('--series-position', dest='series_position', type=float)

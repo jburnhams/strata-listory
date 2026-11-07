@@ -11,8 +11,10 @@ import sqlite3
 from app.identify import local, textkeys as tk
 
 
-def sibling_key(path, title):
-    return (str(Path(path).parent) if path else '', tk.title_key(local.strip_numbers(title) or title))
+def sibling_key(path, title, strict=False):
+    """(folder, title without part numbers). `strict` keeps bare trailing numbers (volumes) so Book 1 and Book 2 stay different groups."""
+    stripped = local.strip_parts(title) if strict else local.strip_numbers(title)
+    return (str(Path(path).parent) if path else '', tk.title_key(stripped or title))
 
 
 class Index:

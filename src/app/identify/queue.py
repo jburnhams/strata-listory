@@ -23,7 +23,7 @@ def labels_db():
 
 
 def group_key(item):
-    folder, title = context.sibling_key(item.get('path', ''), item.get('title', ''))
+    folder, title = context.sibling_key(item.get('path', ''), item.get('title', ''), strict=True)
     return f"{folder}|{title}|{tk.person_key(item.get('author', ''))}"
 
 
