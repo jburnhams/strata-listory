@@ -2,10 +2,10 @@
 
 The archive keeps every response losslessly; this module derives a small query index (`data/audible/index.sqlite`, built as `.building` and renamed atomically) using the shared keys in textkeys, so the key written at build time is the key looked up at query time.
 
-Strictness: many audiobooks are older tape/CD recordings that Audible never had, so "not on Audible" is a normal outcome and a title alone never produces a candidate. Without an ASIN, a candidate needs an exact author-person match as well as a title key match. Each candidate carries its evidence and a `grade`:
+Candidate generation is deliberately permissive (a title alone still finds the possible recordings) and the model decides how reliable a match is from each candidate's `evidence`; many audiobooks are older tape/CD recordings that Audible never had, so "no candidates", or only candidates whose author or recording conflicts, is a normal outcome and the model must be able to say "not on Audible". `grade` is a coarse hint for simple gates:
   asin    the ASIN was asked for and exists
-  strong  title + author match and at least one independent recording agreement (narrator overlap or runtime within 2%), with none disagreeing
-  weak    title + author match with nothing else to check, or a recording feature that disagrees
+  strong  full-title and author match plus an agreeing recording feature (narrator overlap or runtime within 2%), nothing conflicting
+  weak    everything else
 Audible results are one source family (with Audnexus and the Audible sidecar) for corroboration purposes; they are never independent confirmation of each other."""
 import json, os, sqlite3, zlib
 from datetime import datetime, timezone
@@ -77,23 +77,28 @@ def _describe(c, row, evidence: dict, grade: str) -> dict:
 
 
 def find(c, title: str = '', author: str = '', narrators=(), runtime_min: float | None = None, asin: str = '', limit: int = 20) -> list[dict]:
-    """Candidate recordings, best first. `asin` is a direct lookup. Otherwise both title and author are required: no author, no candidates. The recording features (narrators, runtime) grade a candidate and never create one."""
+    """Candidate recordings, best first, for the model to judge. `asin` is a direct lookup. Otherwise candidates come from the title alone (exact keys, then a fuzzy full-text fallback when no key matches), so a book with no author still gets its possible matches; whatever else is known (author, narrators, runtime) is compared and recorded in `evidence`, never used to drop a candidate. Evidence values: title `full` / `main` / `fuzzy`; author `match` / `conflict` / `unknown`; narrators and runtime `match` / `conflict` (absent when either side is unknown). `grade` is only a hint for simple gates: `strong` needs a full-title and author match plus an agreeing recording feature and no conflict, `asin` is a direct hit, everything else is `weak`."""
     if c is None: return []
     if asin:
         rows = c.execute('SELECT * FROM book WHERE asin=?', (asin.strip().upper(),)).fetchall()
         if rows: return [_describe(c, r, dict(asin=True), 'asin') for r in rows[:limit]]
-    variants, people = tk.title_variants(title), tk.person_variants(author) if author else []
-    if not variants or not people: return []
+    variants = tk.title_variants(title)
+    if not variants: return []
     ph = lambda xs: ','.join('?' * len(xs))
-    rows = c.execute(f'SELECT DISTINCT b.* FROM book b JOIN credit a ON a.asin=b.asin AND a.region=b.region AND a.role=\'Author\' WHERE a.person_key IN ({ph(people)}) AND (b.title_key IN ({ph(variants)}) OR b.main_key IN ({ph(variants)}))', (*people, *variants, *variants)).fetchall()
-    want = {tk.person_key(n) for n in narrators if n}; out = []
+    rows = c.execute(f'SELECT * FROM book WHERE title_key IN ({ph(variants)}) OR main_key IN ({ph(variants)}) LIMIT 500', (*variants, *variants)).fetchall()
+    if not rows:      # no key matches: fall back to words of the title (all must appear), still only candidates
+        words = [w for w in tk.title_main(title).split() if len(w) > 1][:8]
+        if words: rows = c.execute('SELECT b.* FROM book_fts f JOIN book b ON b.rowid=f.rowid WHERE book_fts MATCH ? LIMIT 200', (' '.join(f'"{w}"' for w in words),)).fetchall()
+    people, want, out = set(tk.person_variants(author)) if author else set(), {tk.person_key(n) for n in narrators if n}, []
     for r in rows:
-        ev = dict(title='full' if r['title_key'] in variants[:2] else 'main', author=True)
-        have = {x['person_key'] for x in c.execute("SELECT person_key FROM credit WHERE asin=? AND region=? AND role='Narrator'", (r['asin'], r['region']))}
-        if want and have: ev['narrators'] = 'match' if want & have else 'conflict'
+        ev = dict(title='full' if r['title_key'] in variants[:2] else 'main' if r['title_key'] in variants or r['main_key'] in variants else 'fuzzy')
+        credits = c.execute('SELECT role, person_key FROM credit WHERE asin=? AND region=?', (r['asin'], r['region'])).fetchall()
+        authors, narr = {x['person_key'] for x in credits if x['role'] == 'Author'}, {x['person_key'] for x in credits if x['role'] == 'Narrator'}
+        ev['author'] = 'unknown' if not people or not authors else 'match' if people & authors else 'conflict'
+        if want and narr: ev['narrators'] = 'match' if want & narr else 'conflict'
         if runtime_min and r['runtime_min']:
             delta = abs(r['runtime_min'] - runtime_min) / max(runtime_min, 1); ev['runtime_delta'] = round(delta, 4); ev['runtime'] = 'match' if delta <= RUNTIME_TOLERANCE else 'conflict'
-        agree = [k for k in ('narrators', 'runtime') if ev.get(k) in ('match',)]; bad = [k for k in ('narrators', 'runtime') if ev.get(k) == 'conflict']
-        grade = 'strong' if agree and not bad and ev['title'] == 'full' else 'weak'
-        out.append(_describe(c, r, ev, grade))
-    out.sort(key=lambda d: (d['grade'] != 'strong', d['evidence'].get('runtime_delta', 1), d['evidence']['title'] != 'full', d['asin'])); return out[:limit]
+        agree = [k for k in ('narrators', 'runtime') if ev.get(k) == 'match']; bad = [k for k in ('author', 'narrators', 'runtime') if ev.get(k) == 'conflict']
+        out.append(_describe(c, r, ev, 'strong' if ev['title'] == 'full' and ev['author'] == 'match' and agree and not bad else 'weak'))
+    rank = lambda d: (d['grade'] != 'strong', {'match': 0, 'unknown': 1, 'conflict': 2}[d['evidence']['author']], {'full': 0, 'main': 1, 'fuzzy': 2}[d['evidence']['title']], d['evidence'].get('runtime_delta', 1), d['asin'])
+    out.sort(key=rank); return out[:limit]

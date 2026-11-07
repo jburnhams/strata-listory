@@ -22,12 +22,16 @@ def built(tmp_path):
 def test_asin_lookup_and_missing(tmp_path):
     c = built(tmp_path)
     assert ai.find(c, asin='b000000001')[0]['grade'] == 'asin'
-    assert ai.find(c, asin='B999999999') == [] and ai.find(None, title='x', author='y') == []
+    assert ai.find(c, asin='B999999999') == [] and ai.find(c, title='') == [] and ai.find(None, title='x', author='y') == []
 
 
-def test_title_alone_never_matches(tmp_path):
+def test_title_alone_finds_candidates_with_unknown_author_and_conflicts_are_recorded(tmp_path):
     c = built(tmp_path)
-    assert ai.find(c, title='Dune') == [] and ai.find(c, title='Dune', author='Somebody Else') == []
+    only = ai.find(c, title='Dune')
+    assert [r['asin'] for r in only] == ['B000000002'] and only[0]['evidence']['author'] == 'unknown' and only[0]['grade'] == 'weak'
+    assert ai.find(c, title='Dune', author='Somebody Else')[0]['evidence']['author'] == 'conflict'
+    assert ai.find(c, title='Nonexistent Book Title') == []
+    assert ai.find(c, title='Gift Emperor')[0]['evidence']['title'] == 'fuzzy'
 
 
 def test_author_and_title_is_weak_until_recording_agrees(tmp_path):
