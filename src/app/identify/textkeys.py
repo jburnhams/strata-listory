@@ -80,3 +80,16 @@ def asin(value):
     """A strict Audible/Amazon ASIN: ten upper-case alphanumerics that are not a valid ISBN-10 (those are books, not recordings)."""
     key = str(value or '').strip().upper()
     return key if re.fullmatch(r'[A-Z0-9]{10}', key) and not isbn_keys(key) else ''
+
+
+def people(value):
+    """Split a credit line into individual names: `A and B`, `A; B`, `A & B`, `A, B, C`; but `Tolkien, J.R.R.` stays one name."""
+    if isinstance(value, (list, tuple)): return [p for v in value for p in people(v)]
+    text = str(value or '').strip()
+    if not text: return []
+    parts = [p.strip() for p in re.split(r'\s*(?:;|&|/|\band\b)\s*', text, flags=re.I) if p.strip()]
+    out = []
+    for part in parts:
+        pieces = [p.strip() for p in part.split(',') if p.strip()]
+        out.extend([part] if len(pieces) < 3 and (len(pieces) < 2 or len(pieces[0].split()) == 1) else pieces)
+    return out
