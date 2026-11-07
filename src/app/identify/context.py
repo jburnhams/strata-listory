@@ -27,13 +27,19 @@ class Index:
         return dict(item, members=members, siblings=self.same.get(key, 1), folder_files=folder, numbered=int(bool(local.strip_numbers(item.get('title', ''))) and local.strip_numbers(item.get('title', '')) != item.get('title', '').strip()))
 
 
+def current_runs(c):
+    """Run ids that are the latest for at least one member book. A multi-file group re-ingested under a different primary book supersedes its old run, because every member's latest run is the new one."""
+    latest = {}
+    for book_id, run_id in c.execute('SELECT m.book_id, r.id FROM ingest_members m JOIN ingest_runs r ON r.id=m.run_id ORDER BY r.created, r.id'): latest[book_id] = run_id
+    for run_id, book_id in c.execute('SELECT id, book_id FROM ingest_runs ORDER BY created, id'): latest.setdefault(book_id, run_id)       # runs recorded without membership rows
+    return list(dict.fromkeys(latest.values()))
+
+
 def load(catalogue_db):
     """Index over the latest ingest run of every book item in the catalogue (read-only)."""
     with closing(sqlite3.connect(Path(catalogue_db).resolve().as_uri() + '?mode=ro', uri=True)) as c:
-        latest = {}
-        for run_id, book_id in c.execute('SELECT id, book_id FROM ingest_runs ORDER BY created'): latest[book_id] = run_id
         rows = []
-        for run_id in set(latest.values()):
+        for run_id in current_runs(c):
             row = c.execute("SELECT data FROM ingest_events WHERE run_id=? AND stage='identity' AND status='done' ORDER BY id DESC LIMIT 1", (run_id,)).fetchone()
             if row and json.loads(row[0]).get('kind') == 'book':
                 book = json.loads(row[0]).get('book') or {}; rows.append((book.get('path', ''), book.get('title', '')))

@@ -70,3 +70,4 @@ def test_strip_parts_keeps_volumes():
     assert local.strip_parts('Discworld 3') == 'Discworld 3' and local.strip_parts('The Red Dragon CD01 07') == 'The Red Dragon' and local.strip_parts("Summer's Lease 13 of 16") == "Summer's Lease" and local.strip_parts('Part 3 Title') == 'Part 3 Title'
     assert context.sibling_key('/a/x.mp3', 'Discworld 3', strict=True) != context.sibling_key('/a/y.mp3', 'Discworld 4', strict=True)
     assert context.sibling_key('/a/x.mp3', 'Discworld 3') == context.sibling_key('/a/y.mp3', 'Discworld 4')
+

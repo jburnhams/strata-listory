@@ -29,10 +29,8 @@ def library_items(catalogue_db):
     """Latest ingest run per book: annotated book items (with folder context) of kind 'book'."""
     index = context.load(catalogue_db); items = []
     with closing(sqlite3.connect(Path(catalogue_db).resolve().as_uri() + '?mode=ro', uri=True)) as c:
-        latest = {}
-        for run_id, book_id in c.execute('SELECT id, book_id FROM ingest_runs ORDER BY created'): latest[book_id] = run_id
         members = dict(c.execute('SELECT run_id, count(*) FROM ingest_members GROUP BY run_id').fetchall())
-        for run_id in dict.fromkeys(latest.values()):
+        for run_id in context.current_runs(c):
             row = c.execute("SELECT data FROM ingest_events WHERE run_id=? AND stage='identity' AND status='done' ORDER BY id DESC LIMIT 1", (run_id,)).fetchone()
             data = json.loads(row[0]) if row else {}
             if data.get('kind') != 'book': continue

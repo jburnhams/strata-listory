@@ -85,7 +85,7 @@ def build(connection, runs, progress=None, blank_author=True):
     With `blank_author`, every run also yields a copy whose local author is unknown, with half the weight, so the model learns how little a title alone proves."""
     rows = []; misses = []
     for i, run in enumerate(runs):
-        group_id = hashlib.sha256(json.dumps([tk.title_key(run['target']['title']), sorted(tk.person_key(a) for a in run['target']['authors'])]).encode()).hexdigest()
+        group_id = hashlib.sha256(json.dumps(['work', run['target']['work']] if run['target'].get('work') else [tk.title_key(tk.title_main(run['target']['title'])), sorted(tk.surname(a) for a in run['target']['authors'])]).encode()).hexdigest()      # the canonical work when known, so spelling variants of one book stay in one split
         variants = [(run['run_id'], run['item'], 1.)] + ([(run['run_id'] + ':noauthor', dict(run['item'], author=''), .5)] if blank_author and run['item'].get('author') else [])
         for run_id, item, scale in variants:
             described = candidates_for(connection, item); ids = ft.cluster_ids(described)

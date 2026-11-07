@@ -37,3 +37,10 @@ def test_status_default_and_helpers(tmp_path):
     assert olindex.status()['stage'] == 'not_built'
     assert olindex.year('Jan 5, 1999') == 1999 and olindex.year('n.d.') is None
     assert olindex.keep_edition([]) and olindex.keep_edition(['/languages/eng', '/languages/fre']) and not olindex.keep_edition(['/languages/fre'])
+
+
+def test_start_method_has_a_windows_fallback(monkeypatch):
+    import multiprocessing
+    assert olindex.start_method() in ('fork', 'spawn')
+    monkeypatch.setattr(multiprocessing, 'get_all_start_methods', lambda: ['spawn'])
+    assert olindex.start_method() == 'spawn'

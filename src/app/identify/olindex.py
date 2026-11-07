@@ -124,6 +124,11 @@ def parse_lines(kind, lines):
     return out
 
 
+def start_method():
+    """`fork` where it exists (cheap), `spawn` elsewhere (Windows); the worker function is top-level so both work."""
+    return 'fork' if 'fork' in multiprocessing.get_all_start_methods() else 'spawn'
+
+
 def _worker(args): return parse_lines(*args)
 
 
@@ -203,7 +208,7 @@ def build(dumps=None, *, workers=None, limit=0, output=None):
     published = Path(output) if output else root / 'identify.sqlite'
     with (root / 'identify-build.lock').open('a+b') as lock, oslib.file_lock(lock):
         target = published.with_name(published.name + '.building'); target.unlink(missing_ok=True)
-        connection = sqlite3.connect(target); pool = multiprocessing.get_context('fork').Pool(workers) if workers else None; started = time.monotonic(); counts = {}
+        connection = sqlite3.connect(target); pool = multiprocessing.get_context(start_method()).Pool(workers) if workers else None; started = time.monotonic(); counts = {}
         try:
             connection.executescript(SCHEMA)
             for kind in ('authors', 'works', 'editions'):

@@ -1,7 +1,7 @@
 import json
 import sqlite3
 from job_client import JobClient as TestClient
-from app.identify import queue, service
+from app.identify import context, queue, service
 from app.server.app import create_app
 
 
@@ -44,3 +44,11 @@ def test_library_items_reads_latest_book_runs(tmp_path):
     c.commit(); c.close()
     items = service.library_items(db)
     assert [i['title'] for i in items] == ['The Hobbit CD01 01'] and items[0]['numbered'] == 1 and items[0]['members'] == 1 and items[0]['run_id'] == 'r2'
+
+
+def test_current_runs_follow_membership_when_a_group_is_reingested(tmp_path):
+    c = sqlite3.connect(':memory:')
+    c.executescript('CREATE TABLE ingest_runs(id TEXT, book_id INTEGER, created TEXT); CREATE TABLE ingest_members(run_id TEXT, book_id INTEGER);')
+    for run, book, created, members in (('old', 1, '1', (1, 2)), ('new', 2, '2', (1, 2)), ('solo', 3, '3', ())):
+        c.execute('INSERT INTO ingest_runs VALUES(?,?,?)', (run, book, created)); c.executemany('INSERT INTO ingest_members VALUES(?,?)', [(run, m) for m in members])
+    assert context.current_runs(c) == ['new', 'solo']
