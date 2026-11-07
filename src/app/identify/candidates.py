@@ -94,6 +94,12 @@ def homonyms(connection, title):
     return connection.execute('SELECT count(DISTINCT work) FROM (SELECT work FROM work_titles WHERE norm=? LIMIT 5000)', (key,)).fetchone()[0]
 
 
+def is_person_name(connection, text):
+    """Whether `text` is, as written, the name (or alias) of an author in the index: a title like `John Mortimer` is probably a credit, not a book."""
+    variants = tk.person_variants(text)
+    return bool(variants) and len(variants[0].split()) >= 2 and bool(_in(connection, 'SELECT 1 FROM author_names WHERE norm IN ({}) LIMIT 1', variants[:1]))
+
+
 def _titles(connection, work, limit=200):
     return [r['norm'] for r in connection.execute('SELECT norm FROM work_titles WHERE work=? ORDER BY n DESC LIMIT ?', (work, limit))]
 

@@ -3,7 +3,7 @@ import re
 
 from app.identify import textkeys as tk
 
-TRAILING_NUMBERS = re.compile(r'(?:[\s_.\-–]*(?:cd|disc|disk|part|pt|chapter|chap|ch|track|trk|episode|ep)?[\s_.\-–]*\d{1,3})+\s*$', re.I)
+TRAILING_NUMBERS = re.compile(r'(?:[\s_.\-–]*(?:cd|disc|disk|part|pt|chapter|chap|ch|track|trk|episode|ep)?[\s_.\-–]*\d{1,3}(?:\s*(?:of|/)\s*\d{1,3})?)+\s*$', re.I)
 SEPARATOR = re.compile(r'\s+[-–—]\s+')
 READINGS = ('raw', 'stripped', 'author_title', 'title_author')
 

@@ -12,6 +12,7 @@ def test_find_by_title_author_isbn_and_redirect(tmp_path):
     assert 'author-fuzzy' in cand.find(with_, 'Hobbit Der', 'J.R.R. Tolkien')['/works/OL1W']
     assert cand.find(with_, 'The Hobbit', 'Tolkien')['/works/OL1W'] >= {'title+surname'}
     assert cand.homonyms(with_, 'The Hobbit') == 1 and cand.homonyms(with_, '') == 0 and cand.homonyms(with_, 'nothing here') == 0
+    assert cand.is_person_name(with_, 'J.R.R. Tolkien') and not cand.is_person_name(with_, 'The Hobbit') and not cand.is_person_name(with_, 'Tolkien') and not cand.is_person_name(with_, '')
     assert cand.canonical(with_, ['/works/OL2W', '/works/OL1W']) == {'/works/OL2W': '/works/OL1W', '/works/OL1W': '/works/OL1W'}
 
 
@@ -46,6 +47,7 @@ def test_readings_cover_filename_styles():
     assert {('stripped', "Jonathan Coe - The Rotters' Club", ''), ('author_title', "The Rotters' Club", 'Jonathan Coe'), ('title_author', 'Jonathan Coe', "The Rotters' Club")} <= got
     only = local.readings(dict(title='Dune', author='Unknown Artist'))
     assert [r['reading'] for r in only] == ['raw'] and only[0]['author'] == ''
+    assert local.strip_numbers("Summer's Lease 13 of 16") == "Summer's Lease"
     assert local.strip_numbers('1984') == '' and local.strip_numbers('Apollo 13') == 'Apollo'
     known = local.readings(dict(title='Author One - Title', author='Author One'))
     assert {r['reading'] for r in known} == {'raw', 'author_title'}

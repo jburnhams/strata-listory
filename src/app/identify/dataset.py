@@ -65,11 +65,11 @@ def candidates_for(connection, item):
     best = {}
     for reading in local.readings(item):
         hits = cand.find(connection, reading['title'], reading['author'], reading.get('isbns', ()))
-        mapping = cand.canonical(connection, list(hits)); generic = cand.homonyms(connection, reading['title'])
+        mapping = cand.canonical(connection, list(hits)); generic = cand.homonyms(connection, reading['title']); person = int(cand.is_person_name(connection, reading['title']))
         for key in dict.fromkeys(mapping.values()):
             d = cand.describe(connection, key)
             if not d: continue
-            d.update(homonyms=generic, reading=reading, via=set().union(*(hits[k] for k in hits if mapping[k] == key)))
+            d.update(homonyms=generic, title_is_person=person, reading=reading, via=set().union(*(hits[k] for k in hits if mapping[k] == key)))
             d['features'] = ft.item_features(reading, d, d['via'])
             if key not in best or d['features']['title_best_sim'] > best[key]['features']['title_best_sim']: best[key] = d
     return list(best.values())
