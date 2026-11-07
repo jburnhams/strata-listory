@@ -34,7 +34,7 @@ Downloading the dumps: `python scripts/fetch_openlibrary.py latest` fetches auth
 
 ## Not done yet
 
-* The queue UI is the Review page (see [frontend.md](frontend.md)); decisions there only record training labels, they do not yet approve a book in the ingest pipeline (the Pipeline pages still do that).
+* The queue UI is the Review page (see [frontend.md](frontend.md)); a decision there is saved as a training label **and** carried into the ingest pipeline (`service.apply`, run in the ingest worker): Accept approves the run's book as the model's Open Library work through the ordinary `match_review.accept` path (so its checks still apply) and the run continues to audiobook identification; Not this book withdraws an approval if there is one. A group whose files are still separate catalogue entries (no grouped run, about a quarter of the queue on 2026-11-07) gets the label only, and Review says why.
 * Compact index (hashed aliases, main-title keys, redirects and deletes applied, filtered to about 20M works) and the monthly refresh timer.
 * Kind detection (radio versus book) and better disc/chapter grouping feeding this stage.
 * The old matcher and ingest rule engine are not removed yet.

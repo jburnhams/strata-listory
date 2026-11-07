@@ -150,6 +150,15 @@ describe('ReviewPage', () => {
     expect(identifyState.decided).toHaveLength(1)                   // the answer still in its undo window was saved before the retrain began
   })
 
+  it('says when an answer was saved for training but the book could not be approved in the pipeline', async () => {
+    identifyState.pipeline = () => ({ status: 'skipped', note: 'the files are not grouped into one book yet, so there is no single book to approve' })
+    const { user } = setup(<ReviewPage />)
+    await screen.findByRole('list', { name: 'Matches to review' })
+    await user.keyboard('a'); await user.keyboard('a')
+    expect(await screen.findByText(/Saved for training, but Title 1 was not approved in the pipeline: the files are not grouped/)).toBeInTheDocument()
+    await user.keyboard('u')
+  })
+
   it('puts a card back and says why when the answer could not be saved', async () => {
     server.use(http.post('/api/identify/decisions', () => HttpResponse.json({ detail: 'no such queued group; refresh the queue' }, { status: 404 })))
     const { user } = setup(<ReviewPage />)

@@ -15,7 +15,7 @@ export function identifyQueue(n: number): import('../../src/api').IdentifyItem[]
     item: { title: `Title ${i + 1} CD01 01`, author: i % 2 ? '' : `Author ${i + 1}`, path: `/audio/Books/Author ${i + 1}/Title ${i + 1}/CD01 01.mp3` },
   }))
 }
-export const identifyState: { queue: import('../../src/api').IdentifyItem[]; decided: { group: string; decision: string; work: string }[]; accepted: number; refreshes: string[] } = { queue: identifyQueue(3), decided: [], accepted: 520, refreshes: [] }
+export const identifyState: { queue: import('../../src/api').IdentifyItem[]; decided: { group: string; decision: string; work: string }[]; accepted: number; refreshes: string[]; pipeline: (group: string) => import('../../src/api').PipelineOutcome } = { queue: identifyQueue(3), decided: [], accepted: 520, refreshes: [], pipeline: () => ({ status: 'approved', note: 'the book was approved and the pipeline continues' }) }
 
 export const hardcover = {
   id: '375699', url: 'https://hardcover.app/books/dune', description: 'A desert planet saga.', pages: 612, rating: 4.31, ratings_count: 12345, reviews_count: 99, readers: 5000, finished: 4000,
@@ -48,7 +48,7 @@ export const mock: { settings: Settings; books: Book[]; extras: Record<string, {
 }
 
 export const resetMock = () => {
-  identifyState.queue = identifyQueue(3); identifyState.decided = []; identifyState.refreshes = []
+  identifyState.queue = identifyQueue(3); identifyState.decided = []; identifyState.refreshes = []; identifyState.pipeline = () => ({ status: 'approved', note: 'the book was approved and the pipeline continues' })
   mock.settings = { ...defaultSettings }
   mock.books = [...initialBooks]
   mock.extras = {}
@@ -185,7 +185,7 @@ export const server = setupServer(
     const b = (await request.json()) as { group: string; decision: string; work: string }
     if (!identifyState.queue.some(i => i.group === b.group)) return HttpResponse.json({ detail: 'no such queued group; refresh the queue' }, { status: 404 })
     identifyState.decided.push(b)
-    return HttpResponse.json({ recorded: b.decision })
+    return HttpResponse.json({ recorded: b.decision, pipeline: identifyState.pipeline(b.group) })
   }),
   http.post('/api/identify/refresh', ({ request }) => { identifyState.refreshes.push(new URL(request.url).searchParams.get('train') ?? ''); return HttpResponse.json({ queue: identifyState.queue.length }) }),
   http.get('/api/jobs/:id', () => HttpResponse.json({ state: 'done', result: {}, error: '' })),

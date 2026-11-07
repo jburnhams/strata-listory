@@ -18,7 +18,7 @@ The identify model (Audible and Open Library together) settles what it is sure o
 ### Review
 
 * One endless list over `GET /api/identify/queue`, impact order from the server. Each card shows what the files say, what the model matched them to, how sure it is (a near tie with the runner-up reads as a close call whatever the score) and how many files one answer settles.
-* **Accept** records an `approve` label, **Not this book** a `reject` (a hard negative). Both fold the card away at once with a five second Undo; the answer is saved when the window closes, on the next answer or on leaving the page, and `flush()` saves it before a retrain. A failed save puts the card back and says so in the bar.
+* **Accept** records an `approve` label and approves the book in the ingest pipeline as the model's work; **Not this book** records a `reject` (a hard negative) and withdraws an approval if there is one. When the pipeline cannot take the answer (files not grouped into one book yet, the run is mid-stage) it is still saved for training and a note says why. Both fold the card away at once with a five second Undo; the answer is saved when the window closes, on the next answer or on leaving the page, and `flush()` saves it before a retrain. A failed save puts the card back and says so in the bar.
 * Built from strata-react's `useInfiniteLoad` / `InfiniteList`, `useUndoable`, `useActiveItem`, `useHotkeys` / `KeysLegend`. Pages are requested `after` the last group held, never by offset, so answers saved meanwhile cannot skip or repeat cards; the list refetches when you come back to the page.
 * Keys: `A` accept, `R` not this book, `J`/`K` next or previous card, `U` undo. Ignored while typing in a field.
 * **Retrain with my answers** runs `identify-refresh --train` as a job and reloads the list.
@@ -26,7 +26,7 @@ The identify model (Audible and Open Library together) settles what it is sure o
 ### What was kept, merged or replaced
 
 * Replaced: the "Book identification", "Automatic approvals", "Match shortlist" and "Audiobook identification" top-level pages as a way to *decide what a book is*. Review does that for every book in one list. Old addresses (`#/book-identification`, `#/automatic-approvals`, ...) redirect.
-* Kept, as tabs under **Pipeline**: those same pages, because they are still what moves a book through the ingest pipeline. The identify decisions only record training labels today (see [identification.md](identification.md)); once they approve books, Pipeline can shrink to quality review and be merged into Processing.
+* Kept, as tabs under **Pipeline**: those same pages, because they are still what moves a book through the ingest pipeline. Review now approves the book stage, so the Book tab only holds what Review cannot take (ungrouped files); Audiobook, Quality and the two match tabs remain until those stages are driven the same way, after which Pipeline can be merged into Processing.
 * Merged: Processing, Proposed and Finished into one Processing page with tabs; Quality into Pipeline.
 * Dropped from Library: the folder tree, the cover-only filter and paging (the table virtualises; search matches paths).
 
