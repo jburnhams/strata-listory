@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Navigate, Route, Routes, useParams } from 'react-router'
 import { AppShell, PageHeader, Tabs } from 'strata-react'
-import { BookOpen, Library as LibraryIcon, ListChecks, Settings, SlidersHorizontal, Workflow } from 'lucide-react'
+import { BookOpen, FolderTree, Library as LibraryIcon, ListChecks, Settings, SlidersHorizontal, Workflow } from 'lucide-react'
 import { api } from './api'
 import ReviewPage from './components/ReviewPage'
 import LibraryPage from './components/LibraryPage'
@@ -13,10 +13,12 @@ import FinishedPage from './components/FinishedPage'
 import IngestPage from './components/IngestPage'
 import MatchReviewPage from './components/MatchReviewPage'
 import SettingsPage from './components/SettingsPage'
+import FilesPage from './components/FilesPage'
 
 const nav = [
   { to: '/', label: 'Review', icon: ListChecks, end: true },
   { to: '/library', label: 'Library', icon: LibraryIcon },
+  { to: '/files', label: 'Files', icon: FolderTree },
   { to: '/pipeline', label: 'Pipeline', icon: Workflow },
   { to: '/processing', label: 'Processing', icon: SlidersHorizontal },
   { to: '/settings', label: 'Settings', icon: Settings },
@@ -57,6 +59,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<ReviewPage />} />
         <Route path="/library" element={<LibraryPage />} />
+        <Route path="/files" element={<FilesPage />} />
         <Route path="/book/:id" element={<Book />} />
         <Route path="/pipeline" element={<Pipeline />} />
         <Route path="/processing" element={<Processing />} />

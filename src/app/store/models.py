@@ -19,6 +19,7 @@ from omarchy_db import make_base
 Base = make_base()
 
 LISTEN_KINDS = ("book", "radio_series", "radio_show", "other")
+GROUP_KINDS = ("root", "folder", "disc", "book", "series", "loose")      # fixed list; grows as the grouping steps find real structure
 PART_ROLES = ("input", "output", "reference", "sidecar", "record", "candidate", "match")
 PART_STATES = ("active", "candidate", "accepted", "rejected")
 ACTOR_KINDS = ("user", "auto_policy", "model", "rule", "import")
@@ -39,7 +40,11 @@ class PartFile(Base):
     size: Mapped[int] = mapped_column(sa.BigInteger)
     duration_s: Mapped[float | None] = mapped_column(default=None)
     codec: Mapped[str | None] = mapped_column(default=None)
-    probe: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)       # ffprobe output: tags, chapters, channels, bit rate
+    channels: Mapped[int | None] = mapped_column(default=None)
+    sample_rate: Mapped[int | None] = mapped_column(default=None)
+    bit_rate: Mapped[int | None] = mapped_column(default=None)
+    probe: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)       # the complete ffprobe JSON (format with all tags, every stream, chapters); the columns above are copies for querying
+    probe_error: Mapped[str | None] = mapped_column(default=None)                   # set when ffprobe could not read the file (probe stays null)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), init=False)
 
 
@@ -55,6 +60,50 @@ class PartRecord(Base):
     external_id: Mapped[str | None] = mapped_column(default=None)   # ASIN, OL id... for lookups
     fetched_at: Mapped[datetime] = mapped_column(server_default=func.now(), init=False)
     __table_args__ = (sa.UniqueConstraint("source", "kind", "payload_hash"), Index("part_record_external", "source", "external_id"))
+
+
+class PartFileLocation(Base):
+    """Where a file content has been seen on disk (path, size, mtime) so a rescan only hashes files that changed. Becomes a join to filecat.files once filecat scans the audiobook folders."""
+    __tablename__ = "part_file_location"
+    id: Mapped[int] = mapped_column(primary_key=True, init=False)
+    file_id: Mapped[int] = mapped_column(ForeignKey("part_file.id"), index=True)
+    path: Mapped[str] = mapped_column(unique=True)
+    size: Mapped[int] = mapped_column(sa.BigInteger)
+    mtime_ns: Mapped[int] = mapped_column(sa.BigInteger)
+    first_seen: Mapped[datetime] = mapped_column(server_default=func.now(), init=False)
+    last_seen: Mapped[datetime] = mapped_column(server_default=func.now(), init=False)
+    gone_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class PartFilegroup(Base):
+    """A set of files and/or other filegroups made by one grouping run: a library root contains folders, a book contains discs, a disc contains tracks. Immutable: a different grouping makes new groups (new run), it never edits these.
+    The counts are facts about the group at creation (files and bytes anywhere below it, groups below it)."""
+    __tablename__ = "part_filegroup"
+    id: Mapped[int] = mapped_column(primary_key=True, init=False)
+    run_id: Mapped[str] = mapped_column(ForeignKey("run.id"), index=True)
+    kind: Mapped[str]
+    label: Mapped[str]
+    path: Mapped[str | None] = mapped_column(default=None, index=True)       # the folder it came from, when it came from one
+    file_count: Mapped[int] = mapped_column(server_default="0", default=0)
+    total_bytes: Mapped[int] = mapped_column(sa.BigInteger, server_default="0", default=0)
+    group_count: Mapped[int] = mapped_column(server_default="0", default=0)
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)   # evidence for inferred groups
+    __table_args__ = (CheckConstraint(_in("kind", GROUP_KINDS), name="filegroup_kind"),)
+
+
+class PartFilegroupMember(Base):
+    """One entry of a group: exactly one of a file or a child group, at `ordinal` (listening order). A group may sit under several parents (competing groupings)."""
+    __tablename__ = "part_filegroup_member"
+    id: Mapped[int] = mapped_column(primary_key=True, init=False)
+    group_id: Mapped[int] = mapped_column(ForeignKey("part_filegroup.id", ondelete="CASCADE"), index=True)
+    ordinal: Mapped[int]
+    file_id: Mapped[int | None] = mapped_column(ForeignKey("part_file.id"), index=True, default=None)
+    child_group_id: Mapped[int | None] = mapped_column(ForeignKey("part_filegroup.id"), index=True, default=None)
+    __table_args__ = (
+        CheckConstraint("(file_id is not null)::int + (child_group_id is not null)::int = 1", name="filegroup_member_one_target"),
+        CheckConstraint("child_group_id is null or child_group_id <> group_id", name="filegroup_member_not_self"),
+        sa.UniqueConstraint("group_id", "ordinal"),
+    )
 
 
 class Person(Base):
@@ -160,6 +209,7 @@ class ListenPart(Base):
     file_id: Mapped[int | None] = mapped_column(ForeignKey("part_file.id"), index=True, default=None)
     record_id: Mapped[int | None] = mapped_column(ForeignKey("part_record.id"), index=True, default=None)
     work_id: Mapped[int | None] = mapped_column(ForeignKey("work.id"), index=True, default=None)
+    filegroup_id: Mapped[int | None] = mapped_column(ForeignKey("part_filegroup.id"), index=True, default=None)
     ordinal: Mapped[int | None] = mapped_column(default=None)
     state: Mapped[str] = mapped_column(server_default="active", default="active")
     score: Mapped[float | None] = mapped_column(default=None)
@@ -170,7 +220,7 @@ class ListenPart(Base):
     linked_at: Mapped[datetime] = mapped_column(server_default=func.now(), init=False)
     unlinked_at: Mapped[datetime | None] = mapped_column(default=None)
     __table_args__ = (
-        CheckConstraint("(file_id is not null)::int + (record_id is not null)::int + (work_id is not null)::int = 1", name="listen_part_one_target"),
+        CheckConstraint("(file_id is not null)::int + (record_id is not null)::int + (work_id is not null)::int + (filegroup_id is not null)::int = 1", name="listen_part_one_target"),
         CheckConstraint(_in("role", PART_ROLES), name="listen_part_role"),
         CheckConstraint(_in("state", PART_STATES), name="listen_part_state"),
         CheckConstraint(_in("linked_by", ACTOR_KINDS), name="listen_part_linked_by"),

@@ -11,6 +11,7 @@ The identify model (Audible and Open Library together) settles what it is sure o
 | **Review** (home) | `#/` | Which of the model's guesses do I need to confirm? |
 | Library | `#/library` | Which books do I have, and which should go into the pipeline next? Search, match, listening and workflow filters are in the URL. |
 | Book | `#/book/:id` | Everything known about one book, with the player when it is finished. |
+| Files | `#/files?group=` | How were my audio files grouped? Browses the folder tree grouped into the listory Postgres schema (`./app filegroups` makes it); groups and files, breadcrumb, size. |
 | Pipeline | `#/pipeline?tab=` | The older per-book approval stages (book, audiobook, quality, automatic approvals, match shortlist). |
 | Processing | `#/processing?tab=` | What is being turned into finished audiobooks: queue, plans to approve, finished. |
 | Settings | `#/settings` | Where does the app read and write? |

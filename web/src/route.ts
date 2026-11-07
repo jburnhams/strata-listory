@@ -14,6 +14,7 @@ export const href = {
   quality: () => '#/pipeline?tab=quality',
   automatic: () => '#/pipeline?tab=automatic',
   shortlist: () => '#/pipeline?tab=shortlist',
+  files: (group?: number) => (group ? `#/files?group=${group}` : '#/files'),
   settings: () => '#/settings',
   review: () => '#/',
 }

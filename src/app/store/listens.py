@@ -23,9 +23,9 @@ def create_listen(s: Session, kind: str = "book", *, actor_kind: str = "import",
     _event(s, l, "create", actor_kind, actor_ref=actor_ref, run_id=run_id, reason=reason, after={"kind": kind}); return l
 
 
-def link(s: Session, listen: Listen, role: str, *, file_id: int | None = None, record_id: int | None = None, work_id: int | None = None, ordinal: int | None = None, state: str = "active", score: float | None = None, detail: dict | None = None,
+def link(s: Session, listen: Listen, role: str, *, file_id: int | None = None, record_id: int | None = None, work_id: int | None = None, filegroup_id: int | None = None, ordinal: int | None = None, state: str = "active", score: float | None = None, detail: dict | None = None,
          actor_kind: str = "user", actor_ref: str = "", run_id: str | None = None, reason: str = "") -> ListenPart:
-    p = ListenPart(listen_id=listen.id, role=role, file_id=file_id, record_id=record_id, work_id=work_id, ordinal=ordinal, state=state, score=score, detail=detail, linked_by=actor_kind, run_id=run_id, reason=reason)
+    p = ListenPart(listen_id=listen.id, role=role, file_id=file_id, record_id=record_id, work_id=work_id, filegroup_id=filegroup_id, ordinal=ordinal, state=state, score=score, detail=detail, linked_by=actor_kind, run_id=run_id, reason=reason)
     s.add(p); s.flush()
     _event(s, listen, "link", actor_kind, part=p, actor_ref=actor_ref, run_id=run_id, reason=reason, after={"role": role, "state": state, "ordinal": ordinal, "score": score}); return p
 

@@ -97,6 +97,11 @@ def create_app():
                 with saved_evidence_only():return await call_next(request)
             return await call_next(request)
 
+    try:
+        from app.store.api import router as filegroups_router      # needs omarchy-db; the rest of the app does not
+        app.include_router(filegroups_router)
+    except ImportError: pass
+
     initial_settings=settings.all_settings()
     jobs=JobQueue(lambda domain,kind,options:tasks.execute(jobs,domain,kind,options))
     app.state.jobs=jobs

@@ -60,6 +60,11 @@ export const resetMock = () => {
 }
 
 // Every endpoint the app calls has a handler here; one without a handler fails the test (setup.ts: onUnhandledFrame 'error').
+const fgRoot = { id: 1, kind: 'root', label: 'audio', path: '/audio', file_count: 3, total_bytes: 3e9, group_count: 1 }
+const fgDetail = {
+  1: { group: fgRoot, ancestors: [], children: [{ id: 2, kind: 'folder', label: 'Red Dragon', path: '/audio/Red Dragon', file_count: 2, total_bytes: 2e9, group_count: 0, ordinal: 2 }], files: [{ id: 9, ordinal: 1, name: 'Intro.mp3', path: '/audio/Intro.mp3', size: 5e6, duration_s: 3725, codec: 'mp3', tags: { title: 'Intro', artist: 'Thomas Harris' }, probe_error: null }] },
+  2: { group: { id: 2, kind: 'folder', label: 'Red Dragon', path: '/audio/Red Dragon', file_count: 2, total_bytes: 2e9, group_count: 0 }, ancestors: [{ id: 1, label: 'audio', kind: 'root' }], children: [], files: [{ id: 10, ordinal: 1, name: 'CD1 01.mp3', path: null, size: 1e9, duration_s: null, codec: null, tags: {}, probe_error: 'moov atom not found' }, { id: 11, ordinal: 2, name: 'CD1 02.mp3', path: null, size: 1e9, duration_s: 95, codec: 'aac', tags: {}, probe_error: null }] },
+}
 export const handlers = [
   http.get('/api/match-reviews', ({ request }) => { const mode = new URL(request.url).searchParams.get('mode') === 'automatic' ? 'automatic' : 'shortlist'; return HttpResponse.json({ rows: [matchReviewFixture(mode)], total: 1, offset: 0, limit: 10 }) }),
   http.get('/api/match-reviews/:id', () => HttpResponse.json(matchReviewFixture())),
@@ -68,6 +73,9 @@ export const handlers = [
   http.get('/api/operations', () => HttpResponse.json({ rows: [], busy: false })),
   http.get('/api/finished', () => HttpResponse.json([])),
   http.get('/api/books/:id/output', () => HttpResponse.json({ book: {}, metadata: null, chapters: [] })),
+  http.get('/api/filegroups', () => HttpResponse.json({ root: fgRoot, groupings: 1 })),
+  http.get('/api/filegroups/files/:id', ({ params }) => HttpResponse.json({ id: Number(params.id), sha256: 'ab'.repeat(32), size: 5e6, duration_s: 3725, codec: 'mp3', channels: 2, sample_rate: 44100, bit_rate: 64000, probe: params.id === '9' ? { format: { tags: { comment: 'unabridged' } } } : null, probe_error: params.id === '9' ? null : 'moov atom not found', locations: [{ path: '/audio/Intro.mp3', gone: false }, { path: '/old/Intro.mp3', gone: true }] })),
+  http.get('/api/filegroups/:id', ({ params }) => params.id === '1' ? HttpResponse.json(fgDetail[1]) : params.id === '2' ? HttpResponse.json(fgDetail[2]) : HttpResponse.json({ detail: 'no such group' }, { status: 404 })),
   http.get('/api/health', () => HttpResponse.json({ ok: true, version: '0.1.0' })),
   http.get('/api/settings', () => HttpResponse.json(mock.settings)),
   http.put('/api/settings', async ({ request }) => {
