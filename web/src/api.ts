@@ -154,6 +154,12 @@ export interface PipelineOutcome { status: 'approved' | 'confirmed' | 'withdrawn
 export interface IdentifyPage { summary: IdentifySummary | null; items: IdentifyItem[] }
 export const identifyApi = {
   queue: (after?: string, limit = 20) => req<IdentifyPage>(`/api/identify/queue?${new URLSearchParams({ limit: String(limit), ...(after ? { after } : {}) })}`),
-  decide: (group: string, decision: 'approve' | 'reject', work = '') => req<{ recorded: string; pipeline: PipelineOutcome }>('/api/identify/decisions', send('POST', { group, decision, work })),
+  // A decision is idempotent (the label is replaced, an approved book is only confirmed), so a dropped connection, which an IO-starved server produces, is retried before the answer is reported lost.
+  decide: async (group: string, decision: 'approve' | 'reject', work = '') => {
+    for (let attempt = 0; ; attempt++) {
+      try { return await req<{ recorded: string; pipeline: PipelineOutcome }>('/api/identify/decisions', send('POST', { group, decision, work })) }
+      catch (e) { if (!(e instanceof TypeError) || attempt >= 2) throw e; await new Promise(r => setTimeout(r, 1500 * (attempt + 1))) }
+    }
+  },
   refresh: (train = false) => req<unknown>(`/api/identify/refresh?train=${train}`, { method: 'POST' }),
 }

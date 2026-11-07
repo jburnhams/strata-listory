@@ -19,7 +19,7 @@ def labels_path(): return Path(settings.data_dir()) / 'identify' / 'labels.sqlit
 
 def labels_db():
     path = labels_path(); path.parent.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(path); c.execute(SCHEMA); return c
+    c = sqlite3.connect(path, timeout=30); c.execute(SCHEMA); return c      # a long timeout: the box is often IO-starved by the Audible fetch and backups, and a lock timeout loses a person's answer
 
 
 def group_key(item):
