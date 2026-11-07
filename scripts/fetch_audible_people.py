@@ -37,8 +37,8 @@ class Audible:
     def __init__(self, region: str, rate: float):
         self.base, self.gap, self.last = f'https://api.audible.{TLD[region]}/1.0/catalog/products', 1 / rate, 0.0
 
-    def page(self, kind: str, name: str, page: int) -> list[dict]:
-        url = f'{self.base}?{kind}={urllib.parse.quote(name)}&num_results=50&page={page}&products_sort_by=-ReleaseDate&response_groups={GROUPS}&image_sizes=500'
+    def page(self, kind: str, name: str, page: int, sort: str = '-ReleaseDate') -> list[dict]:
+        url = f'{self.base}?{kind}={urllib.parse.quote(name)}&num_results=50&page={page}&products_sort_by={sort}&response_groups={GROUPS}&image_sizes=500'
         for attempt in range(1, 6):
             time.sleep(max(0, self.last + self.gap - time.monotonic())); self.last = time.monotonic()
             try:
@@ -61,15 +61,24 @@ def store(c: sqlite3.Connection, region: str, p: dict) -> None:
         for x in p.get(key) or []: c.execute('INSERT OR IGNORE INTO credit VALUES (?,?,?,?,?)', (p['asin'], region, role, x['name'], x.get('asin')))
 
 
+CAP = 500      # Audible repeats the last page beyond about the tenth, so one sorted listing yields at most ~500 products
+
+
 def fetch_person(c, api: Audible, region: str, pid: str, name: str, role: str) -> tuple:
-    key = 'authors' if role == 'Author' else 'narrators'; want = norm(name); seen, matched, pages = set(), 0, 0
-    while pages < 25:
-        pages += 1; ps = api.page(role.lower(), name, pages); fresh = [p for p in ps if p['asin'] not in seen]; seen.update(p['asin'] for p in ps)
-        with c:
-            for p in fresh:
-                if any(norm(x['name']) == want for x in p.get(key) or []): store(c, region, p); matched += 1
-        if len(ps) < 50 or not fresh: break
-    return pages, len(seen), matched, int(pages >= 20)
+    """All of a person's products, matched by exact credited name. A person with more than CAP products is listed again in other sort orders (newest, oldest, A-Z, Z-A), each reaching a different 500, so up to ~2,000 are found; `capped` is 1 when even that left the last sort full."""
+    key = 'authors' if role == 'Author' else 'narrators'; want = norm(name); seen, ids, pages, capped = set(), set(), 0, 0
+    for sort in ('-ReleaseDate', 'ReleaseDate', 'Title', '-Title'):
+        got, pg = set(), 0
+        while pg < 12:
+            pg += 1; pages += 1; ps = api.page(role.lower(), name, pg, sort); fresh = [p for p in ps if p['asin'] not in got]; got.update(p['asin'] for p in ps)
+            with c:
+                for p in fresh:
+                    seen.add(p['asin'])
+                    if any(norm(x['name']) == want for x in p.get(key) or []): store(c, region, p); ids.add(p['asin'])
+            if len(ps) < 50 or not fresh: break
+        if len(got) < CAP: break      # this listing was complete, so no other order can add anything
+        capped = int(sort == '-Title')
+    return pages, len(seen), len(ids), capped
 
 
 def main(argv=None) -> int:
