@@ -8,7 +8,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from app.identify import candidates as cand, features as ft, local, textkeys as tk
+from app.identify import candidates as cand, context, features as ft, local, textkeys as tk
 
 WEIGHT = dict(manual=3., automatic=1.)
 STAGES = ('identity', 'metadata', 'metadata_approval', 'metadata_revocation', 'match_review_decision')
@@ -21,7 +21,9 @@ def work_key(url):
 
 def labelled_runs(catalogue_db):
     """One entry per approved, un-revoked run of a book: the local item, the approved title/authors and its Open Library work key when recorded."""
+    index = context.load(catalogue_db)
     with closing(sqlite3.connect(Path(catalogue_db).resolve().as_uri() + '?mode=ro', uri=True)) as c:
+        members = dict(c.execute('SELECT run_id, count(*) FROM ingest_members GROUP BY run_id').fetchall())
         events = {}
         for run_id, stage, status, data, event_id in c.execute(f"SELECT run_id, stage, status, data, id FROM ingest_events WHERE status='done' AND stage IN ({','.join('?' * len(STAGES))}) ORDER BY id", STAGES):
             events.setdefault(run_id, []).append((stage, event_id, data))
@@ -39,7 +41,7 @@ def labelled_runs(catalogue_db):
         if not resolved.get('title') or not resolved.get('authors'): continue
         book = identity.get('book') or {}
         manual = not json.loads(approval[2]).get('automatic') or any(e[0] == 'match_review_decision' and json.loads(e[2]).get('action') == 'approve' for e in items)
-        out.append(dict(run_id=run_id, item=dict(title=book.get('title', ''), author=book.get('author', ''), narrator=book.get('narrator', ''), series=book.get('series', ''), asin=book.get('asin', ''), year=book.get('year')),
+        out.append(dict(run_id=run_id, item=index.annotate(dict(title=book.get('title', ''), author=book.get('author', ''), narrator=book.get('narrator', ''), series=book.get('series', ''), asin=book.get('asin', ''), year=book.get('year'), path=book.get('path', '')), members.get(run_id, 1)),
                         target=dict(title=resolved['title'], authors=resolved['authors'], work=work_key((records.get('openlibrary') or {}).get('url'))), origin='manual' if manual else 'automatic'))
     return out
 
