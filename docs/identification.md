@@ -1,0 +1,40 @@
+# Book identification (model-first, local Open Library)
+
+Replaces the rule-engine route for deciding *which written work* a local item is. Design rationale and the audit it came from: [identification-audit-20261107.md](identification-audit-20261107.md). Code is in `src/app/identify/`; the older `matcher`/`ingest/metadata` path is still in place until the migration steps below are done.
+
+## Pipeline
+
+1. **Index** (`olindex.py`): builds `data/openlibrary/identify.sqlite` from the Open Library dumps. A work is a cluster: every title, subtitle, full title and alternate title ever used by its English or unlabelled-language editions (with how many editions use each), author names and aliases, ISBNs, Amazon IDs, series, edition and audio-edition counts, ratings. All text keys come from `textkeys.py`, the single definition of title/person/ISBN/ASIN normalisation. First build: 38 GB, about 2 hours; a compact format is planned (see below).
+2. **Readings** (`local.py`): file and folder names pack author, title and part numbers into one string, so each plausible reading (as tagged, part numbers stripped, `Author - Title` split) is searched. The model sees which reading matched.
+3. **Candidates** (`candidates.py`): recall only. ISBN, any title-key variant (with an author filter when known; surname-only credits narrow by title first), and the credited authors' fuzzily close works.
+4. **Features** (`features.py`): every normalisation is a feature, never a veto: title match against all aliases and the share of editions agreeing, author name-part matches, popularity, genericness of the title (homonym count), reading used, folder context (`context.py`: siblings sharing a stripped title, grouped member count) and within-query context (margin to the best *different* book; duplicate catalogue works with the same title and a shared author name are one cluster).
+5. **Model** (`model.py`): XGBoost probability per candidate. A query is auto-accepted only when its best cluster scores at least 0.98 and beats the runner-up by 0.3 (`score.py`); everything else is reviewed.
+6. **Review queue** (`queue.py`, `service.py`): uncertain groups ordered by impact (files settled by one answer, model uncertainty, other unresolved groups by the same author). Decisions are stored in `data/identify/labels.sqlite` as manual, highest-weight labels (rejects are hard negatives) and used by the next training run.
+
+## Commands
+
+```sh
+python -m pip install -r requirements-model.txt         # optional; training and scoring need it
+./app identify-train      # fit from approvals + stored decisions, saves data/identify/model.ubj
+./app identify-refresh    # score the library, cache the queue
+./app identify-queue --limit 10
+./app identify-decide GROUP approve|reject [--work /works/OL…W]
+```
+
+API: `GET /api/identify/queue`, `POST /api/identify/decisions` (`retrain: true` queues a retrain and rescore), `POST /api/identify/refresh`.
+
+Downloading the dumps: `python scripts/fetch_openlibrary.py latest` fetches authors, works, editions, ratings, redirects and deletes for the newest monthly snapshot; build with `olindex.build()`.
+
+## Measured so far (small data: treat as a first estimate)
+
+* 524 approved runs (about two thirds are automatic approvals produced by the old rules, so this is partly circular; 31 are manual).
+* The right book is among the candidates for 508 of 524.
+* Held-out test queries (244, including copies with the author blanked): 206 auto-accepted at a score of 0.95 and margin 0.3, with 0 false positives; the calibration split still contains one disputed case, so no threshold is auto-selected yet and 0.98/0.3 is fixed by hand.
+* Library-wide (1,450 items classed as book, which are 913 distinct titles): 49% of items are auto-accepted. The remainder is mostly ungrouped disc/chapter files and episodes awaiting the grouping step, plus blank-author or generic titles that need the review queue or the audiobook-side match.
+
+## Not done yet
+
+* No UI for the queue (CLI and API only).
+* Compact index (hashed aliases, main-title keys, redirects and deletes applied, filtered to about 20M works) and the monthly refresh timer.
+* Kind detection (radio versus book) and better disc/chapter grouping feeding this stage.
+* The old matcher and ingest rule engine are not removed yet.
