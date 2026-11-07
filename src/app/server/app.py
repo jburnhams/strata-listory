@@ -52,6 +52,13 @@ class IdsIn(BaseModel):
     ids: list[int]
 
 
+class IdentifyDecisionIn(BaseModel):
+    group: str = Field(min_length=1)
+    decision: Literal['approve','reject']
+    work: str = ''
+    retrain: bool = False
+
+
 class MatchDecisionIn(BaseModel):
     basis: str = Field(min_length=64,max_length=64)
     defer_continuation: bool = False
@@ -259,6 +266,25 @@ def create_app():
     def match_review_decide(run_id:str,action:Literal['accept','unapprove','confirm','reject','restore'],b:MatchDecisionIn):
         ingest_guard(ingest_store.run_book_id,run_id)
         return queued('ingest','match_review',run_id=run_id,action=action,expected=b.basis,**(dict(defer_continuation=True) if b.defer_continuation else {}))
+
+    @app.get('/api/identify/queue')
+    def identify_queue(limit:int=Query(default=10,ge=1,le=50)):
+        from app.identify import service
+        return service.page(limit)
+
+    @app.post('/api/identify/decisions')
+    def identify_decide(b:IdentifyDecisionIn):
+        """Record a confirm/reject for a queued group; returns the next batch. `retrain` also queues a retrain + rescore so the following batch reflects the answer."""
+        from app.identify import queue, service
+        item=next((s for s in service.page(50)['items'] if s['group']==b.group),None)
+        if item is None:raise HTTPException(404,'no such queued group; refresh the queue')
+        queue.decide(item['item'],b.decision,b.work or item['work'],item['files'],item['title'],', '.join(item['authors']))
+        out=dict(recorded=b.decision,next=service.page(10))
+        if b.retrain:out['job']=jobs.submit('system','identify',train=True)
+        return out
+
+    @app.post('/api/identify/refresh')
+    def identify_refresh(train:bool=False):return queued('system','identify',train=train)
 
     @app.get('/api/operations')
     def get_operations(completed:bool=False):
