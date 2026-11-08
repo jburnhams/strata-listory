@@ -2,15 +2,15 @@
 import os
 
 import pytest
-from sqlalchemy import select
 
-pytest.importorskip("omarchy_db")
+pytest.importorskip("omarchy_db")      # first: the standard CI test environment has neither omarchy-db nor SQLAlchemy
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.store import api, filegroups as fg, listens as L
 from app.store.models import PartFile, PartFileLocation, PartFilegroup, PartFilegroupMember, ListenPart
-from sqlalchemy.exc import IntegrityError
 
 
 @pytest.fixture

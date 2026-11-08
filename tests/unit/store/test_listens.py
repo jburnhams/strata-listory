@@ -1,9 +1,10 @@
 """The listen layer on a real Postgres (engine = "postgres": partial unique indexes and JSONB). Skipped when no server is reachable, as in CI without a service container."""
 import pytest
+
+pytest.importorskip("omarchy_db")      # first: the standard CI test environment has neither omarchy-db nor SQLAlchemy
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
-pytest.importorskip("omarchy_db")
 from app.store import listens as L
 from app.store.models import ListenEvent, ListenPart, PartFile, PartRecord
 
