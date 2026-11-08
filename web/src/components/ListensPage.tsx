@@ -25,7 +25,7 @@ export default function ListensPage() {
   const columns: Column<ListenRow>[] = [
     { key: 'label', header: 'Listen', sort: (a, b) => a.label.localeCompare(b.label), cell: l => <div className="min-w-0"><p>{l.group_id ? <Link className="underline" to={`/files?group=${l.group_id}`}>{l.label}</Link> : l.label}</p><p className="type-caption text-muted-foreground break-all">{l.path}</p></div> },
     { key: 'kind', header: 'Kind', cell: l => <Status tone="neutral">{KIND_LABEL[l.kind] ?? l.kind}</Status> },
-    { key: 'status', header: 'Status', cell: l => <Status tone="info">{l.status}</Status> },
+    { key: 'status', header: 'Status', cell: l => <div className="flex flex-wrap gap-1"><Status tone="info">{l.status}</Status>{l.copies > 1 && <Status tone="neutral">{l.copies} copies</Status>}</div> },
     { key: 'files', header: 'Files', numeric: true, sort: (a, b) => a.files - b.files, cell: l => l.files },
     { key: 'length', header: 'Length', numeric: true, sort: (a, b) => a.minutes - b.minutes, cell: l => hours(l.minutes) },
     { key: 'size', header: 'Size', numeric: true, sort: (a, b) => a.bytes - b.bytes, cell: l => size(l.bytes) },

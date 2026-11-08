@@ -177,7 +177,7 @@ export const fileGroupApi = {
 }
 
 // Listens (src/app/store/api.py): the things you would listen to in one go, made from the book and programme groups.
-export interface ListenRow { id: number; label: string; kind: 'book' | 'radio_series' | 'radio_show' | 'other'; status: string; files: number; bytes: number; minutes: number; group_id: number | null; path: string | null }
+export interface ListenRow { id: number; label: string; kind: 'book' | 'radio_series' | 'radio_show' | 'other'; status: string; files: number; bytes: number; minutes: number; group_id: number | null; path: string | null; copies: number }
 export interface ListenList { total: number; kinds: Record<string, number>; rows: ListenRow[] }
 export const listenApi = {
   list: (q = '', kind = '', status = '', limit = 500) => req<ListenList>(`/api/listens?${new URLSearchParams({ q, kind, status, limit: String(limit) })}`),

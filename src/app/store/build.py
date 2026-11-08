@@ -3,6 +3,9 @@
 A listen is one thing you would listen to in one go; here each one starts as a single listen-part linking to its filegroup (so a book of discs and tracks is one link, not hundreds). Series, collections and folders only contain listens; `loose` groups are left for a person. Every listen, its link and its status are written through `app.store.listens`, so each has its event (actor `rule`, naming the structure grouping it came from). Rerunnable from nothing: `rebuild=True` clears the listen tables first (they are derived data)."""
 from __future__ import annotations
 
+import os, re
+from collections import defaultdict
+
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
@@ -52,3 +55,58 @@ def build_listens(s: Session, structure_root: PartFilegroup, *, rebuild: bool = 
             for c in kids.get(gid, []): walk(c)
 
     walk(structure_root.id); finish_run(s, run, 'done'); return counts
+
+
+def title_key(label: str) -> str:
+    """The title as letters and digits only, without brackets, 'unabridged'-style words, file-type words, a leading index ('04 - ') or a year: 'Ian Fleming - Casino Royale_unabridged' and '01 - Ian Fleming - Casino Royale_unabridged' agree. Digits stay, so 'Vol. 2' and 'Vol. 4' do not."""
+    x = re.sub(r'\[[^\]]*\]|\([^)]*\)', ' ', label.lower())
+    x = re.sub(r'\b(unabridged|abridged|audiobook|mp3|m4b|aac|files?)\b', ' ', x)
+    x = re.sub(r'^\s*\d+\s*[-.]\s*', '', x)
+    x = re.sub(r'(?<!\d)(?:19|20)\d\d(?!\d)', ' ', x)
+    return re.sub(r'[^a-z0-9]+', '', x)
+
+
+def preference(part: ListenPart, label: str) -> tuple:
+    """Which copy to prefer when listening or producing output: a single-container m4b/m4a first, then the larger (higher bit rate), then by path. Provisional: the final choice is made later with real quality measurements."""
+    d = part.detail or {}
+    container = 0 if re.search(r'm4[ab]', label, re.I) or re.search(r'm4[ab]|aac', d.get('path') or '', re.I) else 1
+    return (container, -(d.get('bytes') or 0), d.get('path') or '')
+
+
+def link_copies(s: Session, *, tolerance: float = 0.04) -> dict[str, int]:
+    """Merge listens that are copies of one recording: the same kind and title key and a runtime within `tolerance` of each other. A different runtime under the same title is a different recording (another narrator or edit) of the same work and stays a listen of its own. The preferred copy survives and the others become its later input parts; every merge has its event with the evidence, and `split` undoes one."""
+    run = new_run(s, 'link_copies', {'tolerance': tolerance})
+    rows = s.execute(select(Listen, ListenPart).join(ListenPart, (ListenPart.listen_id == Listen.id) & (ListenPart.role == 'input') & ListenPart.unlinked_at.is_(None)).where(Listen.merged_into_id.is_(None), Listen.kind == 'book')).all()      # books only: radio series with the same title are different seasons, not copies
+    by: dict[tuple[str, str], list[tuple[Listen, ListenPart]]] = defaultdict(list)
+    for l, p in rows:
+        if title_key(l.label): by[(l.kind, title_key(l.label))].append((l, p))
+    keys = sorted({k for _, k in by}, key=len); root = {k: k for k in keys}
+    def find(k):
+        while root[k] != k: k = root[k]
+        return k
+    for i, a in enumerate(keys):                          # 'americanpsycho' also names 'bretastonellisamericanpsycho': an author in front of the title
+        for b in keys[i + 1:]:
+            if len(a) >= 10 and b.endswith(a): root[find(b)] = find(a)      # only a prefix in front (an author), never a shorter title that merely starts the same way
+    merged_by: dict[tuple[str, str], list[tuple[Listen, ListenPart]]] = defaultdict(list)
+    for (kind, k), items in by.items(): merged_by[(kind, find(k))] += items
+    by = merged_by
+    merges = copies = 0
+    for (kind, key), items in by.items():
+        if len(items) < 2: continue
+        items.sort(key=lambda lp: (lp[1].detail or {}).get('minutes') or 0)
+        cluster: list[tuple[Listen, ListenPart]] = []; clusters = []
+        for lp in items:
+            m = (lp[1].detail or {}).get('minutes') or 0
+            if cluster and m and (cluster[0][1].detail or {}).get('minutes') and (m - cluster[0][1].detail['minutes']) / m <= tolerance: cluster.append(lp)
+            else:
+                if len(cluster) > 1: clusters.append(cluster)
+                cluster = [lp]
+        if len(cluster) > 1: clusters.append(cluster)
+        for cl in clusters:
+            cl.sort(key=lambda lp: preference(lp[1], lp[0].label))
+            survivor = cl[0][0]
+            for loser, _ in cl[1:]:
+                L.merge(s, survivor, loser, actor_kind='rule', actor_ref='copies', run_id=run.id, reason=f'copies of one recording: same title "{key[:60]}" and runtimes {[(lp[1].detail or {}).get("minutes") for lp in cl]} minutes within {tolerance:.0%}')
+                merges += 1
+            copies += len(cl)
+    finish_run(s, run, 'done'); return {'listens_with_copies': copies - merges, 'copies_merged': merges}

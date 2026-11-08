@@ -109,14 +109,15 @@ def _listen_row(l: Listen, p: ListenPart | None) -> dict:
 def list_listens(q: str = '', kind: str = '', status: str = '', limit: int = 100, offset: int = 0, s: Session = Depends(get_session)):
     """Listens (newest build first order is by label), filtered by words in the label or folder path, kind and status."""
     limit = max(1, min(limit, 500))
-    stmt = select(Listen, ListenPart).outerjoin(ListenPart, (ListenPart.listen_id == Listen.id) & (ListenPart.role == 'input') & ListenPart.unlinked_at.is_(None)).where(Listen.merged_into_id.is_(None))
+    stmt = select(Listen, ListenPart).outerjoin(ListenPart, (ListenPart.listen_id == Listen.id) & (ListenPart.role == 'input') & (ListenPart.ordinal == 1) & ListenPart.unlinked_at.is_(None)).where(Listen.merged_into_id.is_(None))
     if kind: stmt = stmt.where(Listen.kind == kind)
     if status: stmt = stmt.where(Listen.status == status)
     for w in q.split(): stmt = stmt.where(func.concat(Listen.label, ' ', func.coalesce(ListenPart.detail['path'].astext, '')).icontains(w, autoescape=True))
     total = s.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = s.execute(stmt.order_by(func.lower(Listen.label), Listen.id).limit(limit).offset(offset)).all()
     kinds = dict(s.execute(select(Listen.kind, func.count()).where(Listen.merged_into_id.is_(None)).group_by(Listen.kind)).all())
-    return dict(total=total, kinds=kinds, rows=[_listen_row(l, p) for l, p in rows])
+    copies = dict(s.execute(select(ListenPart.listen_id, func.count()).where(ListenPart.listen_id.in_([l.id for l, _ in rows]), ListenPart.role == 'input', ListenPart.unlinked_at.is_(None)).group_by(ListenPart.listen_id)).all())
+    return dict(total=total, kinds=kinds, rows=[dict(_listen_row(l, p), copies=copies.get(l.id, 1)) for l, p in rows])
 
 
 @listens_router.get('/{listen_id}')

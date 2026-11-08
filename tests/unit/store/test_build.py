@@ -54,3 +54,37 @@ def test_api_lists_filters_and_shows_one_listen(s, structure):
     one = c.get(f"/api/listens/{r['rows'][0]['id']}").json()
     assert one["listen"]["files"] == 3 and one["listen"]["group_id"] and [e["action"] for e in one["events"]] == ["create", "link", "status_change"] and one["parts"][0]["role"] == "input"
     assert c.get("/api/listens/999999").status_code == 404
+
+
+@pytest.fixture
+def copies(s, tmp_path):
+    """Two copies of one recording (one with an author prefix), a different narration of the same title, and a shorter title that merely starts the same way."""
+    layout = {"Library/Alpha Title": 3, "Backup/Jane Doe - Alpha Title": 3, "Library/Beta Title (Fry)": 3, "Library/Beta Title (Jarvis)": 3, "Library/Alpha": 3, "Library/Alpha Other Title": 3}
+    minutes = {"Library/Alpha Title": 300, "Backup/Jane Doe - Alpha Title": 303, "Library/Beta Title (Fry)": 600, "Library/Beta Title (Jarvis)": 900, "Library/Alpha": 301, "Library/Alpha Other Title": 299}
+    for folder, n in layout.items():
+        for i in range(1, n + 1):
+            p = tmp_path / folder / f"{i:02d}.mp3"; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(f"{folder}{i}".encode())
+    ids = fg.scan_files(s, str(tmp_path))
+    for path, fid in ids.items():
+        rel = path[len(str(tmp_path)) + 1:].rsplit("/", 1)[0]; s.get(fg.PartFile, fid).duration_s = minutes[rel] * 60 / 3
+    s.flush(); folders = fg.group_by_folder(s, str(tmp_path), ids); top, _ = st.infer(s, folders); return top
+
+
+def test_copies_of_one_recording_are_linked_into_one_listen_but_other_narrations_and_other_titles_are_not(s, copies):
+    build.build_listens(s, copies)
+    r = build.link_copies(s)
+    assert r == {"listens_with_copies": 1, "copies_merged": 1}
+    live = {l.label: l for l in s.scalars(select(Listen).where(Listen.merged_into_id.is_(None)))}
+    assert sorted(live) == ["Alpha", "Alpha Other Title", "Beta Title (Fry)", "Beta Title (Jarvis)", "Jane Doe - Alpha Title"] or sorted(live) == ["Alpha", "Alpha Other Title", "Alpha Title", "Beta Title (Fry)", "Beta Title (Jarvis)"]
+    survivor = next(l for n, l in live.items() if "Alpha Title" in n)
+    parts = s.scalars(select(ListenPart).where(ListenPart.listen_id == survivor.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None)).order_by(ListenPart.ordinal)).all()
+    assert [p.ordinal for p in parts] == [1, 2] and len({p.filegroup_id for p in parts}) == 2             # two copies, ranked
+    ev = s.scalars(select(ListenEvent).where(ListenEvent.listen_id == survivor.id, ListenEvent.action == "merge")).one()
+    assert ev.actor_kind == "rule" and "copies of one recording" in ev.reason and "300" in ev.reason
+
+
+def test_api_shows_the_number_of_copies(s, copies):
+    build.build_listens(s, copies); build.link_copies(s)
+    app = FastAPI(); app.include_router(api.listens_router); app.dependency_overrides[api.get_session] = lambda: s; c = TestClient(app)
+    rows = {r["label"]: r for r in c.get("/api/listens").json()["rows"]}
+    assert max(r["copies"] for r in rows.values()) == 2 and sum(r["copies"] for r in rows.values()) == 6 and all(r["files"] == 3 for r in rows.values())      # the first copy's facts, never doubled
