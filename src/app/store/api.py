@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import os
+from collections import defaultdict
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import Text as sa_text, func, select
 from sqlalchemy.orm import Session
 
-from app.store.models import PartFile, PartFileLocation, PartFilegroup, PartFilegroupMember, Run
+from app.store.models import Listen, ListenChoice, ListenEvent, ListenPart, PartFile, PartFileLocation, PartFilegroup, PartFilegroupMember, Run
 
 router = APIRouter(prefix='/api/filegroups')
 
@@ -95,3 +96,42 @@ def file(file_id: int, s: Session = Depends(get_session)):
     if f is None: raise HTTPException(404, 'no such file')
     locs = s.execute(select(PartFileLocation.path, PartFileLocation.gone_at).where(PartFileLocation.file_id == f.id).order_by(PartFileLocation.id)).all()
     return dict(id=f.id, sha256=f.sha256.hex(), size=f.size, duration_s=f.duration_s, codec=f.codec, channels=f.channels, sample_rate=f.sample_rate, bit_rate=f.bit_rate, probe=f.probe, probe_error=f.probe_error, locations=[dict(path=p, gone=g is not None) for p, g in locs])
+
+
+listens_router = APIRouter(prefix='/api/listens')
+
+
+def _listen_row(l: Listen, p: ListenPart | None) -> dict:
+    d = (p.detail or {}) if p else {}
+    return dict(id=l.id, label=l.label, kind=l.kind, status=l.status, files=d.get('files', 0), bytes=d.get('bytes', 0), minutes=d.get('minutes', 0), group_id=p.filegroup_id if p else None, path=d.get('path'), reason=d.get('reason'))
+
+
+@listens_router.get('')
+def list_listens(q: str = '', kind: str = '', status: str = '', limit: int = 100, offset: int = 0, s: Session = Depends(get_session)):
+    """Listens (newest build first order is by label), filtered by words in the label or folder path, kind and status."""
+    limit = max(1, min(limit, 500))
+    stmt = select(Listen, ListenPart).outerjoin(ListenPart, (ListenPart.listen_id == Listen.id) & (ListenPart.role == 'input') & (ListenPart.ordinal == 1) & ListenPart.unlinked_at.is_(None)).where(Listen.merged_into_id.is_(None))
+    if kind: stmt = stmt.where(Listen.kind == kind)
+    if status: stmt = stmt.where(Listen.status == status)
+    for w in q.split():                                    # a word may be in the title, the folder path or any chosen value (author, narrator, year...)
+        chosen = select(ListenChoice.id).where(ListenChoice.listen_id == Listen.id, ListenChoice.unchosen_at.is_(None), func.cast(ListenChoice.value, sa_text).icontains(w, autoescape=True)).exists()
+        stmt = stmt.where(func.concat(Listen.label, ' ', func.coalesce(ListenPart.detail['path'].astext, '')).icontains(w, autoescape=True) | chosen)
+    total = s.scalar(select(func.count()).select_from(stmt.subquery()))
+    rows = s.execute(stmt.order_by(func.lower(Listen.label), Listen.id).limit(limit).offset(offset)).all()
+    kinds = dict(s.execute(select(Listen.kind, func.count()).where(Listen.merged_into_id.is_(None)).group_by(Listen.kind)).all())
+    copies = dict(s.execute(select(ListenPart.listen_id, func.count()).where(ListenPart.listen_id.in_([l.id for l, _ in rows]), ListenPart.role == 'input', ListenPart.unlinked_at.is_(None)).group_by(ListenPart.listen_id)).all())
+    chosen: dict[int, dict] = defaultdict(dict)
+    for lid, field, value in s.execute(select(ListenChoice.listen_id, ListenChoice.field, ListenChoice.value).where(ListenChoice.listen_id.in_([l.id for l, _ in rows]), ListenChoice.unchosen_at.is_(None))): chosen[lid][field] = value
+    return dict(total=total, kinds=kinds, rows=[dict(_listen_row(l, p), copies=copies.get(l.id, 1), author=chosen[l.id].get('author'), narrator=chosen[l.id].get('narrator'), year=chosen[l.id].get('year')) for l, p in rows])
+
+
+@listens_router.get('/{listen_id}')
+def get_listen(listen_id: int, s: Session = Depends(get_session)):
+    l = s.get(Listen, listen_id)
+    if l is None: raise HTTPException(404, 'no such listen')
+    parts = list(s.scalars(select(ListenPart).where(ListenPart.listen_id == l.id).order_by(ListenPart.role, ListenPart.ordinal, ListenPart.id)))
+    events = list(s.scalars(select(ListenEvent).where(ListenEvent.listen_id == l.id).order_by(ListenEvent.id)))
+    primary = next((p for p in parts if p.role == 'input' and p.unlinked_at is None), None)
+    return dict(listen=_listen_row(l, primary), merged_into=l.merged_into_id,
+                parts=[dict(id=p.id, role=p.role, state=p.state, ordinal=p.ordinal, filegroup_id=p.filegroup_id, file_id=p.file_id, record_id=p.record_id, work_id=p.work_id, linked_by=p.linked_by, linked_at=p.linked_at.isoformat(), unlinked=p.unlinked_at is not None, detail=p.detail) for p in parts],
+                events=[dict(id=e.id, action=e.action, actor_kind=e.actor_kind, actor_ref=e.actor_ref, reason=e.reason, before=e.before, after=e.after, at=e.at.isoformat()) for e in events])

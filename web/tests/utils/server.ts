@@ -65,6 +65,11 @@ const fgDetail = {
   1: { group: fgRoot, ancestors: [], children: [{ id: 2, kind: 'folder', label: 'Red Dragon', path: '/audio/Red Dragon', file_count: 2, total_bytes: 2e9, group_count: 0, ordinal: 2 }], files: [{ id: 9, ordinal: 1, name: 'Intro.mp3', path: '/audio/Intro.mp3', size: 5e6, duration_s: 3725, codec: 'mp3', tags: { title: 'Intro', artist: 'Thomas Harris' }, probe_error: null }] },
   2: { group: { id: 2, kind: 'folder', label: 'Red Dragon', path: '/audio/Red Dragon', file_count: 2, total_bytes: 2e9, group_count: 0 }, ancestors: [{ id: 1, label: 'audio', kind: 'root' }], children: [], files: [{ id: 10, ordinal: 1, name: 'CD1 01.mp3', path: null, size: 1e9, duration_s: null, codec: null, tags: {}, probe_error: 'moov atom not found' }, { id: 11, ordinal: 2, name: 'CD1 02.mp3', path: null, size: 1e9, duration_s: 95, codec: 'aac', tags: {}, probe_error: null }] },
 }
+const listenRows = [
+  { id: 1, label: 'Red Dragon', kind: 'book', status: 'grouped', files: 136, bytes: 2e9, minutes: 725, group_id: 2, path: '/audio/Red Dragon', copies: 3, author: 'Thomas Harris', narrator: 'Steven Weber', year: 1981 },
+  { id: 2, label: 'Persuader', kind: 'book', status: 'grouped', files: 99, bytes: 5e8, minutes: 45, group_id: 3, path: '/audio/Lee Child/Persuader', copies: 1, author: 'Lee Child', narrator: null, year: null },
+  { id: 3, label: 'Dead Ringers (season 11)', kind: 'radio_series', status: 'grouped', files: 6, bytes: 1e8, minutes: 0, group_id: null, path: null, copies: 1, author: null, narrator: null, year: null },
+]
 export const handlers = [
   http.get('/api/match-reviews', ({ request }) => { const mode = new URL(request.url).searchParams.get('mode') === 'automatic' ? 'automatic' : 'shortlist'; return HttpResponse.json({ rows: [matchReviewFixture(mode)], total: 1, offset: 0, limit: 10 }) }),
   http.get('/api/match-reviews/:id', () => HttpResponse.json(matchReviewFixture())),
@@ -73,6 +78,11 @@ export const handlers = [
   http.get('/api/operations', () => HttpResponse.json({ rows: [], busy: false })),
   http.get('/api/finished', () => HttpResponse.json([])),
   http.get('/api/books/:id/output', () => HttpResponse.json({ book: {}, metadata: null, chapters: [] })),
+  http.get('/api/listens', ({ request }) => {
+    const u = new URL(request.url), q = (u.searchParams.get('q') ?? '').toLowerCase(), kind = u.searchParams.get('kind') ?? ''
+    const rows = listenRows.filter(r => (!kind || r.kind === kind) && q.split(' ').filter(Boolean).every(w => `${r.label} ${r.path}`.toLowerCase().includes(w)))
+    return HttpResponse.json({ total: rows.length + (q === 'big' ? 40 : 0), kinds: { book: 2, radio_series: 1 }, rows })
+  }),
   http.get('/api/filegroups', () => HttpResponse.json({ root: fgRoot, groupings: 1 })),
   http.get('/api/filegroups/search', ({ request }) => {
     const q = (new URL(request.url).searchParams.get('q') ?? '').toLowerCase()
