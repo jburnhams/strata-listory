@@ -56,8 +56,8 @@ describe('staged ingest', () => {
       expect(requests).toBe(1)
       finish()
       expect(await screen.findByRole('button', { name: 'Approve book and identify audiobook' })).toBeEnabled()
-      act(() => poll())
-      await waitFor(() => expect(requests).toBe(2))
+      // The page re-creates its polling timer in an effect once `loading` turns false, and `poll` is reassigned only then; a call before that runs the old closure (still `loading`) and does nothing. So keep polling until the new timer's callback takes effect instead of assuming it already has (this raced under CI load).
+      await waitFor(() => { act(() => poll()); expect(requests).toBeGreaterThanOrEqual(2) })
     } finally { finish() }
   })
 
