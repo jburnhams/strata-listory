@@ -51,6 +51,12 @@ def test_unrelated_tracks_are_loose_and_numbered_run_is_a_book():
     assert st.classify(leaf("Hardtalk", *[f"Hardtalk 2012-01-{d:02d}.mp3" for d in range(1, 9)])).kind == "loose"      # dates are not track numbers
 
 
+def test_numbered_episodes_of_one_programme_are_a_book():
+    assert st.classify(leaf('Wilderness', *[f'BBC R4X - Wilderness Years, Episode {i}.mp3' for i in range(1, 9)])).detail['radio'] is True
+    assert st.classify(leaf('Prostrate', *[f'Adrian Mole - 2019-06-{23 + i} - Prostrate - ep{i:02d}.mp3' for i in range(1, 11)])).kind == 'book'
+    assert st.classify(leaf('Mix', 'Show Episode 1.mp3', 'Other Episode 1.mp3', 'Third Episode 7.mp3')).kind == 'loose'      # not a run
+
+
 def test_a_year_range_in_the_title_is_not_a_radio_date():
     assert st.classify(leaf('Lost Diaries', *[f'{i:02d} - The Lost Diaries of Adrian Mole, 1999-2001 - Sue Townsend.mp3' for i in range(1, 30)])).kind == 'book'
 

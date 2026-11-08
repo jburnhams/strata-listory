@@ -63,6 +63,15 @@ def numbered_run(names: list[str]) -> bool:
     return len(set(nums)) >= 0.9 * len(names) and max(nums) - min(nums) + 1 <= 1.1 * len(names) + 2
 
 
+EPISODE = re.compile(r'\b(?:ep|episode)[\s._-]*(\d+)\b', re.I)
+
+
+def episode_run(names: list[str]) -> bool:
+    """True when the names are the numbered episodes of one programme ('..., Episode 3', '2019-06-26 - Title - ep03'): every name has an episode number and the numbers run 1..n."""
+    nums = [int(m.group(1)) for x in names if (m := EPISODE.search(x))]
+    return len(names) >= 3 and len(nums) == len(names) and len(set(nums)) == len(nums) and max(nums) - min(nums) + 1 <= len(nums) + 1
+
+
 def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[int, str]], dict]]:
     """Split the audio files directly in one folder into (kind, files, evidence) clusters: every whole-book file (.m4b/.m4a/.aac) is a book of its own, the rest are the chapter files of one work or unrelated tracks."""
     out = []; rest = []; whole = [f for f in files if os.path.splitext(f[1])[1].lower() in WHOLE_BOOK]
@@ -73,6 +82,7 @@ def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[in
         names = [YEAR_RANGE.sub(' ', f[1]) for f in rest]      # '1999-2001' in a title reads as a date to the radio test
         if len(rest) == 1: out.append(('book', rest, {'reason': 'one file'}))
         elif one_work(names): out.append(('book', rest, {'reason': 'chapter files of one work', 'files': len(rest)}))
+        elif episode_run(names): out.append(('book', rest, {'reason': 'numbered episodes of one programme', 'files': len(rest), 'radio': True}))
         elif numbered_run(names): out.append(('book', rest, {'reason': 'numbered tracks 1..n', 'files': len(rest)}))
         else: out.append(('loose', rest, {'reason': 'unrelated tracks', 'files': len(rest)}))
     return out
