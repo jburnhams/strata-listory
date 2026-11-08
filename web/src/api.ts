@@ -182,3 +182,18 @@ export interface ListenList { total: number; kinds: Record<string, number>; rows
 export const listenApi = {
   list: (q = '', kind = '', status = '', limit = 500) => req<ListenList>(`/api/listens?${new URLSearchParams({ q, kind, status, limit: String(limit) })}`),
 }
+
+// The match queue (src/app/linkage/api.py): book listens with the model's candidate works, easiest first; answers become labels for the next fit.
+export interface QueueRecording { asin: string; title: string; narrators: string[]; minutes: number | null; fmt: string; year: number | null }
+export type QueueEvidence = Partial<Record<'title' | 'author' | 'narrator' | 'runtime' | 'asin' | 'year' | 'numbers' | 'sources' | 'popularity', string | null>>
+export interface QueueCandidate { part_id: number; ordinal: number; state: string; auto: boolean; p: number; work_id: number; key: string; title: string | null; authors: string[]; year: number | null; editions: number | null; ol: string[]; isbns: string[]; recordings: QueueRecording[]; recording: string | null; alias: string | null; reading: string | null; evidence: QueueEvidence; p_none: number | null; second: number | null }
+export interface QueueCopy { minutes: number | null; files: number | null; bytes: number | null; folder: string; path: string | null; group_id: number | null }
+export interface QueueItem { listen_id: number; p: number; label: string; cursor: string; candidates: QueueCandidate[]; chosen: Record<string, string | number>; tags: Record<string, string | number>; folder: Record<string, string | number>; copies: QueueCopy[] }
+export interface QueueSummary { waiting: number; auto_unconfirmed: number; confirmed: number; not_found: number; statuses: Record<string, number>; decisions: number; since_train: number | null; model: string | null; auto_retrain: number; training: { running: boolean; finished: number | null; error: string; counts: Record<string, number> | null } }
+export interface QueuePage { summary: QueueSummary; items: QueueItem[] }
+export type QueueAction = 'approve' | 'reject' | 'none'
+export const matchApi = {
+  queue: (after?: string, limit = 20) => req<QueuePage>(`/api/matches?${new URLSearchParams({ limit: String(limit), ...(after ? { after } : {}) })}`),
+  decide: (listen_id: number, action: QueueAction, part_id?: number) => req<{ ok: boolean; status: string; retraining: boolean }>('/api/matches/decide', send('POST', { listen_id, action, part_id })),
+  retrain: () => req<{ started: boolean }>('/api/matches/retrain', { method: 'POST' }),
+}

@@ -8,7 +8,8 @@ The identify model (Audible and Open Library together) settles what it is sure o
 
 | Page | Route | One question |
 |---|---|---|
-| **Review** (home) | `#/` | Which of the model's guesses do I need to confirm? |
+| **Matches** (home) | `#/` | Is this the right book? The identification model's proposals for every listen, easiest first, one key to confirm; see [listen-identification.md](listen-identification.md#match-queue-home-page-). |
+| Review (Pipeline → Old review) | `#/pipeline?tab=review` | The SQLite-era queue, kept until that pipeline is retired. |
 | Library | `#/library` | Which books do I have, and which should go into the pipeline next? Search, match, listening and workflow filters are in the URL. |
 | Book | `#/book/:id` | Everything known about one book, with the player when it is finished. |
 | Listens | `#/listens?q=&kind=` | What is there to listen to? The listens made from the book and programme groups (`./app listens-build`), searchable, filtered by kind, each linking to its files. |

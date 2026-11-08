@@ -7,7 +7,7 @@ Candidate generation is deliberately permissive (a title alone still finds the p
   strong  full-title and author match plus an agreeing recording feature (narrator overlap or runtime within 2%), nothing conflicting
   weak    everything else
 Audible results are one source family (with Audnexus and the Audible sidecar) for corroboration purposes; they are never independent confirmation of each other."""
-import json, os, sqlite3, zlib
+import json, os, sqlite3, zlib  # noqa: F401  (json/zlib: `raw` reads archived responses)
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,38 +23,40 @@ def index_path() -> Path: return folder() / 'index.sqlite'
 
 
 SCHEMA = '''
-CREATE TABLE book (asin TEXT NOT NULL, region TEXT NOT NULL, title TEXT, subtitle TEXT, title_key TEXT, main_key TEXT, language TEXT, abridged INTEGER, runtime_min INTEGER, release TEXT, publisher TEXT, isbn TEXT, series TEXT, series_asin TEXT, series_pos TEXT, state TEXT, PRIMARY KEY (asin, region));
+CREATE TABLE book (asin TEXT NOT NULL, region TEXT NOT NULL, title TEXT, subtitle TEXT, title_key TEXT, main_key TEXT, language TEXT, abridged INTEGER, runtime_min INTEGER, release TEXT, publisher TEXT, isbn TEXT, series TEXT, series_asin TEXT, series_pos TEXT, state TEXT, format TEXT, ratings INTEGER, PRIMARY KEY (asin, region));
 CREATE TABLE credit (asin TEXT NOT NULL, region TEXT NOT NULL, role TEXT NOT NULL, person_key TEXT NOT NULL, person_asin TEXT, name TEXT, PRIMARY KEY (asin, region, role, person_key)) WITHOUT ROWID;
-CREATE INDEX book_title ON book(title_key); CREATE INDEX book_main ON book(main_key); CREATE INDEX book_isbn ON book(isbn) WHERE isbn IS NOT NULL;
-CREATE INDEX credit_person ON credit(person_key, role); CREATE INDEX credit_person_asin ON credit(person_asin) WHERE person_asin IS NOT NULL;
-CREATE VIRTUAL TABLE book_fts USING fts5(title, subtitle, series, content='', tokenize='unicode61 remove_diacritics 2');
 CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT);
 '''
+INDEXES = '''
+CREATE INDEX book_title ON book(title_key); CREATE INDEX book_main ON book(main_key); CREATE INDEX book_isbn ON book(isbn) WHERE isbn IS NOT NULL; CREATE INDEX book_asin ON book(asin);
+CREATE INDEX credit_person ON credit(person_key, role); CREATE INDEX credit_person_asin ON credit(person_asin) WHERE person_asin IS NOT NULL;
+CREATE VIRTUAL TABLE book_fts USING fts5(title, subtitle, series, content='book', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2');
+INSERT INTO book_fts(book_fts) VALUES ('rebuild');
+'''
+LANGUAGES = ('english', '')     # the library is English; other-language editions only add homonyms
 
 
 def raw(value) -> dict:
     return json.loads(zlib.decompress(value) if isinstance(value, (bytes, bytearray)) else value)
 
 
-def build(archive: str | Path | None = None, output: str | Path | None = None, region: str = 'us') -> dict:
-    """Rebuild the index from the archive and publish it atomically; an error leaves any existing index untouched."""
+def build(archive: str | Path | None = None, output: str | Path | None = None, regions: tuple[str, ...] = ('uk', 'us')) -> dict:
+    """Rebuild the index from the archive's columns (no JSON parsing) and publish it atomically; an error leaves any existing index untouched. Both stores by default (the library is mostly UK-store; one ASIN can be in both, `find` returns it once). Safe while the fetchers write: the archive is opened read-only."""
     archive, output = Path(archive or archive_path()), Path(output or index_path()); tmp = output.with_name(output.name + '.building')
     tmp.unlink(missing_ok=True)
     src = sqlite3.connect(f'file:{archive}?mode=ro', uri=True, timeout=60); out = sqlite3.connect(tmp)
     out.executescript('PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF;' + SCHEMA)
-    n = 0
-    for asin, reg, blob in src.execute('SELECT asin, region, raw FROM product WHERE region=?', (region,)):
-        p = raw(blob); title, sub = p.get('title') or '', p.get('subtitle') or ''; series = (p.get('series') or [{}])[0]
-        abridged = {'abridged': 1, 'unabridged': 0}.get((p.get('format_type') or '').lower())
-        out.execute('INSERT OR REPLACE INTO book VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (asin, reg, title, sub, tk.title_key(title), tk.title_main(title), p.get('language'), abridged, p.get('runtime_length_min'), p.get('release_date') or p.get('issue_date'), p.get('publisher_name'), p.get('isbn') or None, series.get('title'), series.get('asin'), series.get('sequence'), p.get('product_state')))
-        out.execute('INSERT INTO book_fts(rowid, title, subtitle, series) VALUES ((SELECT rowid FROM book WHERE asin=? AND region=?), ?, ?, ?)', (asin, reg, title, sub, series.get('title') or ''))
-        for role, key in (('Author', 'authors'), ('Narrator', 'narrators')):
-            for x in p.get(key) or []:
-                k = tk.person_key(x.get('name'))
-                if k: out.execute('INSERT OR IGNORE INTO credit VALUES (?,?,?,?,?,?)', (asin, reg, role, k, x.get('asin'), x['name']))
-        n += 1
+    marks = ','.join('?' * len(regions)); langs = ','.join('?' * len(LANGUAGES)); n = 0
+    rows = src.execute(f"SELECT asin, region, title, subtitle, series, series_asin, series_position, runtime_min, language, format_type, release_date, publisher, rating_count, isbn FROM product WHERE region IN ({marks}) AND coalesce(language, '') IN ({langs})", (*regions, *LANGUAGES))
+    while batch := rows.fetchmany(5000):
+        out.executemany('INSERT OR REPLACE INTO book VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [(a, reg, t or '', sub or '', tk.title_key(t), tk.title_main(t), lang, {'abridged': 1, 'unabridged': 0}.get((fmt or '').lower()), rt, rel, pub, isbn or None, ser, ser_asin, pos, None, fmt, rc) for a, reg, t, sub, ser, ser_asin, pos, rt, lang, fmt, rel, pub, rc, isbn in batch]); n += len(batch)
+    credits = src.execute(f'SELECT asin, region, role, name, person_asin FROM credit WHERE region IN ({marks})', regions)
+    while batch := credits.fetchmany(20000):
+        out.executemany('INSERT OR IGNORE INTO credit VALUES (?,?,?,?,?,?)', [(a, reg, role, k, pa or None, name) for a, reg, role, name, pa in batch if (k := tk.person_key(name))])
+    out.execute('DELETE FROM credit WHERE NOT EXISTS (SELECT 1 FROM book b WHERE b.asin=credit.asin AND b.region=credit.region)')
+    out.executescript(INDEXES)
     stamp = datetime.now(timezone.utc).isoformat(timespec='seconds')
-    out.executemany('INSERT INTO meta VALUES (?,?)', [('built', stamp), ('books', str(n)), ('region', region), ('archive', str(archive))]); out.commit()
+    out.executemany('INSERT INTO meta VALUES (?,?)', [('built', stamp), ('books', str(n)), ('region', ','.join(regions)), ('archive', str(archive))]); out.commit()
     ok = out.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'; out.close(); src.close()
     if not ok: tmp.unlink(missing_ok=True); raise RuntimeError('index failed its integrity check')
     os.replace(tmp, output); return dict(books=n, built=stamp, path=str(output))
@@ -101,4 +103,6 @@ def find(c, title: str = '', author: str = '', narrators=(), runtime_min: float 
         agree = [k for k in ('narrators', 'runtime') if ev.get(k) == 'match']; bad = [k for k in ('author', 'narrators', 'runtime') if ev.get(k) == 'conflict']
         out.append(_describe(c, r, ev, 'strong' if ev['title'] == 'full' and ev['author'] == 'match' and agree and not bad else 'weak'))
     rank = lambda d: (d['grade'] != 'strong', {'match': 0, 'unknown': 1, 'conflict': 2}[d['evidence']['author']], {'full': 0, 'main': 1, 'fuzzy': 2}[d['evidence']['title']], d['evidence'].get('runtime_delta', 1), d['asin'])
-    out.sort(key=rank); return out[:limit]
+    out.sort(key=rank); seen: set[str] = set()
+    out = [d for d in out if not (d['asin'] in seen or seen.add(d['asin']))]      # one ASIN listed by both stores is one recording
+    return out[:limit]

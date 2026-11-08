@@ -1,11 +1,12 @@
-// One question per area: Review (what do I need to confirm?), Library (what do I have, what should be ingested?), Pipeline (the older per-book approval stages, until identification decisions drive them),
-// Processing (what is being turned into finished audiobooks?), Settings. Review is home because the identify model settles what it is sure of and leaves a ranked list of the rest.
+// One question per area: Matches (is this the right book? the identification model's proposals, easiest first), Library (what do I have, what should be ingested?), Pipeline (the older per-book approval stages, until identification decisions drive them),
+// Processing (what is being turned into finished audiobooks?), Settings. Matches is home because confirming the model's proposals is the main job; the older SQLite Review sits under Pipeline until that pipeline is retired.
 import { useQuery } from '@tanstack/react-query'
 import { Navigate, Route, Routes, useParams } from 'react-router'
 import { AppShell, PageHeader, Tabs } from 'strata-react'
 import { BookOpen, FolderTree, Headphones, Library as LibraryIcon, ListChecks, Settings, SlidersHorizontal, Workflow } from 'lucide-react'
 import { api } from './api'
 import ReviewPage from './components/ReviewPage'
+import MatchQueuePage from './components/MatchQueuePage'
 import LibraryPage from './components/LibraryPage'
 import BookPage from './components/BookPage'
 import ProcessPage from './components/ProcessPage'
@@ -17,7 +18,7 @@ import FilesPage from './components/FilesPage'
 import ListensPage from './components/ListensPage'
 
 const nav = [
-  { to: '/', label: 'Review', icon: ListChecks, end: true },
+  { to: '/', label: 'Matches', icon: ListChecks, end: true },
   { to: '/library', label: 'Library', icon: LibraryIcon },
   { to: '/listens', label: 'Listens', icon: Headphones },
   { to: '/files', label: 'Files', icon: FolderTree },
@@ -32,8 +33,8 @@ function Pipeline() {
   return (
     <div className="space-y-5">
       <PageHeader title="Pipeline" scope="Per-book approval stages" finding={{ text: 'Identification decisions made in Review are saved as training labels. These stages still move each book through the ingest pipeline.' }} />
-      <Tabs param="tab" label="Pipeline stage" items={[{ value: 'book', label: 'Book' }, { value: 'audiobook', label: 'Audiobook' }, { value: 'quality', label: 'Quality' }, { value: 'automatic', label: 'Automatic approvals' }, { value: 'shortlist', label: 'Match shortlist' }]}>
-        {tab => tab === 'automatic' || tab === 'shortlist' ? <MatchReviewPage key={tab} mode={tab} />
+      <Tabs param="tab" label="Pipeline stage" items={[{ value: 'book', label: 'Book' }, { value: 'audiobook', label: 'Audiobook' }, { value: 'quality', label: 'Quality' }, { value: 'automatic', label: 'Automatic approvals' }, { value: 'shortlist', label: 'Match shortlist' }, { value: 'review', label: 'Old review' }]}>
+        {tab => tab === 'review' ? <ReviewPage /> : tab === 'automatic' || tab === 'shortlist' ? <MatchReviewPage key={tab} mode={tab} />
           : <IngestPage key={tab} phase={tab === 'audiobook' || tab === 'quality' ? tab : 'metadata'} />}
       </Tabs>
     </div>
@@ -59,7 +60,7 @@ export default function App() {
   return (
     <AppShell product={<span className="inline-flex items-center gap-2"><BookOpen aria-hidden className="size-5" />Strata Listory</span>} nav={nav} topBar={health.data ? <span className="type-caption text-muted-foreground font-mono">v{health.data.version}</span> : undefined}>
       <Routes>
-        <Route path="/" element={<ReviewPage />} />
+        <Route path="/" element={<MatchQueuePage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/listens" element={<ListensPage />} />
         <Route path="/files" element={<FilesPage />} />

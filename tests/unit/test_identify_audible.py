@@ -1,11 +1,13 @@
-import json
 import sqlite3
 from app.identify import audible, audibleindex as ai, context, features as ft
 
 
 def index(tmp_path):
-    c = sqlite3.connect(tmp_path / 'a.sqlite'); c.execute('CREATE TABLE product (asin TEXT, region TEXT, raw BLOB)')
-    c.execute('INSERT INTO product VALUES (?,?,?)', ('B000000001', 'us', json.dumps(dict(asin='B000000001', title='Census', authors=[dict(name='Jesse Ball')], narrators=[dict(name='Some Reader')], runtime_length_min=300, language='english', format_type='unabridged', isbn='9780141039596', series=[dict(title='S')]))))
+    c = sqlite3.connect(tmp_path / 'a.sqlite')
+    c.execute('CREATE TABLE product (asin TEXT, region TEXT, title TEXT, subtitle TEXT, series TEXT, series_asin TEXT, series_position TEXT, runtime_min INTEGER, language TEXT, format_type TEXT, release_date TEXT, publisher TEXT, rating_count INTEGER, isbn TEXT)')
+    c.execute('CREATE TABLE credit (asin TEXT, region TEXT, role TEXT, name TEXT, person_asin TEXT)')
+    c.execute("INSERT INTO product (asin, region, title, series, runtime_min, language, format_type, isbn) VALUES ('B000000001', 'us', 'Census', 'S', 300, 'english', 'unabridged', '9780141039596')")
+    c.executemany('INSERT INTO credit VALUES (?,?,?,?,?)', [('B000000001', 'us', 'Author', 'Jesse Ball', None), ('B000000001', 'us', 'Narrator', 'Some Reader', None)])
     c.commit(); c.close(); ai.build(tmp_path / 'a.sqlite', tmp_path / 'i.sqlite'); return ai.connect(tmp_path / 'i.sqlite')
 
 

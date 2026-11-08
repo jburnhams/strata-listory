@@ -168,6 +168,60 @@ def cmd_listens_build(args):
         s.commit(); print(f"{counts['book']} books and {counts['radio_series']} radio series made into listens; {counts['loose_files_skipped']} loose files left for review" + (f"; {extra['copies_merged']} copies merged into {extra['listens_with_copies']} listens" if extra else '') + f"; metadata chosen for {meta['listens']} listens ({meta['from_tags']} values from tags, {meta['from_folder']} from folder names)"); return 0
 
 
+def cmd_listens_identify_prepare(args):
+    """Find candidate works for every book listen in the local Open Library and Audible indexes and cache their comparison vectors (data/linkage/vectors.json; unchanged listens are reused). With --old-catalogue, also carry that SQLite catalogue's approvals over as labels."""
+    import json as _json
+    from omarchy_db import connect
+    from sqlalchemy.orm import Session
+    from app.identify import audibleindex, candidates as olc
+    from app.linkage import dataset, files, query
+    with Session(connect('listory')) as s:
+        queries = query.load(s, kinds=tuple(args.kinds.split(',')))
+        if args.old_catalogue:
+            from app.identify import dataset as old
+            fs, paths = files.listen_files(s); labels = dataset.old_labels(old.labelled_runs(args.old_catalogue), fs, paths)
+            dataset.folder().mkdir(parents=True, exist_ok=True); (dataset.folder() / 'old-labels.json').write_text(_json.dumps({str(k): v for k, v in labels.items()}), encoding='utf8')
+            print(f'{len(labels)} listens labelled from the old catalogue')
+    try: oc = olc.connect()
+    except FileNotFoundError: oc = None; print('no Open Library identification index: Audible only')
+    ac = audibleindex.connect()
+    data = dataset.build(oc, ac, queries, dataset.load_cache(), progress=lambda i, n: print(f'{i}/{n}', flush=True) if i % 100 == 0 else None, indexes=dataset.index_stamp(oc, ac))
+    dataset.save_cache(data); print(f'{len(data)} listens, {sum(len(d["clusters"]) for d in data.values())} candidate works'); return 0
+
+
+def cmd_listens_identify_train(args):
+    """Fit the record-linkage model on every prepared listen (labelled ones clamped: old catalogue approvals and the match queue's answers), cross-validate on the labelled ones and save data/linkage/model.json and report.json."""
+    from omarchy_db import connect
+    from sqlalchemy.orm import Session
+    from app.linkage import service
+    with Session(connect('listory')) as s:
+        try: _params, report = service.train(s)
+        except ValueError as e: sys.exit(str(e))
+    cv, lab = report['cross_validation'], report['labels']
+    print(f"model {report['model']}: {lab['found']} of {lab['labelled']} labels found among the candidates ({lab['user']} from the match queue); cross-validated top-1 {cv.get('top1')}, calibration error {cv.get('ece')}")
+    for t, a in (cv.get('at') or {}).items(): print(f"  P >= {t}: accept {a['accepted']} ({a['share']:.0%}), disagreeing with the label {a['false_positives']}")
+    return 0
+
+
+def cmd_listens_identify(args):
+    """Decide every prepared listen with the trained model: accept (P >= threshold), candidates for review, or none; writes match/candidate listen-parts and links listens of one work to one work row."""
+    from omarchy_db import connect
+    from sqlalchemy.orm import Session
+    from app.linkage import apply, dataset, service
+    params = service.load_params()
+    if params is None: sys.exit('no model yet: run ./app listens-identify-train first')
+    data = dataset.load_cache()
+    with Session(connect('listory')) as s:
+        if args.rebuild: print(f'cleared the earlier identification of {apply.clear(s, ids=set(args.ids) if args.ids else None)} listens')
+        counts = apply.apply(s, data, params, threshold=args.threshold, ids=set(args.ids) if args.ids else None)
+        merged = apply.merge_copies(s, actor_ref=params.version()) if args.merge_copies else []
+        groups = apply.same_work_groups(s)
+        if merged: print(f'{len(merged)} copies merged: ' + ', '.join(f'{b} into {a}' for a, b in merged))
+        if args.dry_run: s.rollback()
+        else: s.commit()
+    print(('would change: ' if args.dry_run else '') + ', '.join(f'{v} {k}' for k, v in counts.items()) + f'; {len(groups)} works have more than one listen ({sum(len(v) for v in groups.values())} listens)'); return 0
+
+
 def cmd_use_library(args):
     new = os.path.abspath(os.path.expanduser(args.folder)); old = os.path.abspath(os.path.expanduser(args.old)) if args.old else settings.library_dir()
     if not old: sys.exit('no current audiobook folder: give --from')
@@ -399,6 +453,9 @@ def main(argv=None):
     fgp = sub.add_parser('filegroups', help='scan the library folder into the listory Postgres schema (sha256 per file) and group it by folder; rerunnable, hashes only changed files'); fgp.add_argument('folder', nargs='?'); fgp.add_argument('--workers', type=int, default=4); fgp.set_defaults(fn=cmd_filegroups)
     fgs = sub.add_parser('filegroups-structure', help='infer books, discs and series from the newest folder grouping into a new grouping run'); fgs.add_argument('--check', action='store_true', help='classify without writing and show what differs from data/structure-golden.json (exit 1 if anything)'); fgs.add_argument('--update', action='store_true', help='save the current classification as the golden snapshot'); fgs.set_defaults(fn=cmd_filegroups_structure)
     lb = sub.add_parser('listens-build', help='make a listen for every book and programme in the newest structure grouping'); lb.add_argument('--rebuild', action='store_true', help='clear existing listens first (they are derived data)'); lb.add_argument('--no-copies', action='store_true', help='do not link copies of one recording into one listen'); lb.set_defaults(fn=cmd_listens_build)
+    lip = sub.add_parser('listens-identify-prepare', help='find candidate works for book listens (local Open Library and Audible indexes) and cache comparison vectors'); lip.add_argument('--old-catalogue', help='also take labels from the approvals in this old SQLite catalogue (data/catalogue.db)'); lip.add_argument('--kinds', default='book', help='listen kinds, comma separated (default: book)'); lip.set_defaults(fn=cmd_listens_identify_prepare)
+    sub.add_parser('listens-identify-train', help='fit the identification model, cross-validate it on the labelled listens, save data/linkage/model.json').set_defaults(fn=cmd_listens_identify_train)
+    lid = sub.add_parser('listens-identify', help='accept, queue for review or reject the candidate works of each listen with the trained model'); lid.add_argument('ids', nargs='*', type=int, help='only these listens'); lid.add_argument('--threshold', type=float, default=.95, help='accept when P(work) is at least this (default 0.95)'); lid.add_argument('--dry-run', action='store_true', help='count what would change, write nothing'); lid.add_argument('--merge-copies', action='store_true', help='merge listens identified as the same work whose runtimes agree within 2%% (copies of one recording)'); lid.add_argument('--rebuild', action='store_true', help="clear the model's earlier answers and works first (a person's decisions are kept)"); lid.set_defaults(fn=cmd_listens_identify)
     mt = sub.add_parser('match', help='look scanned books up with the metadata providers and record suggestions'); mt.add_argument('--limit', type=int, default=25); mt.add_argument('--providers', help='comma separated, in order (default: the match_providers setting)'); mt.set_defaults(fn=cmd_match)
     ul = sub.add_parser('use-library', help='switch the audiobook folder (for example to the local copy), moving every book path with it'); ul.add_argument('folder'); ul.add_argument('--from', dest='old', help='the folder the paths currently live under (default: library_dir)'); ul.add_argument('--force', action='store_true', help='switch even if some books are missing in the new folder'); ul.set_defaults(fn=cmd_use_library)
     pr = sub.add_parser('process', help='turn books into the final library: mono mp3 chapters, normalised loudness (--plan shows what would happen)'); pr.add_argument('ids', nargs='*', type=int, help='book ids (default: confirmed books not yet processed)'); pr.add_argument('--plan', action='store_true', help='measure and print the plan, change nothing'); pr.add_argument('--json', action='store_true'); pr.add_argument('--limit', type=int, default=5); pr.add_argument('--jobs', type=int, default=3); pr.add_argument('--force', action='store_true', help='replace an existing output folder'); pr.add_argument('--out', help='final library folder (default: the final_dir setting, ~/audiobooks)'); pr.set_defaults(fn=cmd_process)
