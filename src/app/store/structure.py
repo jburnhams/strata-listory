@@ -57,12 +57,13 @@ def numbered_run(names: list[str]) -> bool:
     if len(names) < 3: return False
     nums = []
     for x in names:
-        x = re.sub(r'\b(?:19|20)\d\d\b', ' ', os.path.splitext(x)[0])
+        x = re.sub(r'\b(?:19|20)\d\d\b', ' ', re.sub(r'\[[^\]]*\]', ' ', os.path.splitext(x)[0]))      # years and [B0D23Y5KXP]-style ids are not track numbers
         if m := re.search(r'\d+', x): nums.append(int(m.group()))
-    if len(nums) < 0.9 * len(names) or RADIO.search(' '.join(names)): return False
+    if len(nums) < 0.9 * len(names) or any(DATE.search(x) for x in names): return False
     return len(set(nums)) >= 0.9 * len(names) and max(nums) - min(nums) + 1 <= 1.1 * len(names) + 2
 
 
+DATE = re.compile(r'\b(?:19|20)\d\d[-.]\d\d[-.]\d\d\b')       # a dated broadcast name (2012-01-03): episodes of a programme, not chapters of one work
 EPISODE = re.compile(r'\b(?:ep|episode)[\s._-]*(\d+)\b', re.I)
 
 

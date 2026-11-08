@@ -57,6 +57,11 @@ def test_numbered_episodes_of_one_programme_are_a_book():
     assert st.classify(leaf('Mix', 'Show Episode 1.mp3', 'Other Episode 1.mp3', 'Third Episode 7.mp3')).kind == 'loose'      # not a run
 
 
+def test_an_audible_style_id_and_episode_words_do_not_stop_a_numbered_run():
+    names = [f'Backfired: The Vaping Wars [B0D23Y5KXP] - {i:02d} - Episode {i}: Title.mp3' for i in range(1, 10)] + ['Backfired: The Vaping Wars [B0D23Y5KXP] - 10 - End Credits.mp3']
+    n = st.classify(leaf('Leon Neyfakh 2024 Backfired [B0D23Y5KXP]', *names)); assert n.kind == 'book' and n.detail['reason'] == 'numbered tracks 1..n'
+
+
 def test_a_year_range_in_the_title_is_not_a_radio_date():
     assert st.classify(leaf('Lost Diaries', *[f'{i:02d} - The Lost Diaries of Adrian Mole, 1999-2001 - Sue Townsend.mp3' for i in range(1, 30)])).kind == 'book'
 
