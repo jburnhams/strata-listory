@@ -4,18 +4,20 @@ from app.identify import audibleindex as ai
 
 
 def archive(path):
+    """The archive as scripts/fetch_audible_people.py writes it: product columns plus a credit table."""
     c = sqlite3.connect(path)
-    c.execute('CREATE TABLE product (asin TEXT, region TEXT, raw BLOB)')
-    books = [
-        dict(asin='B000000001', title='The Gift of the Emperor', authors=[dict(name='E. W. Hornung', asin='A1')], narrators=[dict(name='Gordon Griffin')], runtime_length_min=64, format_type='unabridged', language='english', isbn='9781407986197'),
-        dict(asin='B000000002', title='Dune: Special Edition', authors=[dict(name='Frank Herbert')], narrators=[dict(name='Scott Brick')], runtime_length_min=1260, format_type='abridged'),
-    ]
-    for b in books: c.execute('INSERT INTO product VALUES (?,?,?)', (b['asin'], 'us', zlib.compress(json.dumps(b).encode()) if b['asin'].endswith('1') else json.dumps(b)))      # both stored forms
+    c.execute('CREATE TABLE product (asin TEXT NOT NULL, region TEXT NOT NULL, title TEXT, subtitle TEXT, authors TEXT, narrators TEXT, series TEXT, series_asin TEXT, series_position TEXT, runtime_min INTEGER, language TEXT, format_type TEXT, release_date TEXT, publisher TEXT, rating REAL, rating_count INTEGER, raw TEXT, fetched TEXT NOT NULL, isbn TEXT, PRIMARY KEY (asin, region))')
+    c.execute('CREATE TABLE credit (asin TEXT NOT NULL, region TEXT NOT NULL, role TEXT NOT NULL, name TEXT NOT NULL, person_asin TEXT, PRIMARY KEY (asin, region, role, name))')
+    rows = [('B000000001', 'us', 'The Gift of the Emperor', '', 64, 'english', 'unabridged', '9781407986197'), ('B000000002', 'us', 'Dune: Special Edition', '', 1260, '', 'abridged', None),
+            ('B000000001', 'uk', 'The Gift of the Emperor', '', 64, 'english', 'unabridged', '9781407986197'), ('B000000003', 'uk', 'Der Wüstenplanet', '', 1300, 'german', 'unabridged', None), ('B000000004', 'de', 'Elsewhere', '', 10, 'english', 'unabridged', None)]
+    for a, reg, t, sub, rt, lang, fmt, isbn in rows: c.execute('INSERT INTO product (asin, region, title, subtitle, runtime_min, language, format_type, isbn, fetched, rating_count) VALUES (?,?,?,?,?,?,?,?,?,?)', (a, reg, t, sub, rt, lang, fmt, isbn, '2026-01-01', 3))
+    for a, reg, role, name, pa in [('B000000001', 'us', 'Author', 'E. W. Hornung', 'A1'), ('B000000001', 'us', 'Narrator', 'Gordon Griffin', None), ('B000000001', 'uk', 'Author', 'E. W. Hornung', 'A1'), ('B000000002', 'us', 'Author', 'Frank Herbert', None), ('B000000002', 'us', 'Narrator', 'Scott Brick', None), ('B000000003', 'uk', 'Author', 'Frank Herbert', None)]:
+        c.execute('INSERT INTO credit VALUES (?,?,?,?,?)', (a, reg, role, name, pa))
     c.commit(); c.close()
 
 
 def built(tmp_path):
-    archive(tmp_path / 'a.sqlite'); info = ai.build(tmp_path / 'a.sqlite', tmp_path / 'i.sqlite'); assert info['books'] == 2
+    archive(tmp_path / 'a.sqlite'); info = ai.build(tmp_path / 'a.sqlite', tmp_path / 'i.sqlite'); assert info['books'] == 3      # both stores; German and other stores left out
     return ai.connect(tmp_path / 'i.sqlite')
 
 

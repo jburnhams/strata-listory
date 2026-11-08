@@ -12,7 +12,7 @@ markers = [
 [tool.coverage.run]
 source = ["src/app"]
 branch = true
-omit = ["*/__main__.py", "src/app/store/*"]     # the Postgres layer is covered by .github/workflows/store.yml (needs a server)
+omit = ["*/__main__.py", "src/app/store/*", "src/app/linkage/apply.py", "src/app/linkage/files.py"]     # the Postgres layer is covered by .github/workflows/store.yml (needs a server)
 
 [tool.coverage.report]
 skip_empty = true

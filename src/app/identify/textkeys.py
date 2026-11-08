@@ -7,7 +7,7 @@ import unicodedata
 HONORIFICS = {'mr', 'mrs', 'ms', 'miss', 'dr', 'doctor', 'prof', 'professor', 'sir', 'dame', 'rev', 'reverend'}
 ARTICLES = {'the', 'a', 'an'}
 RECORDING_LABELS = {'unabridged', 'abridged'}
-PLACEHOLDERS = {'unknown', 'unknown artist', 'unknown author', 'various', 'various artists', 'various authors', 'anonymous', 'audiobook', 'audiobooks', 'narrator'}
+PLACEHOLDERS = {'unknown', 'unknown artist', 'unknown author', 'various', 'various artists', 'various authors', 'anonymous', 'anon', 'uncredited', 'audiobook', 'audiobooks', 'narrator'}
 ROLE_WORDS = r'narrators?|narrated|read|reader|translators?|editors?|illustrators?|foreword|introduction|afterword|performed'
 ROLE_PREFIX = re.compile(rf'^(?:{ROLE_WORDS})(?:\s+by)?\s*[:\-]\s*|^(?:narrated|read|performed)\s+by\s+', re.I)
 ROLE_SUFFIX = re.compile(rf'(?:\s*[,\-–]\s*|\s*\()(?:{ROLE_WORDS})\)?\s*$', re.I)
