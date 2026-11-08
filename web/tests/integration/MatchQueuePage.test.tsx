@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { installFakeIntersectionObserver, installLayoutShims, type FakeIntersectionObserverControls } from 'strata-react/testing'
 import { cleanup } from '@testing-library/react'
-import MatchQueuePage, { certainty, evidence, runtimeDelta } from '../../src/components/MatchQueuePage'
+import MatchQueuePage, { certainty, evidence, runtimeDelta, subtitleOf } from '../../src/components/MatchQueuePage'
 import { setup, screen, within, waitFor } from '../utils/render'
 import { http, HttpResponse } from 'msw'
 import { matchState, server } from '../utils/server'
@@ -12,6 +12,20 @@ beforeEach(() => { io = installFakeIntersectionObserver(); uninstallLayout = ins
 afterEach(async () => { io.uninstall(); uninstallLayout(); cleanup(); await new Promise(r => setTimeout(r, 40)) })
 
 const cards = () => within(screen.getByRole('list', { name: 'Matches to check' })).getAllByRole('article')
+
+describe('subtitleOf', () => {
+  const rec = (asin: string, title: string) => ({ asin, title, narrators: [], minutes: 565, fmt: 'unabridged', year: 2012 })
+  it('takes the part of an Audible title after the work title and a colon', () => {
+    expect(subtitleOf({ title: 'David Mitchell', recording: null, recordings: [rec('B1', 'David Mitchell: Back Story')] })).toBe('Back Story')
+    expect(subtitleOf({ title: 'David Mitchell', recording: 'B2', recordings: [rec('B1', 'David Mitchell: Back Story'), rec('B2', 'David Mitchell: Back Story (Unabridged)')] })).toBe('Back Story')      // the chosen recording is read first, a format label is dropped
+  })
+  it('is empty when no recording continues the title', () => {
+    expect(subtitleOf({ title: 'Dune', recording: null, recordings: [rec('B1', 'Dune')] })).toBe('')
+    expect(subtitleOf({ title: 'Dune', recording: null, recordings: [rec('B1', 'Dune Messiah: Book Two')] })).toBe('')
+    expect(subtitleOf({ title: null, recording: null, recordings: [rec('B1', 'X: Y')] })).toBe('')
+    expect(subtitleOf({ title: 'Dune', recording: null, recordings: [] })).toBe('')
+  })
+})
 
 describe('MatchQueuePage', () => {
   it('shows the most certain match first with the files, the work, its recordings and the evidence', async () => {

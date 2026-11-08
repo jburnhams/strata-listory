@@ -45,6 +45,17 @@ export function runtimeDelta(rec: QueueRecording, minutes: number | null | undef
   return d === 0 ? 'same length' : `${d > 0 ? '+' : ''}${d}%`
 }
 
+/** The subtitle Audible gives a recording of this work, which Open Library's work title lacks: the recording "David Mitchell: Back Story" of the work "David Mitchell" gives "Back Story". The chosen recording is read first; '' when no recording continues the work title after a colon. */
+export function subtitleOf(c: Pick<QueueCandidate, 'title' | 'recordings' | 'recording'>): string {
+  const t = (c.title ?? '').trim().toLowerCase()
+  if (!t) return ''
+  for (const r of [...c.recordings].sort((a, b) => Number(b.asin === c.recording) - Number(a.asin === c.recording))) {
+    const rt = (r.title ?? '').trim()
+    if (rt.toLowerCase().startsWith(`${t}:`)) { const rest = rt.slice(t.length + 1).replace(/\s*\((un)?abridged\)\s*$/i, '').trim(); if (rest) return rest }
+  }
+  return ''
+}
+
 function Field({ label, value }: { label: string; value: unknown }) {
   if (value == null || value === '') return null
   return <><dt className="text-muted-foreground">{label}</dt><dd className="min-w-0 break-words">{String(value)}</dd></>
@@ -79,7 +90,7 @@ function Cover({ isbn, title }: { isbn?: string; title: string }) {
 }
 
 function Work({ c, minutes }: { c: QueueCandidate; minutes: number | null | undefined }) {
-  const title = c.title ?? 'Untitled', asin = c.recording || c.recordings[0]?.asin
+  const sub = subtitleOf(c), title = (c.title ?? 'Untitled') + (sub ? `: ${sub}` : ''), asin = c.recording || c.recordings[0]?.asin
   return (
     <section aria-label="The proposed work" className="min-w-0 flex-1 basis-72 space-y-2">
       <p className="type-caption text-muted-foreground">Proposed work</p>
