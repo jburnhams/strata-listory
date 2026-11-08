@@ -74,6 +74,10 @@ export const handlers = [
   http.get('/api/finished', () => HttpResponse.json([])),
   http.get('/api/books/:id/output', () => HttpResponse.json({ book: {}, metadata: null, chapters: [] })),
   http.get('/api/filegroups', () => HttpResponse.json({ root: fgRoot, groupings: 1 })),
+  http.get('/api/filegroups/search', ({ request }) => {
+    const q = (new URL(request.url).searchParams.get('q') ?? '').toLowerCase()
+    return q.includes('dragon') ? HttpResponse.json({ groups: [fgDetail[2].group], files: [{ id: 10, name: 'CD1 01.mp3', path: '/audio/Red Dragon/CD1 01.mp3', group_id: 2, group_label: 'Red Dragon' }], more: { groups: 0, files: 3 } }) : HttpResponse.json({ groups: [], files: [], more: { groups: 0, files: 0 } })
+  }),
   http.get('/api/filegroups/files/:id', ({ params }) => HttpResponse.json({ id: Number(params.id), sha256: 'ab'.repeat(32), size: 5e6, duration_s: 3725, codec: 'mp3', channels: 2, sample_rate: 44100, bit_rate: 64000, probe: params.id === '9' ? { format: { tags: { comment: 'unabridged' } } } : null, probe_error: params.id === '9' ? null : 'moov atom not found', locations: [{ path: '/audio/Intro.mp3', gone: false }, { path: '/old/Intro.mp3', gone: true }] })),
   http.get('/api/filegroups/:id', ({ params }) => params.id === '1' ? HttpResponse.json(fgDetail[1]) : params.id === '2' ? HttpResponse.json(fgDetail[2]) : HttpResponse.json({ detail: 'no such group' }, { status: 404 })),
   http.get('/api/health', () => HttpResponse.json({ ok: true, version: '0.1.0' })),

@@ -40,6 +40,27 @@ def roots(s: Session = Depends(get_session)):
     return dict(root=_group(g) if g else None, groupings=s.scalar(select(func.count()).select_from(Run).where(Run.kind == 'group_folders', Run.outcome == 'done')))
 
 
+@router.get('/search')
+def search(q: str, limit: int = 50, s: Session = Depends(get_session)):
+    """Case-insensitive 'contains' search (every word must match) over the newest grouping: groups by name and folder path, files by path. Each file hit names the group that holds it, so the page can jump there."""
+    words = q.split()
+    if not words or sum(map(len, words)) < 2: raise HTTPException(422, 'type at least two characters')
+    root = latest_root(s)
+    if root is None: return dict(groups=[], files=[], more=dict(groups=0, files=0))
+    limit = max(1, min(limit, 200))
+    gtext = func.concat(PartFilegroup.label, ' ', func.coalesce(PartFilegroup.path, ''))
+    gfilter = [PartFilegroup.run_id == root.run_id, PartFilegroup.kind != 'root', *[gtext.icontains(w, autoescape=True) for w in words]]
+    groups = list(s.scalars(select(PartFilegroup).where(*gfilter).order_by(func.length(PartFilegroup.path), PartFilegroup.label).limit(limit)))
+    gtotal = s.scalar(select(func.count()).select_from(PartFilegroup).where(*gfilter))
+    ffilter = [PartFilegroup.run_id == root.run_id, PartFileLocation.gone_at.is_(None), *[PartFileLocation.path.icontains(w, autoescape=True) for w in words]]
+    base = select(PartFileLocation.file_id, PartFileLocation.path, PartFilegroup.id, PartFilegroup.label).select_from(PartFilegroupMember).join(PartFilegroup, PartFilegroup.id == PartFilegroupMember.group_id).join(PartFileLocation, PartFileLocation.file_id == PartFilegroupMember.file_id).where(*ffilter, func.regexp_replace(PartFileLocation.path, '/[^/]*$', '') == PartFilegroup.path)
+    rows = s.execute(base.order_by(PartFileLocation.path).limit(limit)).all()
+    ftotal = s.scalar(select(func.count()).select_from(base.subquery()))
+    return dict(groups=[_group(g) for g in groups],
+                files=[dict(id=fid, name=os.path.basename(path), path=path, group_id=gid, group_label=gl) for fid, path, gid, gl in rows],
+                more=dict(groups=max(0, gtotal - len(groups)), files=max(0, ftotal - len(rows))))
+
+
 @router.get('/{group_id}')
 def group(group_id: int, s: Session = Depends(get_session)):
     g = s.get(PartFilegroup, group_id)

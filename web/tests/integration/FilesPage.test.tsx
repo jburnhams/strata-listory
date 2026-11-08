@@ -22,6 +22,25 @@ describe('FilesPage', () => {
     expect(await screen.findByText('Intro.mp3')).toBeInTheDocument()
   })
 
+  it('searches files and folders and jumps to the folder of a match', async () => {
+    const { user } = setup(<FilesPage />, { route: '/files' })
+    await screen.findByText('Intro.mp3')
+    await user.type(screen.getByLabelText('Search files and folders'), 'dragon')
+    const files = await screen.findByRole('region', { name: 'Files matching the search' })
+    expect(within(files).getByText('CD1 01.mp3')).toBeInTheDocument()
+    expect(screen.getByText(/more files match/)).toHaveTextContent('3 more files match')
+    await user.click(within(screen.getByRole('region', { name: 'Groups matching the search' })).getByRole('link', { name: 'Red Dragon' }))
+    expect(await screen.findByText('CD1 02.mp3')).toBeInTheDocument()                    // jumped into the folder, search gone
+    expect(screen.queryByRole('region', { name: 'Files matching the search' })).toBeNull()
+  })
+
+  it('says so when nothing matches the search', async () => {
+    const { user } = setup(<FilesPage />, { route: '/files?q=zzzz' })
+    expect(await screen.findByText('Nothing matches')).toBeInTheDocument()
+    await user.clear(screen.getByLabelText('Search files and folders'))
+    expect(await screen.findByText('Intro.mp3')).toBeInTheDocument()                     // clearing the box returns to browsing
+  })
+
   it('shows how to start when nothing has been grouped', async () => {
     server.use(http.get('/api/filegroups', () => HttpResponse.json({ root: null, groupings: 0 })))
     setup(<FilesPage />, { route: '/files' })

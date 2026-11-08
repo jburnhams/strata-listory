@@ -110,3 +110,18 @@ def test_api_file_detail_has_whole_probe(s, lib, monkeypatch):
     d = c.get(f"/api/filegroups/files/{f['id']}").json()
     assert d["probe"] == FFPROBE and len(d["sha256"]) == 64 and len(d["locations"]) == 2     # Track 2 and Show.mp3 are the same content
     assert c.get("/api/filegroups/files/999999").status_code == 404
+
+
+def test_api_search_finds_groups_and_files_and_names_the_group_to_jump_to(s, lib):
+    app = FastAPI(); app.include_router(api.router); app.dependency_overrides[api.get_session] = lambda: s
+    c = TestClient(app); assert c.get("/api/filegroups/search?q=book").json() == {"groups": [], "files": [], "more": {"groups": 0, "files": 0}}      # nothing grouped yet
+    ids = fg.scan_files(s, lib); top = fg.group_by_folder(s, lib, ids)
+    r = c.get("/api/filegroups/search?q=BOOK one").json()
+    assert sorted(g["label"] for g in r["groups"]) == ["Book One", "CD1", "CD2"]                  # every word matches the group's name or folder path, in any case
+    r = c.get("/api/filegroups/search?q=track 10").json()
+    assert [f["name"] for f in r["files"]] == ["Track 10.mp3"] and r["files"][0]["group_label"] == "CD1"
+    cd1 = s.scalars(select(PartFilegroup).where(PartFilegroup.label == "CD1")).one(); assert r["files"][0]["group_id"] == cd1.id
+    assert c.get("/api/filegroups/search?q=Show").json()["files"][0]["group_label"] == "Radio"
+    assert c.get("/api/filegroups/search?q=100%25").json()["files"] == []                       # % is not a wildcard
+    assert c.get("/api/filegroups/search?q=a").status_code == 422
+    assert c.get("/api/filegroups/search?q=track&limit=1").json()["more"]["files"] == 2
