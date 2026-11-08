@@ -109,7 +109,7 @@ def main(argv=None) -> int:
         if a.from_credits:      # names Audible itself credits that AudiobookDB's people list lacks, most-credited first
             from app.identify import textkeys as tk
             have = {tk.person_key(n) for (n,) in sqlite3.connect(f'file:{a.people}?mode=ro', uri=True, timeout=60).execute('SELECT name FROM person')}
-            done_keys = {tk.person_key(n) for (n,) in c.execute('SELECT DISTINCT name FROM query')}
+            done_keys = {tk.person_key(n) for (n,) in c.execute('SELECT DISTINCT name FROM query WHERE region=?', (a.region,))}      # per store: a name queried on the US store still needs asking on the UK one
             seen: dict[str, list] = {}
             for role, nm in c.execute('SELECT role, name FROM credit'):
                 k = tk.person_key(nm)

@@ -55,15 +55,17 @@ def fetch_leaf(c, api, region: str, cid: str) -> tuple:
 
 
 def newest_leaf(c, api, region: str, cid: str) -> tuple:
-    """Weekly refresh of one category: list it newest first and stop at the first full page whose products are all in the archive already. Returns (pages, new products, churned): churned is 1 when 20 pages were still turning up new products (more arrived since the last run than one sorted listing holds), and the caller then runs the full multi-sort listing instead."""
-    pages = new = 0
+    """Weekly refresh of one category: list it newest first and stop at the first full page whose products were all in the archive before this refresh. Returns (pages, new products, churned). churned is 1 when the listing ran out first (the last page repeated, or ~20 pages came back with new products still turning up): more has arrived since the last run than one sorted listing holds, and the caller then runs the full multi-sort listing instead."""
+    pages = new = 0; got: set[str] = set()
     for pg in range(21):
         ps = api.page('category_id', cid, pg, '-ReleaseDate'); pages += 1; known = 0
+        fresh = [p for p in ps if p['asin'] not in got]; got.update(p['asin'] for p in ps)
         with c:
-            for p in ps:
+            for p in fresh:
                 if c.execute('SELECT 1 FROM product WHERE asin=? AND region=?', (p['asin'], region)).fetchone(): known += 1
                 else: fp.store(c, region, p); new += 1
         if len(ps) < 50 or known == len(ps): return pages, new, 0
+        if not fresh: return pages, new, 1      # Audible repeats its last page past the cap: the listing is exhausted but unseen products remain
     return pages, new, 1
 
 
