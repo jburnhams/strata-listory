@@ -54,6 +54,19 @@ def fetch_leaf(c, api, region: str, cid: str) -> tuple:
     return pages, len(seen), len(seen), capped
 
 
+def newest_leaf(c, api, region: str, cid: str) -> tuple:
+    """Weekly refresh of one category: list it newest first and stop at the first full page whose products are all in the archive already. Returns (pages, new products, churned): churned is 1 when 20 pages were still turning up new products (more arrived since the last run than one sorted listing holds), and the caller then runs the full multi-sort listing instead."""
+    pages = new = 0
+    for pg in range(21):
+        ps = api.page('category_id', cid, pg, '-ReleaseDate'); pages += 1; known = 0
+        with c:
+            for p in ps:
+                if c.execute('SELECT 1 FROM product WHERE asin=? AND region=?', (p['asin'], region)).fetchone(): known += 1
+                else: fp.store(c, region, p); new += 1
+        if len(ps) < 50 or known == len(ps): return pages, new, 0
+    return pages, new, 1
+
+
 STOP = {'the', 'and', 'for', 'with', 'from', 'your', 'you', 'that', 'this', 'are', 'not', 'how', 'who', 'what', 'its', 'his', 'her', 'was'}
 
 
@@ -89,11 +102,23 @@ def main(argv=None) -> int:
     ap.add_argument('--region', default='uk', choices=sorted(fp.TLD))
     ap.add_argument('--rate', type=float, default=1); ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--shard', default='0/1'); ap.add_argument('--refresh-days', type=float, default=0)
+    ap.add_argument('--newest', action='store_true', help='weekly refresh: each category newest first, stopping at products already stored (falls back to the full listing when a category churned)')
     ap.add_argument('--internal', action='store_true', help='also sweep the non-leaf categories')
     ap.add_argument('--split', action='store_true', help='instead of the sweep, split the categories recorded as capped by title-word keywords')
     a = ap.parse_args(argv)
     c, api = fp.open_db(a.db), fp.Audible(a.region, a.rate); si, sn = (int(x) for x in a.shard.split('/')); done = 0
     cutoff = (fp.datetime.now(fp.timezone.utc) - fp.timedelta(days=a.refresh_days)).isoformat() if a.refresh_days else None
+    if a.newest:
+        t0, total_new, churned = time.time(), 0, 0
+        for cid, path in leaves(a.region, True):
+            if sn > 1 and zlib.crc32(cid.encode()) % sn != si: continue
+            pages, new, churn = newest_leaf(c, api, a.region, cid); done += 1; total_new += new
+            if churn:
+                churned += 1; pages2, returned, stored, capped = fetch_leaf(c, api, a.region, cid); total_new += 0
+                with c: c.execute("INSERT OR REPLACE INTO query (person_id, role, region, name, pages, returned, matched, capped, fetched, gv) VALUES (?,?,?,?,?,?,?,?,?,?)", (f'cat:{cid}', 'Category', a.region, path, pages2, returned, stored, capped, fp.now(), fp.GV))
+            if new or churn: print(f'{fp.now()} {path!r}: {new} new{" (churned: full listing)" if churn else ""}', flush=True)
+            if a.limit and done >= a.limit: break
+        print(f'{fp.now()} newest {a.region}: {done} categories, {total_new} new products, {churned} churned, {round(time.time() - t0)}s'); return 0
     if a.split:      # capped categories (and parents) only, each cut by title words
         words = vocabulary(c, a.region)
         todo = [(r[0][4:], r[1]) for r in c.execute("SELECT person_id, name FROM query WHERE role='Category' AND region=? AND capped=1 ORDER BY person_id", (a.region,))]
