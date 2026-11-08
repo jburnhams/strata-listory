@@ -56,6 +56,15 @@ export function subtitleOf(c: Pick<QueueCandidate, 'title' | 'recordings' | 'rec
   return ''
 }
 
+/** Names with spellings that differ only in case, accents or spacing collapsed to one ("Walter Lord" from Open Library and "Walter LORD" from Audible), keeping the spelling with the fewest all-capital words, then the first. */
+export function uniqueNames(names: string[]): string[] {
+  const key = (n: string) => n.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim()
+  const shouting = (n: string) => n.split(/\s+/).filter(w => w.length > 1 && w === w.toUpperCase() && w !== w.toLowerCase()).length
+  const best = new Map<string, string>()
+  for (const n of names) { const k = key(n), cur = best.get(k); if (k && (cur === undefined || shouting(n) < shouting(cur))) best.set(k, n) }
+  return [...best.values()]
+}
+
 function Field({ label, value }: { label: string; value: unknown }) {
   if (value == null || value === '') return null
   return <><dt className="text-muted-foreground">{label}</dt><dd className="min-w-0 break-words">{String(value)}</dd></>
@@ -97,7 +106,7 @@ function Work({ c, minutes }: { c: QueueCandidate; minutes: number | null | unde
       <div className="flex gap-3">
         <Cover isbn={c.isbns[0]} title={title} />
         <div className="min-w-0 space-y-1">
-          <p className="type-heading break-words">{title} <span className="type-body text-muted-foreground">by {c.authors.join(', ') || 'unknown author'}</span></p>
+          <p className="type-heading break-words">{title} <span className="type-body text-muted-foreground">by {uniqueNames(c.authors).join(', ') || 'unknown author'}</span></p>
           <p className="type-caption text-muted-foreground tabular-nums">
             {[c.year, c.editions ? format.count(c.editions, 'edition') : null, c.recordings.length ? format.count(c.recordings.length, 'Audible recording') : null].filter(Boolean).join(' · ')}
             {c.ol[0] && <> · <a className="underline" href={`https://openlibrary.org${c.ol[0]}`} target="_blank" rel="noreferrer">Open Library</a></>}

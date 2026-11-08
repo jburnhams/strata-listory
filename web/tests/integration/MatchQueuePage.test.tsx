@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { installFakeIntersectionObserver, installLayoutShims, type FakeIntersectionObserverControls } from 'strata-react/testing'
 import { cleanup } from '@testing-library/react'
-import MatchQueuePage, { certainty, evidence, runtimeDelta, subtitleOf } from '../../src/components/MatchQueuePage'
+import MatchQueuePage, { certainty, evidence, runtimeDelta, subtitleOf, uniqueNames } from '../../src/components/MatchQueuePage'
 import { setup, screen, within, waitFor } from '../utils/render'
 import { http, HttpResponse } from 'msw'
 import { matchState, server } from '../utils/server'
@@ -24,6 +24,15 @@ describe('subtitleOf', () => {
     expect(subtitleOf({ title: 'Dune', recording: null, recordings: [rec('B1', 'Dune Messiah: Book Two')] })).toBe('')
     expect(subtitleOf({ title: null, recording: null, recordings: [rec('B1', 'X: Y')] })).toBe('')
     expect(subtitleOf({ title: 'Dune', recording: null, recordings: [] })).toBe('')
+  })
+})
+
+describe('uniqueNames', () => {
+  it('collapses spellings that differ only in case, accents or spacing, preferring the one that is not shouting', () => {
+    expect(uniqueNames(['Walter Lord', 'Walter LORD'])).toEqual(['Walter Lord'])
+    expect(uniqueNames(['Walter LORD', 'Walter Lord'])).toEqual(['Walter Lord'])
+    expect(uniqueNames(['Jose  Saramago', 'José Saramago', 'Yves Rivière'])).toEqual(['Jose  Saramago', 'Yves Rivière'])
+    expect(uniqueNames([])).toEqual([])
   })
 })
 
