@@ -163,7 +163,9 @@ def cmd_listens_build(args):
         try: counts = build.build_listens(s, src, rebuild=args.rebuild)
         except ValueError as e: sys.exit(str(e))
         extra = build.link_copies(s) if not args.no_copies else {}
-        s.commit(); print(f"{counts['book']} books and {counts['radio_series']} radio series made into listens; {counts['loose_files_skipped']} loose files left for review" + (f"; {extra['copies_merged']} copies merged into {extra['listens_with_copies']} listens" if extra else '')); return 0
+        from app.store import metadata
+        meta = metadata.add_metadata(s)
+        s.commit(); print(f"{counts['book']} books and {counts['radio_series']} radio series made into listens; {counts['loose_files_skipped']} loose files left for review" + (f"; {extra['copies_merged']} copies merged into {extra['listens_with_copies']} listens" if extra else '') + f"; metadata chosen for {meta['listens']} listens ({meta['from_tags']} values from tags, {meta['from_folder']} from folder names)"); return 0
 
 
 def cmd_use_library(args):

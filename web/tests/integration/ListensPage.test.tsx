@@ -8,6 +8,7 @@ describe('ListensPage', () => {
     expect(await screen.findByText('3 listens: 2 books, 1 radio series')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Red Dragon' })).toHaveAttribute('href', '/files?group=2')
     expect(screen.getByText('12h 05m')).toBeInTheDocument()
+    expect(screen.getByText('Thomas Harris · read by Steven Weber · 1981')).toBeInTheDocument()
     expect(screen.getByText('3 copies')).toBeInTheDocument()                       // linked copies of one recording
     expect(screen.queryByText('1 copies')).toBeNull()
     expect(screen.getByText('Dead Ringers (season 11)')).toBeInTheDocument()      // no files group: plain text, not a link

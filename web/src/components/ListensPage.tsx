@@ -23,7 +23,7 @@ export default function ListensPage() {
   }, [typed]) // eslint-disable-line react-hooks/exhaustive-deps
   const load = useLoad({ queryKey: ['listens', q, kind], queryFn: () => listenApi.list(q, kind) })
   const columns: Column<ListenRow>[] = [
-    { key: 'label', header: 'Listen', sort: (a, b) => a.label.localeCompare(b.label), cell: l => <div className="min-w-0"><p>{l.group_id ? <Link className="underline" to={`/files?group=${l.group_id}`}>{l.label}</Link> : l.label}</p><p className="type-caption text-muted-foreground break-all">{l.path}</p></div> },
+    { key: 'label', header: 'Listen', sort: (a, b) => a.label.localeCompare(b.label), cell: l => <div className="min-w-0"><p>{l.group_id ? <Link className="underline" to={`/files?group=${l.group_id}`}>{l.label}</Link> : l.label}</p><p className="type-body-sm text-muted-foreground">{[l.author, l.narrator && `read by ${l.narrator}`, l.year].filter(Boolean).join(' · ')}</p><p className="type-caption text-muted-foreground break-all">{l.path}</p></div> },
     { key: 'kind', header: 'Kind', cell: l => <Status tone="neutral">{KIND_LABEL[l.kind] ?? l.kind}</Status> },
     { key: 'status', header: 'Status', cell: l => <div className="flex flex-wrap gap-1"><Status tone="info">{l.status}</Status>{l.copies > 1 && <Status tone="neutral">{`${l.copies} copies`}</Status>}</div> },
     { key: 'files', header: 'Files', numeric: true, sort: (a, b) => a.files - b.files, cell: l => l.files },
@@ -35,7 +35,7 @@ export default function ListensPage() {
   return (
     <div className="space-y-5">
       <PageHeader title="Listens" scope="What there is to listen to" finding={load.status === 'ready' && all ? { text: `${format.count(all, 'listen')}: ${Object.entries(tabs).map(([k, n]) => kindCount(k, n)).join(', ')}` } : undefined} />
-      <Field label="Search listens" hint="Every word must appear in the title or folder path">
+      <Field label="Search listens" hint="Every word must appear in the title, author, narrator or folder path">
         <Input type="search" value={typed} onChange={e => setTyped(e.target.value)} placeholder="e.g. lee child" />
       </Field>
       <Tabs param="kind" label="Kind of listen" items={[{ value: '', label: 'All' }, ...Object.keys(tabs).map(k => ({ value: k, label: `${KIND_LABEL[k] ?? k} (${tabs[k]})` }))]}>
