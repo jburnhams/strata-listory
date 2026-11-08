@@ -41,8 +41,8 @@ class Audible:
     def __init__(self, region: str, rate: float):
         self.base, self.gap, self.last = f'https://api.audible.{TLD[region]}/1.0/catalog/products', 1 / rate, 0.0
 
-    def page(self, kind: str, name: str, page: int, sort: str = '-ReleaseDate') -> list[dict]:
-        url = f'{self.base}?{kind}={urllib.parse.quote(name)}&num_results=50&page={page}&products_sort_by={sort}&response_groups={GROUPS}&image_sizes=500'
+    def page(self, kind: str, name: str, page: int, sort: str = '-ReleaseDate', extra: str = '') -> list[dict]:
+        url = f'{self.base}?{kind}={urllib.parse.quote(name)}&num_results=50&page={page}&products_sort_by={sort}&response_groups={GROUPS}&image_sizes=500{extra}'
         for attempt in range(1, 6):
             time.sleep(max(0, self.last + self.gap - time.monotonic())); self.last = time.monotonic()
             try:
