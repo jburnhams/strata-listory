@@ -141,3 +141,21 @@ def infer(s: Session, folder_root: PartFilegroup) -> tuple[PartFilegroup, dict]:
     """Build the structure grouping from a folder grouping's root. Returns the new root and counts per kind."""
     run = new_run(s, 'infer_structure', {'from_run': folder_root.run_id}); totals: dict = {}
     tree = classify(load_tree(s, folder_root)); top = write(s, tree, run, totals, is_root=True); finish_run(s, run, 'done'); return top, totals
+
+
+def snapshot(n: Node, out: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
+    """{path (+ '#label' for groups made from files next to folders): [kind, reason]} for a classified tree: the shape a regression check compares."""
+    out = {} if out is None else out
+    out[(n.path or n.label) + ('' if n.id != -1 else f'#{n.label}')] = [n.kind, n.detail.get('reason', '')]
+    for c in n.subs: snapshot(c, out)
+    return out
+
+
+def diff(old: dict[str, list[str]], new: dict[str, list[str]]) -> list[str]:
+    """Readable differences between two snapshots (a rule changed some folder's kind or reason, or folders appeared or went)."""
+    lines = []
+    for k in sorted(old.keys() | new.keys()):
+        a, b = old.get(k), new.get(k)
+        if a == b: continue
+        lines.append(f'+ {k}: {b[0]} ({b[1]})' if a is None else f'- {k}: {a[0]} ({a[1]})' if b is None else f'~ {k}: {a[0]} -> {b[0]} ({b[1]})' if a[0] != b[0] else f'~ {k}: {a[0]} reason "{a[1]}" -> "{b[1]}"')
+    return lines

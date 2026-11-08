@@ -79,3 +79,12 @@ def test_infer_writes_a_new_grouping_with_the_same_files(s, tmp_path):
     top, totals = st.infer(s, folders)
     assert top.run_id != folders.run_id and top.kind == "root" and top.file_count == 6 and top.total_bytes == folders.total_bytes
     assert totals == {"disc": 2, "book": 2, "series": 1} and top.detail["from_group"] == folders.id
+
+
+def test_snapshot_and_diff_show_what_a_rule_change_moves():
+    tree = lambda: leaf("Author", "Whole.m4b", subs=[leaf("Book A", *tracks(5)), leaf("Mix", "Bohemian.mp3", "Imagine.mp3", "Yesterday.mp3")])
+    before = st.snapshot(st.classify(tree()))
+    assert before["/lib/Book A"][0] == "book" and before["/lib/Mix"][0] == "loose" and before["/lib/Author#Whole"][0] == "book" and before["/lib/Author"][0] == "collection"
+    assert st.diff(before, st.snapshot(st.classify(tree()))) == []
+    after = dict(before); after["/lib/Mix"] = ["book", "chapter files of one work"]; del after["/lib/Book A"]; after["/lib/New"] = ["disc", "x"]
+    assert sorted(st.diff(before, after)) == sorted(["+ /lib/New: disc (x)", "- /lib/Book A: book (chapter files of one work)", "~ /lib/Mix: loose -> book (chapter files of one work)"])
