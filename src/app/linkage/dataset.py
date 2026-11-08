@@ -12,7 +12,7 @@ from app.linkage import candidates as C, compare as K
 from app.linkage.model import Case
 from app.linkage.query import Query, relpath
 
-VERSION = 4          # bump when candidates or comparisons change: cached vectors of older versions are recomputed
+VERSION = 5          # bump when candidates or comparisons change: cached vectors of older versions are recomputed
 
 
 def folder() -> Path: return Path(settings.data_dir()) / 'linkage'
