@@ -150,6 +150,21 @@ def cmd_filegroups_structure(args):
         print(f'grouping #{top.id}: ' + ', '.join(f'{n} {k}' for k, n in sorted(totals.items()))); return 0
 
 
+def cmd_listens_build(args):
+    """Make a listen for every book and programme in the newest structure grouping (needs ./app filegroups and ./app filegroups-structure first). Rerunnable with --rebuild."""
+    from omarchy_db import connect
+    from sqlalchemy.orm import Session
+    from sqlalchemy import select
+    from app.store import build
+    from app.store.models import PartFilegroup, Run
+    with Session(connect('listory')) as s:
+        src = s.scalars(select(PartFilegroup).join(Run, Run.id == PartFilegroup.run_id).where(PartFilegroup.kind == 'root', Run.kind == 'infer_structure', Run.outcome == 'done').order_by(Run.started_at.desc(), PartFilegroup.id.desc())).first()
+        if src is None: sys.exit('no structure grouping yet: run ./app filegroups-structure first')
+        try: counts = build.build_listens(s, src, rebuild=args.rebuild)
+        except ValueError as e: sys.exit(str(e))
+        s.commit(); print(f"{counts['book']} books and {counts['radio_series']} radio series made into listens; {counts['loose_files_skipped']} loose files left for review"); return 0
+
+
 def cmd_use_library(args):
     new = os.path.abspath(os.path.expanduser(args.folder)); old = os.path.abspath(os.path.expanduser(args.old)) if args.old else settings.library_dir()
     if not old: sys.exit('no current audiobook folder: give --from')
@@ -380,6 +395,7 @@ def main(argv=None):
     sc = sub.add_parser('scan', help='find audiobooks in a folder (default: the library_dir setting) and add them as new, unreviewed books; never writes to the folder'); sc.add_argument('folder', nargs='?'); sc.add_argument('--dry-run', action='store_true'); sc.set_defaults(fn=cmd_scan)
     fgp = sub.add_parser('filegroups', help='scan the library folder into the listory Postgres schema (sha256 per file) and group it by folder; rerunnable, hashes only changed files'); fgp.add_argument('folder', nargs='?'); fgp.add_argument('--workers', type=int, default=4); fgp.set_defaults(fn=cmd_filegroups)
     fgs = sub.add_parser('filegroups-structure', help='infer books, discs and series from the newest folder grouping into a new grouping run'); fgs.add_argument('--check', action='store_true', help='classify without writing and show what differs from data/structure-golden.json (exit 1 if anything)'); fgs.add_argument('--update', action='store_true', help='save the current classification as the golden snapshot'); fgs.set_defaults(fn=cmd_filegroups_structure)
+    lb = sub.add_parser('listens-build', help='make a listen for every book and programme in the newest structure grouping'); lb.add_argument('--rebuild', action='store_true', help='clear existing listens first (they are derived data)'); lb.set_defaults(fn=cmd_listens_build)
     mt = sub.add_parser('match', help='look scanned books up with the metadata providers and record suggestions'); mt.add_argument('--limit', type=int, default=25); mt.add_argument('--providers', help='comma separated, in order (default: the match_providers setting)'); mt.set_defaults(fn=cmd_match)
     ul = sub.add_parser('use-library', help='switch the audiobook folder (for example to the local copy), moving every book path with it'); ul.add_argument('folder'); ul.add_argument('--from', dest='old', help='the folder the paths currently live under (default: library_dir)'); ul.add_argument('--force', action='store_true', help='switch even if some books are missing in the new folder'); ul.set_defaults(fn=cmd_use_library)
     pr = sub.add_parser('process', help='turn books into the final library: mono mp3 chapters, normalised loudness (--plan shows what would happen)'); pr.add_argument('ids', nargs='*', type=int, help='book ids (default: confirmed books not yet processed)'); pr.add_argument('--plan', action='store_true', help='measure and print the plan, change nothing'); pr.add_argument('--json', action='store_true'); pr.add_argument('--limit', type=int, default=5); pr.add_argument('--jobs', type=int, default=3); pr.add_argument('--force', action='store_true', help='replace an existing output folder'); pr.add_argument('--out', help='final library folder (default: the final_dir setting, ~/audiobooks)'); pr.set_defaults(fn=cmd_process)

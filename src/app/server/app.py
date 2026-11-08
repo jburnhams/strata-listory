@@ -98,8 +98,8 @@ def create_app():
             return await call_next(request)
 
     try:
-        from app.store.api import router as filegroups_router      # needs omarchy-db; the rest of the app does not
-        app.include_router(filegroups_router)
+        from app.store.api import listens_router, router as filegroups_router      # needs omarchy-db; the rest of the app does not
+        app.include_router(filegroups_router); app.include_router(listens_router)
     except ImportError: pass
 
     initial_settings=settings.all_settings()
