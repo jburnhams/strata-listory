@@ -46,6 +46,9 @@ def stem(label: str) -> str:
     return re.sub(r'[\W_]+', ' ', s).strip()
 
 
+PART_PREFIX = re.compile(r'^\s*(?:part|cd|disc|disk|tape|side)[\s._-]*\d+\b', re.I)       # 'Part 1 - Being a Reprint', 'CD 2 - ...'; not 'Book 1' / 'Volume 1', which are usually separate books in a series
+
+
 def discish(labels: list[str]) -> str | None:
     """Why these sibling folder names look like the discs of one book, or None."""
     if len(labels) < 2 and not (labels and DISC_WORD.match(labels[0].strip())): return None
@@ -54,6 +57,7 @@ def discish(labels: list[str]) -> str | None:
     stems = {stem(l) for l in labels}
     if len(labels) >= 2 and len(stems) == 1 and any(re.search(r'\d', l) for l in labels): return 'same name, numbered'
     if len(labels) >= 2 and all(re.search(r'\b(cd|disc|disk)\s*\d+', l, re.I) for l in labels): return 'disc names inside longer names'
+    if len(labels) >= 2 and all(PART_PREFIX.match(l) for l in labels): return 'part names ("Part 1 - Title")'
     return None
 
 

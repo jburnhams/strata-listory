@@ -130,6 +130,12 @@ def test_a_book_length_stand_alone_file_is_a_book_not_a_programme(monkeypatch):
     assert [c.kind for c in n.subs] == ['book', 'book', 'programme'] and n.subs[0].detail['minutes'] == 313      # two are book length, the hour-long one is not
 
 
+def test_part_n_with_a_title_makes_the_parts_of_one_book():
+    n = st.classify(leaf('01 - A Study in Scarlet', subs=[leaf('Part 1 - Being a Reprint', *tracks(7)), leaf('Part 2 - The Country of the Saints', *tracks(7))]))
+    assert kinds(n) == ('book', ['disc', 'disc'])
+    assert st.classify(leaf('Flashman', subs=[leaf('Book 1 - Flashman', *tracks(7)), leaf('Book 2 - Royal Flash', *tracks(7))])).kind == 'series'      # 'Book N' is a series of books
+
+
 def test_a_year_range_in_the_title_is_not_a_radio_date():
     assert st.classify(leaf('Lost Diaries', *[f'{i:02d} - The Lost Diaries of Adrian Mole, 1999-2001 - Sue Townsend.mp3' for i in range(1, 30)])).kind == 'book'
 
