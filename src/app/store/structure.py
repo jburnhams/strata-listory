@@ -19,8 +19,11 @@ from sqlalchemy.orm import Session
 
 from app.scan import RADIO, one_work
 from app.store.filegroups import finish_run, new_run, natural_key
-from app.store.models import PartFilegroup, PartFilegroupMember, PartFileLocation, Run
+from app.store.models import PartFile, PartFilegroup, PartFilegroupMember, PartFileLocation, Run
 
+PLAY_MINUTES = 100       # a work of at most MAX_PLAY_FILES files and this many minutes is a play or an episode, not a book
+MAX_PLAY_FILES = 4
+DURATIONS: dict[int, float] = {}     # file id -> seconds, filled by load_tree (empty in unit tests: the rule is then off)
 SMALL_DRAWER = 3        # leftovers up to this many files are each treated as an item of their own
 WHOLE_BOOK = {'.m4b', '.m4a', '.aac'}
 DISC_WORD = re.compile(r'^(?:cd|disc|disk|part|volume|vol|book|tape|side)\s*[-_. ]*\d+\s*(?:of\s*\d+)?$', re.I)
@@ -89,7 +92,7 @@ class _Match:
 
 
 SEASON_EPISODE = _SeasonEpisode()
-BROADCAST = re.compile(r'\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:19|20)\d\d\b|\b(?:webrip|dabrip|dab rip)\b|\bbbc[\s._-]*(?:radio[\s._-]*\d|r\d)\b|(?<![a-z0-9])[bpm]0\d[0-9a-z]{5}(?![a-z0-9])', re.I)       # '(3rd January 2013)', '[WebRip (mp3)]': a radio broadcast, not a book's chapter
+BROADCAST = re.compile(r'\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:19|20)\d\d\b|\b(?:webrip|dabrip|dab rip)\b|\bbbc[\s._-]*(?:radio[\s._-]*\d|r\d)\b|(?<![a-z0-9])[bpm]0\d[0-9a-z]{5}(?![a-z0-9])|\bbbc\b|\(r[2-7]\s*(?:19|20)\d\d|\b(?:afternoon drama|saturday night theatre|saturday play|friday play|classic serial|book at bedtime|woman.s hour)\b', re.I)       # '(3rd January 2013)', '[WebRip (mp3)]': a radio broadcast, not a book's chapter
 PART_OF = re.compile(r'\((\d+)\s*-\s*(\d+)\)|\b(\d+)[\s_]*of[\s_]*(\d+)\b', re.I)       # 'Rumpole (2-3)', 'Show 3_of_4'
 
 
@@ -194,6 +197,13 @@ def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[in
 
 
 def judge(part: list[tuple[int, str]]) -> tuple[str, dict]:
+    kind, ev = _judge(part)
+    mins = sum(DURATIONS.get(i, 0) for i, _ in part) / 60
+    if kind == 'book' and 2 <= len(part) <= MAX_PLAY_FILES and 0 < mins <= PLAY_MINUTES and all(i in DURATIONS for i, _ in part): return 'programme', {'reason': f'only {len(part)} files and {mins:.0f} minutes: play length, not book length', 'files': len(part), 'radio': True, 'minutes': round(mins), 'was': [kind, ev]}
+    return kind, ev
+
+
+def _judge(part: list[tuple[int, str]]) -> tuple[str, dict]:
     names = [YEAR_RANGE.sub(' ', f[1]) for f in part]      # '1999-2001' in a title reads as a date to the radio test
     if len(part) == 1: return 'book', {'reason': 'one file'}
     if all(SEASON_EPISODE.search(x) for x in names) and episode_run(names): return 'programme', {'reason': 'numbered episodes of one programme', 'files': len(part), 'radio': True}      # S01E03 is unmistakable, so it wins over a shared name prefix
@@ -209,6 +219,15 @@ def judge(part: list[tuple[int, str]]) -> tuple[str, dict]:
 
 
 def classify(n: Node) -> Node:
+    _classify(n)
+    pd = [c for c in n.subs if c.kind == 'programme' and 'was' in c.detail]
+    if pd and len(pd) <= 0.25 * len(n.subs):                       # one short work among many books (a chapter folder, an Audible short story) is a short book, not a play
+        for c in pd: c.kind, c.detail = c.detail['was']
+        if n.kind in ('series', 'collection') and all(c.kind in ('book', 'series', 'programme') for c in n.subs): n.kind = 'series'
+    return n
+
+
+def _classify(n: Node) -> Node:
     for c in n.subs: classify(c)
     clusters = cluster_files(n.files)
     if clusters and (n.subs or len(clusters) > 1):
@@ -233,6 +252,7 @@ def load_tree(s: Session, root_group: PartFilegroup) -> Node:
     groups = {g.id: g for g in s.scalars(select(PartFilegroup).where(PartFilegroup.run_id == root_group.run_id))}
     mem: dict[int, list[PartFilegroupMember]] = {}
     for m in s.scalars(select(PartFilegroupMember).where(PartFilegroupMember.group_id.in_(groups)).order_by(PartFilegroupMember.group_id, PartFilegroupMember.ordinal)): mem.setdefault(m.group_id, []).append(m)
+    DURATIONS.clear(); DURATIONS.update({i: d for i, d in s.execute(select(PartFile.id, PartFile.duration_s).where(PartFile.duration_s.is_not(None)))})
     names: dict[tuple[str, int], str] = {}
     for fid, path in s.execute(select(PartFileLocation.file_id, PartFileLocation.path).where(PartFileLocation.gone_at.is_(None))): names[(os.path.dirname(path), fid)] = os.path.basename(path)
 
@@ -245,7 +265,6 @@ def load_tree(s: Session, root_group: PartFilegroup) -> Node:
 def write(s: Session, n: Node, run: Run, totals: dict, is_root: bool = False) -> PartFilegroup:
     """Write the classified tree as new groups (counts recomputed)."""
     children = [write(s, c, run, totals) for c in n.subs]; files = [f for f, _ in n.files]
-    from app.store.models import PartFile
     size = {i: z for i, z in s.execute(select(PartFile.id, PartFile.size).where(PartFile.id.in_(files)))} if files else {}
     g = PartFilegroup(run_id=run.id, kind='root' if is_root else n.kind, label=n.label, path=n.path, detail={**n.detail, 'from_group': n.id},
                       file_count=len(files) + sum(c.file_count for c in children), total_bytes=sum(size.values()) + sum(c.total_bytes for c in children), group_count=len(children) + sum(c.group_count for c in children))

@@ -155,3 +155,12 @@ def test_snapshot_and_diff_show_what_a_rule_change_moves():
     assert st.diff(before, st.snapshot(st.classify(tree()))) == []
     after = dict(before); after["/lib/Mix"] = ["book", "chapter files of one work"]; del after["/lib/Book A"]; after["/lib/New"] = ["disc", "x"]
     assert sorted(st.diff(before, after)) == sorted(["+ /lib/New: disc (x)", "- /lib/Book A: book (chapter files of one work)", "~ /lib/Mix: loose -> book (chapter files of one work)"])
+
+
+def test_play_length_makes_a_programme_but_a_lone_short_work_among_books_stays_a_book(monkeypatch):
+    monkeypatch.setattr(st, "DURATIONS", {i: 2700.0 for i in range(100)})                       # 45 minutes per file
+    play = st.classify(leaf("Rumpole and the Reign of Terror", *[f"Part {i}.mp3" for i in (1, 2)]))
+    assert play.kind == "programme" and play.detail["minutes"] == 90 and "play length" in play.detail["reason"]
+    books = [leaf(f"Book {i}", *tracks(8)) for i in range(5)]
+    assert all(c.kind == "book" for c in st.classify(leaf("Shelf", subs=books + [leaf("Short story", "Part 1.mp3", "Part 2.mp3")])).subs)       # one short work among five books
+    assert all(i in st.DURATIONS for i in range(2))
