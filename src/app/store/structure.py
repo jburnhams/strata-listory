@@ -60,7 +60,12 @@ def numbered_run(names: list[str]) -> bool:
         x = re.sub(r'\b(?:19|20)\d\d\b', ' ', re.sub(r'\[[^\]]*\]', ' ', os.path.splitext(x)[0]))      # years and [B0D23Y5KXP]-style ids are not track numbers
         if m := re.search(r'\d+', x): nums.append(int(m.group()))
     if len(nums) < 0.9 * len(names) or any(DATE.search(x) for x in names): return False
-    return len(set(nums)) >= 0.9 * len(names) and max(nums) - min(nums) + 1 <= 1.1 * len(names) + 2
+    if len(set(nums)) < 0.9 * len(names): return False
+    ordered = sorted(nums)
+    for drop_low in range(max(1, int(0.05 * len(names))) + 1):                 # a stray 000 'dedication' file ahead of 301..360 should not break the run
+        kept = ordered[drop_low:]
+        if len(kept) >= 0.9 * len(names) and kept[-1] - kept[0] + 1 <= 1.1 * len(kept) + 2: return True
+    return False
 
 
 DATE = re.compile(r'\b(?:19|20)\d\d[-.]\d\d[-.]\d\d\b')       # a dated broadcast name (2012-01-03): episodes of a programme, not chapters of one work
@@ -73,20 +78,45 @@ def episode_run(names: list[str]) -> bool:
     return len(names) >= 3 and len(nums) == len(names) and len(set(nums)) == len(nums) and max(nums) - min(nums) + 1 <= len(nums) + 1
 
 
+def shape(name: str) -> str:
+    """How a file name starts, with the numbers blanked: '01 01 - Title.mp3' -> '#', 'APS303 Harry.mp3' -> 'aps#', 'Intro.mp3' -> 'x'. Copies of one book in one folder usually follow different naming schemes."""
+    m = re.match(r'^(\D*?)(\d+)', os.path.splitext(name)[0])
+    return re.sub(r'[\W_]+', '', m.group(1).lower()) + '#' if m else 'x'
+
+
+def cluster_label(folder: str, files: list[tuple[int, str]], with_shape: bool = False) -> str:
+    """'American Psycho (m4b files)' / '(mp3 files, aps#)': what tells the copies in one folder apart."""
+    sh = shape(files[0][1])
+    return f"{folder} ({os.path.splitext(files[0][1])[1].lstrip('.').lower()} files{', ' + sh if with_shape else ''})"
+
+
+def split_by_shape(files: list[tuple[int, str]]) -> list[list[tuple[int, str]]]:
+    """Split chapter files that follow two or more naming schemes into one list per scheme, but only when every scheme has at least 3 files (otherwise it is one set plus a stray intro or credits file)."""
+    groups: dict[str, list[tuple[int, str]]] = {}
+    for f in files: groups.setdefault(shape(f[1]), []).append(f)
+    return list(groups.values()) if 2 <= len(groups) <= 4 and all(len(g) >= 3 for g in groups.values()) else [files]
+
+
 def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[int, str]], dict]]:
     """Split the audio files directly in one folder into (kind, files, evidence) clusters: every whole-book file (.m4b/.m4a/.aac) is a book of its own, the rest are the chapter files of one work or unrelated tracks."""
     out = []; rest = []; whole = [f for f in files if os.path.splitext(f[1])[1].lower() in WHOLE_BOOK]
     if len(whole) >= 3 and numbered_run([f[1] for f in whole]): out.append(('book', whole, {'reason': 'numbered m4b/m4a files are the chapters of one work', 'files': len(whole)})); whole = []
     out += [('book', [f], {'reason': 'whole-book file'}) for f in whole]
     rest = [f for f in files if os.path.splitext(f[1])[1].lower() not in WHOLE_BOOK]
-    if rest:
-        names = [YEAR_RANGE.sub(' ', f[1]) for f in rest]      # '1999-2001' in a title reads as a date to the radio test
-        if len(rest) == 1: out.append(('book', rest, {'reason': 'one file'}))
-        elif one_work(names): out.append(('book', rest, {'reason': 'chapter files of one work', 'files': len(rest)}))
-        elif episode_run(names): out.append(('book', rest, {'reason': 'numbered episodes of one programme', 'files': len(rest), 'radio': True}))
-        elif numbered_run(names): out.append(('book', rest, {'reason': 'numbered tracks 1..n', 'files': len(rest)}))
-        else: out.append(('loose', rest, {'reason': 'unrelated tracks', 'files': len(rest)}))
+    parts = split_by_shape(rest) if rest else []
+    judged = [judge(p) for p in parts]
+    if len(judged) > 1 and any(j[0] != 'book' for j in judged): parts, judged = [rest], [judge(rest)]       # a split is only worth it when every scheme is a book of its own
+    out += [(k, p, ev) for p, (k, ev) in zip(parts, judged)]
     return out
+
+
+def judge(part: list[tuple[int, str]]) -> tuple[str, dict]:
+    names = [YEAR_RANGE.sub(' ', f[1]) for f in part]      # '1999-2001' in a title reads as a date to the radio test
+    if len(part) == 1: return 'book', {'reason': 'one file'}
+    if one_work(names): return 'book', {'reason': 'chapter files of one work', 'files': len(part)}
+    if episode_run(names): return 'book', {'reason': 'numbered episodes of one programme', 'files': len(part), 'radio': True}
+    if numbered_run(names): return 'book', {'reason': 'numbered tracks 1..n', 'files': len(part)}
+    return 'loose', {'reason': 'unrelated tracks', 'files': len(part)}
 
 
 def classify(n: Node) -> Node:
@@ -94,7 +124,7 @@ def classify(n: Node) -> Node:
     clusters = cluster_files(n.files)
     if clusters and (n.subs or len(clusters) > 1):
         for kind, fl, ev in clusters:                                  # files next to sub-folders, or several kinds of file in one folder: each cluster becomes a group of its own under this folder
-            n.subs.append(Node(-1, os.path.splitext(fl[0][1])[0] if len(fl) == 1 else f'{n.label} (files)', n.path, fl, kind=kind, detail=ev))
+            n.subs.append(Node(-1, os.path.splitext(fl[0][1])[0] if len(fl) == 1 else cluster_label(n.label, fl, [x for _, x, _ in clusters if os.path.splitext(x[0][1])[1].lower() == os.path.splitext(fl[0][1])[1].lower()].__len__() > 1), n.path, fl, kind=kind, detail=ev))
         n.files = []
         if all(c.kind in ('book', 'series') for c in n.subs): n.kind, n.detail = 'series', {'reason': 'several books or copies of one book side by side' if not any(c.id != -1 for c in n.subs) else 'its folders and files are books', 'books': len(n.subs)}
         else: n.kind, n.detail = 'collection', {'reason': 'books mixed with something else', 'kinds': sorted({c.kind for c in n.subs})}
@@ -147,7 +177,9 @@ def infer(s: Session, folder_root: PartFilegroup) -> tuple[PartFilegroup, dict]:
 def snapshot(n: Node, out: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
     """{path (+ '#label' for groups made from files next to folders): [kind, reason]} for a classified tree: the shape a regression check compares."""
     out = {} if out is None else out
-    out[(n.path or n.label) + ('' if n.id != -1 else f'#{n.label}')] = [n.kind, n.detail.get('reason', '')]
+    key = (n.path or n.label) + ('' if n.id != -1 else f'#{n.label}')
+    while key in out: key += '~'                      # two clusters can share a label
+    out[key] = [n.kind, n.detail.get('reason', '')]
     for c in n.subs: snapshot(c, out)
     return out
 

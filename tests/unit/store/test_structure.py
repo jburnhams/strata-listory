@@ -62,6 +62,15 @@ def test_an_audible_style_id_and_episode_words_do_not_stop_a_numbered_run():
     n = st.classify(leaf('Leon Neyfakh 2024 Backfired [B0D23Y5KXP]', *names)); assert n.kind == 'book' and n.detail['reason'] == 'numbered tracks 1..n'
 
 
+def test_three_copies_of_one_book_in_one_folder_are_three_books():
+    m4b = [f'{i:02d} - Psycho.m4b' for i in range(1, 7)]
+    mp3_a = [f'{i:02d} {i:02d} - Psycho.mp3' for i in range(1, 7)]
+    mp3_b = [f'APS{300 + i} {t}.mp3' for i, t in enumerate(['Harrys', 'Pastels', 'Tunnel', 'Office', 'Aspen', 'Taxi'])]
+    n = st.classify(leaf('Psycho', *m4b, *mp3_a, *mp3_b))
+    assert kinds(n) == ('series', ['book', 'book', 'book']) and [c.detail['files'] for c in n.subs] == [6, 6, 6]
+    assert st.classify(leaf('Book', *tracks(8), 'Intro.mp3', 'Credits.mp3')).kind in ('book', 'loose')      # a stray intro and credits file do not split one set
+
+
 def test_a_year_range_in_the_title_is_not_a_radio_date():
     assert st.classify(leaf('Lost Diaries', *[f'{i:02d} - The Lost Diaries of Adrian Mole, 1999-2001 - Sue Townsend.mp3' for i in range(1, 30)])).kind == 'book'
 
