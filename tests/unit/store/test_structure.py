@@ -111,6 +111,13 @@ def test_bbc_radio_and_air_dates_in_the_names_make_a_programme():
     assert st.classify(leaf('Novel', *[f'0{i} - Part {w}.mp3' for i, w in enumerate(['One', 'Two', 'Three', 'Four'], 1)])).kind != 'programme'
 
 
+def test_series_dash_number_and_bbc_programme_ids_make_a_programme():
+    s8 = st.classify(leaf('Series 8', *[f'Mark_Steels_in_Town_Series_8_-_{i}._{t}.mp3' for i, t in enumerate(['Bedford', 'Matlock', 'Inverness', 'Portishead'], 1)]))
+    assert s8.kind == 'programme'
+    s7 = st.classify(leaf('Series 7', *[f'Mark_Steels_in_Town_Series_7_-_{i}._{t}_b07tbfm{i}_original.mp3' for i, t in enumerate(['Stockport', 'Colchester', 'Hebden'], 1)], 'Mark_Steels_in_Town_Series_7_-_Gibraltar_-_Extended_Edition_p04bs6z5_original.mp3'))
+    assert s7.kind == 'programme' and 'radio broadcast' in s7.detail['reason']
+
+
 def test_a_year_range_in_the_title_is_not_a_radio_date():
     assert st.classify(leaf('Lost Diaries', *[f'{i:02d} - The Lost Diaries of Adrian Mole, 1999-2001 - Sue Townsend.mp3' for i in range(1, 30)])).kind == 'book'
 

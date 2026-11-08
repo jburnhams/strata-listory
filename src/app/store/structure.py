@@ -71,8 +71,24 @@ def numbered_run(names: list[str]) -> bool:
 
 DATE = re.compile(r'\b(?:19|20)\d\d[-.]\d\d[-.]\d\d\b')       # a dated broadcast name (2012-01-03): episodes of a programme, not chapters of one work
 EPISODE = re.compile(r'\b(?:ep|episode|part)[\s._-]*(\d+)\b', re.I)
-SEASON_EPISODE = re.compile(r'\bs(\d{1,2})[\s._-]*e(\d{1,3})\b', re.I)
-BROADCAST = re.compile(r'\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:19|20)\d\d\b|\b(?:webrip|dabrip|dab rip)\b|\bbbc[\s._-]*(?:radio[\s._-]*\d|r\d)\b', re.I)       # '(3rd January 2013)', '[WebRip (mp3)]': a radio broadcast, not a book's chapter
+_SE = re.compile(r'(?<![a-z0-9])s(\d{1,2})[\s._-]*e(\d{1,3})(?![a-z0-9])|(?<![a-z])series[\s._]*(\d+)[\s._]*-[\s._]*(\d+)(?!\d)', re.I)       # S03E04, and 'Series 7 - 4. Title'
+
+
+class _SeasonEpisode:
+    """Like a compiled regex with groups (1)=season, (2)=episode and .start(), for either spelling."""
+    def search(self, text):
+        m = _SE.search(text)
+        return None if m is None else _Match(m)
+
+
+class _Match:
+    def __init__(self, m): self.m = m
+    def group(self, i): return self.m.group(i) if self.m.group(1) is not None else self.m.group(i + 2)
+    def start(self): return self.m.start()
+
+
+SEASON_EPISODE = _SeasonEpisode()
+BROADCAST = re.compile(r'\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:19|20)\d\d\b|\b(?:webrip|dabrip|dab rip)\b|\bbbc[\s._-]*(?:radio[\s._-]*\d|r\d)\b|(?<![a-z0-9])[bpm]0\d[0-9a-z]{5}(?![a-z0-9])', re.I)       # '(3rd January 2013)', '[WebRip (mp3)]': a radio broadcast, not a book's chapter
 PART_OF = re.compile(r'\((\d+)\s*-\s*(\d+)\)|\b(\d+)[\s_]*of[\s_]*(\d+)\b', re.I)       # 'Rumpole (2-3)', 'Show 3_of_4'
 
 
