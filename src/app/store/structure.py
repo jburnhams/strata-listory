@@ -4,7 +4,7 @@ Classification of each folder, bottom-up (a folder is judged by what is directly
 * **disc**: a leaf folder whose siblings are numbered variants of one name ("CD 1", "Disc 02", "Goldfinch 15-26", "one", "two"); the parent is then the **book**.
 * **book**: a folder whose sub-folders are all discs; chapter files of one work (`scan.one_work`, or numbered 1..n); or a single whole-book file (.m4b/.m4a/.aac). Files lying next to sub-folders, or several kinds of file in one folder (an mp3 set beside its m4b), are first split into clusters, each judged on its own and written as a group under the folder.
 * **series**: a folder whose sub-folders are books (an author folder, "Jack Reacher", "Hitchhiker's Guide").
-* **loose**: files that each stand alone (separate broadcasts, a mix of unrelated tracks); `detail.reason` says whether they are dated broadcasts or simply unrelated.
+* **loose**: a pile of files with nothing tying them together (no numbering, no shared title, no dates); these are what a person looks at.
 * **programme**: the numbered episodes of one radio series or serial (`S01E03`, `Episode 2`, `Part 1`, `ep04`); `detail.radio` is true.
 * **collection**: a container whose contents are a mix (books, series, loose tracks such as radio series); each part is already classified inside it.
 * **folder**: anything the rules cannot call at all; `detail.reason` says why. These are what a person or a smarter step looks at next.
@@ -174,6 +174,13 @@ def split_by_shape(files: list[tuple[int, str]]) -> list[list[tuple[int, str]]]:
     return list(groups.values()) if 2 <= len(groups) <= 4 and all(len(g) >= 3 for g in groups.values()) else [files]
 
 
+def standalone(f: tuple[int, str], why: str) -> tuple[str, list[tuple[int, str]], dict]:
+    """One file that stands on its own in a folder of other things: a programme (radio play, one-off), unless it is as long as a book."""
+    mins = DURATIONS.get(f[0], 0) / 60
+    if mins > PLAY_MINUTES: return 'book', [f], {'reason': f'stand-alone file of book length ({mins:.0f} minutes)', 'minutes': round(mins)}
+    return 'programme', [f], {'reason': why, 'radio': True}
+
+
 def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[int, str]], dict]]:
     """Split the audio files directly in one folder into (kind, files, evidence) clusters: every whole-book file (.m4b/.m4a/.aac) is a book of its own, the rest are the chapter files of one work or unrelated tracks."""
     out = []; rest = []; whole = [f for f in files if os.path.splitext(f[1])[1].lower() in WHOLE_BOOK]
@@ -189,9 +196,9 @@ def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[in
         if len(titled) > 1 or (titled and titled[0][0]):
             for t, v in titled:
                 if t: out.append(('programme', v, {'reason': 'files share one programme title under mixed numbering', 'files': len(v), 'radio': True, 'title': t}))
-                elif len(v) <= SMALL_DRAWER: out += [('programme', [f], {'reason': 'stand-alone file left over from a folder of several programmes', 'radio': True}) for f in v]      # a couple of one-offs: each is its own item
+                elif len(v) <= SMALL_DRAWER: out += [standalone(f, 'stand-alone file left over from a folder of several programmes') for f in v]      # a couple of one-offs: each is its own item
                 else: out.append(('loose', v, judge(v)[1]))
-        elif k == 'loose' and 2 <= len(p) <= SMALL_DRAWER: out += [('programme', [f], {'reason': 'one of a few stand-alone files, each its own programme', 'radio': True}) for f in p]      # three plays in a folder are three programmes, not one unrelated pile
+        elif k == 'loose' and 2 <= len(p) <= SMALL_DRAWER: out += [standalone(f, 'one of a few stand-alone files, each its own programme') for f in p]      # three plays in a folder are three programmes, not one unrelated pile
         else: out.append((k, p, ev))
     return out
 
@@ -208,13 +215,13 @@ def _judge(part: list[tuple[int, str]]) -> tuple[str, dict]:
     if len(part) == 1: return 'book', {'reason': 'one file'}
     if all(SEASON_EPISODE.search(x) for x in names) and episode_run(names): return 'programme', {'reason': 'numbered episodes of one programme', 'files': len(part), 'radio': True}      # S01E03 is unmistakable, so it wins over a shared name prefix
     if sum(bool(BROADCAST.search(x)) for x in names) >= 0.7 * len(names): return 'programme', {'reason': 'radio broadcast names (BBC Radio, air dates, WebRip)', 'files': len(part), 'radio': True}
+    if sum(bool(DATE.search(x)) or bool(re.search(r'\b(?:19|20)\d\d\d\d\d\d\b', x)) for x in names) >= 0.7 * len(names): return 'programme', {'reason': 'dated broadcasts: the episodes of one programme, by air date', 'files': len(part), 'radio': True}
     if one_work(names): return 'book', {'reason': 'chapter files of one work', 'files': len(part)}
     if episode_run(names): return 'programme', {'reason': 'numbered episodes of one programme', 'files': len(part), 'radio': True}
     if parts_of_one(names):
         if sum(bool(BROADCAST.search(x)) for x in names) >= 0.7 * len(names): return 'programme', {'reason': 'numbered 1..n of one radio series (broadcast dates in the names)', 'files': len(part), 'radio': True}
         return 'book', {'reason': 'files say they are parts 1..n of one thing', 'files': len(part)}
     if numbered_run(names): return 'book', {'reason': 'numbered tracks 1..n', 'files': len(part)}
-    if sum(bool(DATE.search(x)) or bool(re.search(r'\b(?:19|20)\d\d\d\d\d\d\b', x)) for x in names) >= 0.7 * len(names): return 'loose', {'reason': 'dated broadcasts, each file stands alone', 'files': len(part), 'radio': True}
     return 'loose', {'reason': 'unrelated tracks', 'files': len(part)}
 
 

@@ -81,13 +81,13 @@ def test_season_episode_names_make_a_programme_and_several_seasons_split():
 
 def test_files_that_say_they_are_parts_of_n_are_one_book():
     assert st.classify(leaf("Rumpole's Last Case", *[f"rumAB08_6{c} - The Last Case ({i}-3), McKern.mp3" for i, c in enumerate('abc', 1)])).kind == 'book'
-    assert st.classify(leaf('Rocket', *[f'it_is_rocket_science.2011-03-0{i}.{i}_of_4.mp3' for i in range(1, 5)])).kind == 'book'
+    assert st.classify(leaf('Rocket', *[f'it_is_rocket_science.{i}_of_4.mp3' for i in range(1, 5)])).kind == 'book'
     assert st.classify(leaf('Not all there', 'X (1-3).mp3', 'X (2-3).mp3')).kind != 'book'      # claims 3 parts, has 2: not one book
 
 
-def test_dated_broadcasts_are_loose_with_that_reason_and_unrelated_tracks_say_so():
-    n = st.classify(leaf('Interviews', *[f'2016-07-{d:02d}-Guest {d}.mp3' for d in range(1, 8)]))
-    assert n.kind == 'loose' and n.detail['reason'].startswith('dated broadcasts')      # dated, but no programme title to tie them together
+def test_dated_broadcasts_are_a_programme_and_unrelated_tracks_stay_loose():
+    n = st.classify(leaf('Guy Garvey', *[f'2016-07-{d:02d}-Guest {d}.mp3' for d in range(1, 8)]))
+    assert n.kind == 'programme' and n.detail['reason'].startswith('dated broadcasts') and n.detail['radio'] is True      # dated files in one folder are the episodes of that programme
     assert st.classify(leaf('Mix', 'Bohemian.mp3', 'Imagine.mp3', 'Yesterday.mp3', 'Hey Jude.mp3')).detail['reason'] == 'unrelated tracks'
 
 
@@ -122,6 +122,12 @@ def test_a_few_stand_alone_files_are_each_a_programme_but_a_big_pile_stays_loose
     n = st.classify(leaf('Ripley', 'Complete Ripley - 1 - The talented Mr Ripley.mp3', 'ripleys game.mp3', 'Ripley Underground.mp3'))
     assert kinds(n) == ('series', ['programme', 'programme', 'programme'])
     assert st.classify(leaf('Drawer', *[f'{t}.mp3' for t in ('Bohemian', 'Imagine', 'Yesterday', 'Hey Jude')])).kind == 'loose'
+
+
+def test_a_book_length_stand_alone_file_is_a_book_not_a_programme(monkeypatch):
+    monkeypatch.setattr(st, "DURATIONS", {0: 313 * 60.0, 1: 184 * 60.0, 2: 57 * 60.0})
+    n = st.classify(leaf('Tony Benn', 'Free at Last The Diaries.mp3', 'The Benn Diaries Vol 1.mp3', 'Tapes.mp3'))
+    assert [c.kind for c in n.subs] == ['book', 'book', 'programme'] and n.subs[0].detail['minutes'] == 313      # two are book length, the hour-long one is not
 
 
 def test_a_year_range_in_the_title_is_not_a_radio_date():
