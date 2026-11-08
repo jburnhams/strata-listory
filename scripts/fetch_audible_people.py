@@ -41,8 +41,8 @@ class Audible:
     def __init__(self, region: str, rate: float):
         self.base, self.gap, self.last = f'https://api.audible.{TLD[region]}/1.0/catalog/products', 1 / rate, 0.0
 
-    def page(self, kind: str, name: str, page: int, sort: str = '-ReleaseDate') -> list[dict]:
-        url = f'{self.base}?{kind}={urllib.parse.quote(name)}&num_results=50&page={page}&products_sort_by={sort}&response_groups={GROUPS}&image_sizes=500'
+    def page(self, kind: str, name: str, page: int, sort: str = '-ReleaseDate', extra: str = '') -> list[dict]:
+        url = f'{self.base}?{kind}={urllib.parse.quote(name)}&num_results=50&page={page}&products_sort_by={sort}&response_groups={GROUPS}&image_sizes=500{extra}'
         for attempt in range(1, 6):
             time.sleep(max(0, self.last + self.gap - time.monotonic())); self.last = time.monotonic()
             try:
@@ -109,7 +109,7 @@ def main(argv=None) -> int:
         if a.from_credits:      # names Audible itself credits that AudiobookDB's people list lacks, most-credited first
             from app.identify import textkeys as tk
             have = {tk.person_key(n) for (n,) in sqlite3.connect(f'file:{a.people}?mode=ro', uri=True, timeout=60).execute('SELECT name FROM person')}
-            done_keys = {tk.person_key(n) for (n,) in c.execute('SELECT DISTINCT name FROM query')}
+            done_keys = {tk.person_key(n) for (n,) in c.execute('SELECT DISTINCT name FROM query WHERE region=?', (a.region,))}      # per store: a name queried on the US store still needs asking on the UK one
             seen: dict[str, list] = {}
             for role, nm in c.execute('SELECT role, name FROM credit'):
                 k = tk.person_key(nm)
