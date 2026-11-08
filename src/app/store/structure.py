@@ -186,8 +186,9 @@ def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[in
         if len(titled) > 1 or (titled and titled[0][0]):
             for t, v in titled:
                 if t: out.append(('programme', v, {'reason': 'files share one programme title under mixed numbering', 'files': len(v), 'radio': True, 'title': t}))
-                elif len(v) <= SMALL_DRAWER: out += [('book', [f], {'reason': 'stand-alone file left over from a folder of several programmes'}) for f in v]      # a couple of one-offs: each is its own item
+                elif len(v) <= SMALL_DRAWER: out += [('programme', [f], {'reason': 'stand-alone file left over from a folder of several programmes', 'radio': True}) for f in v]      # a couple of one-offs: each is its own item
                 else: out.append(('loose', v, judge(v)[1]))
+        elif k == 'loose' and 2 <= len(p) <= SMALL_DRAWER: out += [('programme', [f], {'reason': 'one of a few stand-alone files, each its own programme', 'radio': True}) for f in p]      # three plays in a folder are three programmes, not one unrelated pile
         else: out.append((k, p, ev))
     return out
 
