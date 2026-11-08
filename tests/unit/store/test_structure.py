@@ -48,7 +48,7 @@ def test_mp3_set_beside_its_m4b_is_two_books_to_merge_later():
 def test_unrelated_tracks_are_loose_and_numbered_run_is_a_book():
     assert st.classify(leaf("Mix", "Bohemian.mp3", "Imagine.mp3", "Yesterday.mp3")).kind == "loose"
     assert st.classify(leaf("Push", *[f"TP - {i:03d} - Part {c}.mp3" for i, c in enumerate("abcdefgh", 1)])).kind == "book"
-    assert st.classify(leaf("Hardtalk", *[f"Hardtalk 2012-01-{d:02d}.mp3" for d in range(1, 9)])).kind == "loose"      # dates are not track numbers
+    assert st.classify(leaf("Hardtalk", *[f"Hardtalk 2012-01-{d:02d}.mp3" for d in range(1, 9)])).kind == "programme"      # dates are not track numbers; one title, dated episodes
 
 
 def test_numbered_episodes_of_one_programme_are_a_programme():
@@ -86,8 +86,8 @@ def test_files_that_say_they_are_parts_of_n_are_one_book():
 
 
 def test_dated_broadcasts_are_loose_with_that_reason_and_unrelated_tracks_say_so():
-    n = st.classify(leaf('HardTalk', *[f'HARDtalk-2016-07-{d:02d}-Guest {d}.mp3' for d in range(1, 8)]))
-    assert n.kind == 'loose' and n.detail['reason'].startswith('dated broadcasts')
+    n = st.classify(leaf('Interviews', *[f'2016-07-{d:02d}-Guest {d}.mp3' for d in range(1, 8)]))
+    assert n.kind == 'loose' and n.detail['reason'].startswith('dated broadcasts')      # dated, but no programme title to tie them together
     assert st.classify(leaf('Mix', 'Bohemian.mp3', 'Imagine.mp3', 'Yesterday.mp3')).detail['reason'] == 'unrelated tracks'
 
 
@@ -95,6 +95,14 @@ def test_a_numbered_radio_series_with_broadcast_dates_is_a_programme_not_a_book(
     names = [f'{i:02d} of 12 - Title {i} ({i}th January 2013) [WebRip (mp3)].mp3' for i in range(1, 13)]
     n = st.classify(leaf('Story', *names)); assert n.kind == 'programme' and n.detail['radio'] is True
     assert st.classify(leaf('Novel', *[f'{i:02d} of 12 - Chapter {i}.mp3' for i in range(1, 13)])).kind == 'book'
+
+
+def test_one_programme_under_mixed_numbering_is_pulled_out_of_a_drawer():
+    names = ["Mark.Steels.in.Town.20100407.DABRadioRip.mp3", "Mark.Steels.in.Town.20100414.DABRadioRip.mp3", "Mark Steel's in Town - Part 1 of 4 - 18032009.mp3", "Mark Steel's in Town - Edinburgh Special.mp3",
+             "Mark Steel Celebrates Leith.mp3", "Mark_Steel_-_Who_Do_I_Think_I_Am_-_original.mp3", "Zebra Interview.mp3"]
+    n = st.classify(leaf('Mark Steel', *names))
+    assert kinds(n) == ('collection', ['programme', 'loose']) and [c.detail['files'] for c in n.subs] == [4, 3] and n.subs[0].detail['title'] == 'marksteelsintown'
+    assert st.programme_title('Intro.mp3') == '' and st.programme_title("Mark Steels in Town - S03E01 - Berwick.mp3") == 'marksteelsintown'
 
 
 def test_a_year_range_in_the_title_is_not_a_radio_date():

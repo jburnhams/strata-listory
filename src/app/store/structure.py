@@ -126,6 +126,27 @@ def cluster_label(folder: str, files: list[tuple[int, str]], with_shape: bool = 
     return f"{folder} ({os.path.splitext(files[0][1])[1].lstrip('.').lower()} files{', ' + sh if with_shape else ''})"
 
 
+PROGRAMME_CUT = re.compile(r'\bs\d+\s*e\d+|\d{6,}|(?:19|20)\d\d\s*[-.]\s*\d\d\s*[-.]\s*\d\d|\bpart\b|\bep(?:isode)?\b|\s-\s|[(\[]', re.I)
+
+
+def programme_title(name: str) -> str:
+    """The programme a broadcast file belongs to, as letters only ('Mark.Steels.in.Town.20100407.DAB...' and 'Mark Steel's in Town - S03E01 - Berwick' both give 'marksteelsintown'), or '' when no title is left."""
+    x = re.sub(r'[._]+', ' ', os.path.splitext(name)[0])
+    x = re.sub(r'^\s*(?:bbc\s*(?:radio\s*\d|r\d)x?|rt[eé])\s*[-:]*\s*', '', x, flags=re.I)
+    m = PROGRAMME_CUT.search(x); x = x[:m.start()] if m else x
+    t = re.sub(r'[^a-z]+', '', x.lower())
+    return t if len(t) >= 6 else ''
+
+
+def split_by_title(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[int, str]]]]:
+    """From files judged unrelated: pull out every title shared by 3+ files (one programme under several numbering schemes: S03E01, 20100407, 'Part 1 of 4', plus duplicate copies). Returns [(title, files)...] for those, then ('', leftovers)."""
+    by: dict[str, list] = {}
+    for f in files: by.setdefault(programme_title(f[1]), []).append(f)
+    out = [(t, v) for t, v in by.items() if t and len(v) >= 3]
+    left = [f for t, v in by.items() if not (t and len(v) >= 3) for f in v]
+    return out + ([('', left)] if left else [])
+
+
 def split_by_shape(files: list[tuple[int, str]]) -> list[list[tuple[int, str]]]:
     """Split chapter files that follow two or more naming schemes into one list per scheme, but only when every scheme has at least 3 files (otherwise it is one set plus a stray intro or credits file)."""
     groups: dict[str, list[tuple[int, str]]] = {}
@@ -143,7 +164,11 @@ def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[in
     parts = by_season if len(by_season) > 1 else (split_by_shape(rest) if rest else [])
     judged = [judge(p) for p in parts]
     if len(by_season) <= 1 and len(judged) > 1 and any(j[0] == 'loose' for j in judged): parts, judged = [rest], [judge(rest)]       # a split by naming scheme is only worth it when every scheme is something of its own
-    out += [(k, p, ev) for p, (k, ev) in zip(parts, judged)]
+    for p, (k, ev) in zip(parts, judged):
+        titled = split_by_title(p) if k == 'loose' and len(p) >= 3 else []
+        if len(titled) > 1 or (titled and titled[0][0]):
+            for t, v in titled: out.append(('programme', v, {'reason': 'files share one programme title under mixed numbering', 'files': len(v), 'radio': True, 'title': t}) if t else ('loose', v, judge(v)[1]))
+        else: out.append((k, p, ev))
     return out
 
 
