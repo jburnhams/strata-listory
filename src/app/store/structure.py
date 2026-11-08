@@ -21,6 +21,7 @@ from app.store.models import PartFilegroup, PartFilegroupMember, PartFileLocatio
 
 WHOLE_BOOK = {'.m4b', '.m4a', '.aac'}
 DISC_WORD = re.compile(r'^(?:cd|disc|disk|part|volume|vol|book|tape|side)\s*[-_. ]*\d+\s*(?:of\s*\d+)?$', re.I)
+YEAR_RANGE = re.compile(r'\b(?:19|20)\d\d\s*[-–]\s*(?:19|20)\d\d\b')
 NUMBER_WORDS = r'one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|first|second|third|fourth|fifth'
 
 
@@ -68,7 +69,7 @@ def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[in
     out += [('book', [f], {'reason': 'whole-book file'}) for f in whole]
     rest = [f for f in files if os.path.splitext(f[1])[1].lower() not in WHOLE_BOOK]
     if rest:
-        names = [f[1] for f in rest]
+        names = [YEAR_RANGE.sub(' ', f[1]) for f in rest]      # '1999-2001' in a title reads as a date to the radio test
         if len(rest) == 1: out.append(('book', rest, {'reason': 'one file'}))
         elif one_work(names): out.append(('book', rest, {'reason': 'chapter files of one work', 'files': len(rest)}))
         elif numbered_run(names): out.append(('book', rest, {'reason': 'numbered tracks 1..n', 'files': len(rest)}))

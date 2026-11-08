@@ -51,6 +51,10 @@ def test_unrelated_tracks_are_loose_and_numbered_run_is_a_book():
     assert st.classify(leaf("Hardtalk", *[f"Hardtalk 2012-01-{d:02d}.mp3" for d in range(1, 9)])).kind == "loose"      # dates are not track numbers
 
 
+def test_a_year_range_in_the_title_is_not_a_radio_date():
+    assert st.classify(leaf('Lost Diaries', *[f'{i:02d} - The Lost Diaries of Adrian Mole, 1999-2001 - Sue Townsend.mp3' for i in range(1, 30)])).kind == 'book'
+
+
 def test_unknown_mixture_stays_a_folder_with_the_reason():
     n = st.classify(leaf("Odd", subs=[leaf("Mix", "Bohemian.mp3", "Imagine.mp3", "Yesterday.mp3"), leaf("Book", *tracks(5))]))
     assert n.kind == "folder" and n.detail["kinds"] == ["book", "loose"]
