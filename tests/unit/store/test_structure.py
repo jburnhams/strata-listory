@@ -101,7 +101,7 @@ def test_one_programme_under_mixed_numbering_is_pulled_out_of_a_drawer():
     names = ["Mark.Steels.in.Town.20100407.DABRadioRip.mp3", "Mark.Steels.in.Town.20100414.DABRadioRip.mp3", "Mark Steel's in Town - Part 1 of 4 - 18032009.mp3", "Mark Steel's in Town - Edinburgh Special.mp3",
              "Mark Steel Celebrates Leith.mp3", "Mark_Steel_-_Who_Do_I_Think_I_Am_-_original.mp3", "Zebra Interview.mp3"]
     n = st.classify(leaf('Mark Steel', *names))
-    assert kinds(n) == ('collection', ['programme', 'loose']) and [c.detail['files'] for c in n.subs] == [4, 3] and n.subs[0].detail['title'] == 'marksteelsintown'
+    assert kinds(n) == ('series', ['programme', 'book', 'book', 'book']) and n.subs[0].detail['files'] == 4 and n.subs[1].detail['reason'].startswith('stand-alone file') and n.subs[0].detail['title'] == 'marksteelsintown'
     assert st.programme_title('Intro.mp3') == '' and st.programme_title("Mark Steels in Town - S03E01 - Berwick.mp3") == 'marksteelsintown'
 
 

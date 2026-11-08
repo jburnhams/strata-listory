@@ -21,6 +21,7 @@ from app.scan import RADIO, one_work
 from app.store.filegroups import finish_run, new_run, natural_key
 from app.store.models import PartFilegroup, PartFilegroupMember, PartFileLocation, Run
 
+SMALL_DRAWER = 3        # leftovers up to this many files are each treated as an item of their own
 WHOLE_BOOK = {'.m4b', '.m4a', '.aac'}
 DISC_WORD = re.compile(r'^(?:cd|disc|disk|part|volume|vol|book|tape|side)\s*[-_. ]*\d+\s*(?:of\s*\d+)?$', re.I)
 YEAR_RANGE = re.compile(r'\b(?:19|20)\d\d\s*[-–]\s*(?:19|20)\d\d\b')
@@ -183,7 +184,10 @@ def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[in
     for p, (k, ev) in zip(parts, judged):
         titled = split_by_title(p) if k == 'loose' and len(p) >= 3 else []
         if len(titled) > 1 or (titled and titled[0][0]):
-            for t, v in titled: out.append(('programme', v, {'reason': 'files share one programme title under mixed numbering', 'files': len(v), 'radio': True, 'title': t}) if t else ('loose', v, judge(v)[1]))
+            for t, v in titled:
+                if t: out.append(('programme', v, {'reason': 'files share one programme title under mixed numbering', 'files': len(v), 'radio': True, 'title': t}))
+                elif len(v) <= SMALL_DRAWER: out += [('book', [f], {'reason': 'stand-alone file left over from a folder of several programmes'}) for f in v]      # a couple of one-offs: each is its own item
+                else: out.append(('loose', v, judge(v)[1]))
         else: out.append((k, p, ev))
     return out
 
