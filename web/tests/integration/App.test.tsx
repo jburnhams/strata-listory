@@ -23,7 +23,7 @@ describe('App shell', () => {
 
   it('lists Review first and moves between sections from the side navigation', async () => {
     const { user } = open('/')
-    expect(within(nav()).getAllByRole('link').map(a => a.textContent)).toEqual(['Review', 'Library', 'Pipeline', 'Processing', 'Settings'])
+    expect(within(nav()).getAllByRole('link').map(a => a.textContent)).toEqual(['Review', 'Library', 'Files', 'Pipeline', 'Processing', 'Settings'])
     await user.click(within(nav()).getByRole('link', { name: 'Library' }))
     expect(await screen.findByRole('heading', { name: 'Library' })).toBeInTheDocument()
     await user.click(within(nav()).getByRole('link', { name: 'Settings' }))

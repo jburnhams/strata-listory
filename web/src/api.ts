@@ -163,3 +163,15 @@ export const identifyApi = {
   },
   refresh: (train = false) => req<unknown>(`/api/identify/refresh?train=${train}`, { method: 'POST' }),
 }
+
+// Filegroups (src/app/store/api.py): the folder tree of the library as grouped into the listory Postgres schema.
+export interface FileGroup { id: number; kind: 'root' | 'folder' | 'disc' | 'book' | 'series' | 'programme' | 'collection' | 'loose'; label: string; path: string | null; file_count: number; total_bytes: number; group_count: number }
+export interface FileGroupDetail { group: FileGroup; ancestors: { id: number; label: string; kind: string }[]; children: (FileGroup & { ordinal: number })[]; files: { id: number; ordinal: number; name: string; path: string | null; size: number; duration_s: number | null; codec: string | null; tags: Record<string, string>; probe_error: string | null }[] }
+export interface FileInfo { id: number; sha256: string; size: number; duration_s: number | null; codec: string | null; channels: number | null; sample_rate: number | null; bit_rate: number | null; probe: object | null; probe_error: string | null; locations: { path: string; gone: boolean }[] }
+export interface FileSearch { groups: FileGroup[]; files: { id: number; name: string; path: string; group_id: number; group_label: string }[]; more: { groups: number; files: number } }
+export const fileGroupApi = {
+  search: (q: string) => req<FileSearch>(`/api/filegroups/search?${new URLSearchParams({ q })}`),
+  root: () => req<{ root: FileGroup | null; groupings: number }>('/api/filegroups'),
+  group: (id: number) => req<FileGroupDetail>(`/api/filegroups/${id}`),
+  file: (id: number) => req<FileInfo>(`/api/filegroups/files/${id}`),
+}
