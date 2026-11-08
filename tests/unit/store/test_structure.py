@@ -51,9 +51,9 @@ def test_unrelated_tracks_are_loose_and_numbered_run_is_a_book():
     assert st.classify(leaf("Hardtalk", *[f"Hardtalk 2012-01-{d:02d}.mp3" for d in range(1, 9)])).kind == "loose"      # dates are not track numbers
 
 
-def test_numbered_episodes_of_one_programme_are_a_book():
+def test_numbered_episodes_of_one_programme_are_a_programme():
     assert st.classify(leaf('Wilderness', *[f'BBC R4X - Wilderness Years, Episode {i}.mp3' for i in range(1, 9)])).detail['radio'] is True
-    assert st.classify(leaf('Prostrate', *[f'Adrian Mole - 2019-06-{23 + i} - Prostrate - ep{i:02d}.mp3' for i in range(1, 11)])).kind == 'book'
+    assert st.classify(leaf('Prostrate', *[f'Adrian Mole - 2019-06-{23 + i} - Prostrate - ep{i:02d}.mp3' for i in range(1, 11)])).kind == 'programme'
     assert st.classify(leaf('Mix', 'Show Episode 1.mp3', 'Other Episode 1.mp3', 'Third Episode 7.mp3')).kind == 'loose'      # not a run
 
 
@@ -69,6 +69,26 @@ def test_three_copies_of_one_book_in_one_folder_are_three_books():
     n = st.classify(leaf('Psycho', *m4b, *mp3_a, *mp3_b))
     assert kinds(n) == ('series', ['book', 'book', 'book']) and [c.detail['files'] for c in n.subs] == [6, 6, 6]
     assert st.classify(leaf('Book', *tracks(8), 'Intro.mp3', 'Credits.mp3')).kind in ('book', 'loose')      # a stray intro and credits file do not split one set
+
+
+def test_season_episode_names_make_a_programme_and_several_seasons_split():
+    one = st.classify(leaf('Milton Jones S1', *[f'The Very World Of Milton Jones S1E{i} Title.mp3' for i in range(1, 5)]))
+    assert one.kind == 'programme' and one.detail['radio'] is True
+    flat = st.classify(leaf('Great Lives', *[f'Great Lives S{s}E0{e} Name.mp3' for s in (31, 32) for e in (1, 2, 3)]))
+    assert kinds(flat) == ('series', ['programme', 'programme'])
+    assert st.classify(leaf('Tender', 'Episode 1.mp3', 'Episode 2.mp3')).kind == 'programme'
+
+
+def test_files_that_say_they_are_parts_of_n_are_one_book():
+    assert st.classify(leaf("Rumpole's Last Case", *[f"rumAB08_6{c} - The Last Case ({i}-3), McKern.mp3" for i, c in enumerate('abc', 1)])).kind == 'book'
+    assert st.classify(leaf('Rocket', *[f'it_is_rocket_science.2011-03-0{i}.{i}_of_4.mp3' for i in range(1, 5)])).kind == 'book'
+    assert st.classify(leaf('Not all there', 'X (1-3).mp3', 'X (2-3).mp3')).kind == 'loose'      # claims 3 parts, has 2
+
+
+def test_dated_broadcasts_are_loose_with_that_reason_and_unrelated_tracks_say_so():
+    n = st.classify(leaf('HardTalk', *[f'HARDtalk-2016-07-{d:02d}-Guest {d}.mp3' for d in range(1, 8)]))
+    assert n.kind == 'loose' and n.detail['reason'].startswith('dated broadcasts')
+    assert st.classify(leaf('Mix', 'Bohemian.mp3', 'Imagine.mp3', 'Yesterday.mp3')).detail['reason'] == 'unrelated tracks'
 
 
 def test_a_year_range_in_the_title_is_not_a_radio_date():

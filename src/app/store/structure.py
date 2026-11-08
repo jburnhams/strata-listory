@@ -4,7 +4,8 @@ Classification of each folder, bottom-up (a folder is judged by what is directly
 * **disc**: a leaf folder whose siblings are numbered variants of one name ("CD 1", "Disc 02", "Goldfinch 15-26", "one", "two"); the parent is then the **book**.
 * **book**: a folder whose sub-folders are all discs; chapter files of one work (`scan.one_work`, or numbered 1..n); or a single whole-book file (.m4b/.m4a/.aac). Files lying next to sub-folders, or several kinds of file in one folder (an mp3 set beside its m4b), are first split into clusters, each judged on its own and written as a group under the folder.
 * **series**: a folder whose sub-folders are books (an author folder, "Jack Reacher", "Hitchhiker's Guide").
-* **loose**: a leaf folder of unrelated tracks (episodes, a mix) that is not one work.
+* **loose**: files that each stand alone (separate broadcasts, a mix of unrelated tracks); `detail.reason` says whether they are dated broadcasts or simply unrelated.
+* **programme**: the numbered episodes of one radio series or serial (`S01E03`, `Episode 2`, `Part 1`, `ep04`); `detail.radio` is true.
 * **collection**: a container whose contents are a mix (books, series, loose tracks such as radio series); each part is already classified inside it.
 * **folder**: anything the rules cannot call at all; `detail.reason` says why. These are what a person or a smarter step looks at next.
 Every group of the new run holds the same files as the folder it came from; the folder grouping it was built from is untouched."""
@@ -69,13 +70,41 @@ def numbered_run(names: list[str]) -> bool:
 
 
 DATE = re.compile(r'\b(?:19|20)\d\d[-.]\d\d[-.]\d\d\b')       # a dated broadcast name (2012-01-03): episodes of a programme, not chapters of one work
-EPISODE = re.compile(r'\b(?:ep|episode)[\s._-]*(\d+)\b', re.I)
+EPISODE = re.compile(r'\b(?:ep|episode|part)[\s._-]*(\d+)\b', re.I)
+SEASON_EPISODE = re.compile(r'\bs(\d{1,2})[\s._-]?e(\d{1,3})\b', re.I)
+PART_OF = re.compile(r'\((\d+)\s*-\s*(\d+)\)|\b(\d+)[\s_]*of[\s_]*(\d+)\b', re.I)       # 'Rumpole (2-3)', 'Show 3_of_4'
 
 
 def episode_run(names: list[str]) -> bool:
-    """True when the names are the numbered episodes of one programme ('..., Episode 3', '2019-06-26 - Title - ep03'): every name has an episode number and the numbers run 1..n."""
-    nums = [int(m.group(1)) for x in names if (m := EPISODE.search(x))]
-    return len(names) >= 3 and len(nums) == len(names) and len(set(nums)) == len(nums) and max(nums) - min(nums) + 1 <= len(nums) + 1
+    """True when the names are the numbered episodes of one programme ('..., Episode 3', 'Show - ep03', 'S02E04'): every name has an episode number, no number repeats and they run (about) 1..n."""
+    nums = []
+    for x in names:
+        if m := SEASON_EPISODE.search(x): nums.append((m.group(1), int(m.group(2))))
+        elif m := EPISODE.search(x): nums.append(('', int(m.group(1))))
+        else: return False
+    seasons = {sn for sn, _ in nums}; eps = [e for _, e in nums]
+    return len(names) >= 2 and len(seasons) == 1 and len(set(eps)) == len(eps) and max(eps) - min(eps) + 1 <= len(eps) + 1
+
+
+def parts_of_one(names: list[str]) -> bool:
+    """'(1-3)', '(2-3)', '(3-3)' or '1_of_4'...: the files say they are the parts of one thing and there are as many as they claim."""
+    totals = set()
+    for x in names:
+        m = PART_OF.search(x)
+        if not m: return False
+        totals.add(int(m.group(2) or m.group(4)))
+    return len(totals) == 1 and totals == {len(names)}
+
+
+def split_by_season(files: list[tuple[int, str]]) -> list[list[tuple[int, str]]]:
+    """Flat folders holding several series ('S31E01 ... S34E04', 'Show S1E1 ... Other Show S1E1'): one list per (programme name, season), when most names carry S..E.. and each list has 2+ files."""
+    keyed: dict[tuple, list] = {}; rest = []
+    for f in files:
+        m = SEASON_EPISODE.search(f[1])
+        if m: keyed.setdefault((re.sub(r'[\W_\d]+', '', f[1][:m.start()].lower())[:14], int(m.group(1))), []).append(f)
+        else: rest.append(f)
+    if len(keyed) < 2 or sum(len(v) for v in keyed.values()) < 0.7 * len(files) or any(len(v) < 2 for v in keyed.values()): return [files]
+    return list(keyed.values()) + ([rest] if rest else [])
 
 
 def shape(name: str) -> str:
@@ -86,6 +115,8 @@ def shape(name: str) -> str:
 
 def cluster_label(folder: str, files: list[tuple[int, str]], with_shape: bool = False) -> str:
     """'American Psycho (m4b files)' / '(mp3 files, aps#)': what tells the copies in one folder apart."""
+    seasons = {m.group(1).lstrip('0') or '0' for f in files if (m := SEASON_EPISODE.search(f[1]))}
+    if len(seasons) == 1 and all(SEASON_EPISODE.search(f[1]) for f in files): return f"{folder} (season {seasons.pop()})"
     sh = shape(files[0][1])
     return f"{folder} ({os.path.splitext(files[0][1])[1].lstrip('.').lower()} files{', ' + sh if with_shape else ''})"
 
@@ -103,9 +134,10 @@ def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[in
     if len(whole) >= 3 and numbered_run([f[1] for f in whole]): out.append(('book', whole, {'reason': 'numbered m4b/m4a files are the chapters of one work', 'files': len(whole)})); whole = []
     out += [('book', [f], {'reason': 'whole-book file'}) for f in whole]
     rest = [f for f in files if os.path.splitext(f[1])[1].lower() not in WHOLE_BOOK]
-    parts = split_by_shape(rest) if rest else []
+    by_season = split_by_season(rest) if rest else []
+    parts = by_season if len(by_season) > 1 else (split_by_shape(rest) if rest else [])
     judged = [judge(p) for p in parts]
-    if len(judged) > 1 and any(j[0] != 'book' for j in judged): parts, judged = [rest], [judge(rest)]       # a split is only worth it when every scheme is a book of its own
+    if len(by_season) <= 1 and len(judged) > 1 and any(j[0] == 'loose' for j in judged): parts, judged = [rest], [judge(rest)]       # a split by naming scheme is only worth it when every scheme is something of its own
     out += [(k, p, ev) for p, (k, ev) in zip(parts, judged)]
     return out
 
@@ -114,8 +146,10 @@ def judge(part: list[tuple[int, str]]) -> tuple[str, dict]:
     names = [YEAR_RANGE.sub(' ', f[1]) for f in part]      # '1999-2001' in a title reads as a date to the radio test
     if len(part) == 1: return 'book', {'reason': 'one file'}
     if one_work(names): return 'book', {'reason': 'chapter files of one work', 'files': len(part)}
-    if episode_run(names): return 'book', {'reason': 'numbered episodes of one programme', 'files': len(part), 'radio': True}
+    if episode_run(names): return 'programme', {'reason': 'numbered episodes of one programme', 'files': len(part), 'radio': True}
+    if parts_of_one(names): return 'book', {'reason': 'files say they are parts 1..n of one thing', 'files': len(part)}
     if numbered_run(names): return 'book', {'reason': 'numbered tracks 1..n', 'files': len(part)}
+    if sum(bool(DATE.search(x)) or bool(re.search(r'\b(?:19|20)\d\d\d\d\d\d\b', x)) for x in names) >= 0.7 * len(names): return 'loose', {'reason': 'dated broadcasts, each file stands alone', 'files': len(part), 'radio': True}
     return 'loose', {'reason': 'unrelated tracks', 'files': len(part)}
 
 
@@ -126,7 +160,7 @@ def classify(n: Node) -> Node:
         for kind, fl, ev in clusters:                                  # files next to sub-folders, or several kinds of file in one folder: each cluster becomes a group of its own under this folder
             n.subs.append(Node(-1, os.path.splitext(fl[0][1])[0] if len(fl) == 1 else cluster_label(n.label, fl, [x for _, x, _ in clusters if os.path.splitext(x[0][1])[1].lower() == os.path.splitext(fl[0][1])[1].lower()].__len__() > 1), n.path, fl, kind=kind, detail=ev))
         n.files = []
-        if all(c.kind in ('book', 'series') for c in n.subs): n.kind, n.detail = 'series', {'reason': 'several books or copies of one book side by side' if not any(c.id != -1 for c in n.subs) else 'its folders and files are books', 'books': len(n.subs)}
+        if all(c.kind in ('book', 'series', 'programme') for c in n.subs): n.kind, n.detail = 'series', {'reason': 'several books or copies of one book side by side' if not any(c.id != -1 for c in n.subs) else 'its folders and files are books', 'books': len(n.subs)}
         else: n.kind, n.detail = 'collection', {'reason': 'books mixed with something else', 'kinds': sorted({c.kind for c in n.subs})}
         return n
     if clusters: n.kind, n.detail = clusters[0][0], clusters[0][2]; return n
@@ -134,7 +168,7 @@ def classify(n: Node) -> Node:
     if why:
         for c in n.subs: c.kind, c.detail = 'disc', {'reason': why}
         n.kind, n.detail = 'book', {'reason': 'its folders are discs', 'discs': len(n.subs), 'because': why}
-    elif all(c.kind in ('book', 'series') for c in n.subs): n.kind, n.detail = 'series', {'reason': 'its folders are books', 'books': len(n.subs)}
+    elif all(c.kind in ('book', 'series', 'programme') for c in n.subs): n.kind, n.detail = 'series', {'reason': 'its folders are books', 'books': len(n.subs)}
     else:
         kinds = sorted({c.kind for c in n.subs}); n.kind, n.detail = ('folder', {'reason': 'contains folders the rules could not call', 'kinds': kinds}) if 'folder' in kinds else ('collection', {'reason': 'sub-folders of different kinds', 'kinds': kinds})
     return n
