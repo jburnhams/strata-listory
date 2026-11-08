@@ -184,7 +184,8 @@ def cmd_listens_identify_prepare(args):
             print(f'{len(labels)} listens labelled from the old catalogue')
     try: oc = olc.connect()
     except FileNotFoundError: oc = None; print('no Open Library identification index: Audible only')
-    data = dataset.build(oc, audibleindex.connect(), queries, dataset.load_cache(), progress=lambda i, n: print(f'{i}/{n}', flush=True) if i % 100 == 0 else None)
+    ac = audibleindex.connect()
+    data = dataset.build(oc, ac, queries, dataset.load_cache(), progress=lambda i, n: print(f'{i}/{n}', flush=True) if i % 100 == 0 else None, indexes=dataset.index_stamp(oc, ac))
     dataset.save_cache(data); print(f'{len(data)} listens, {sum(len(d["clusters"]) for d in data.values())} candidate works'); return 0
 
 
@@ -211,7 +212,7 @@ def cmd_listens_identify(args):
     if params is None: sys.exit('no model yet: run ./app listens-identify-train first')
     data = dataset.load_cache()
     with Session(connect('listory')) as s:
-        if args.rebuild: print(f'cleared the earlier identification of {apply.clear(s)} listens')
+        if args.rebuild: print(f'cleared the earlier identification of {apply.clear(s, ids=set(args.ids) if args.ids else None)} listens')
         counts = apply.apply(s, data, params, threshold=args.threshold, ids=set(args.ids) if args.ids else None)
         merged = apply.merge_copies(s, actor_ref=params.version()) if args.merge_copies else []
         groups = apply.same_work_groups(s)

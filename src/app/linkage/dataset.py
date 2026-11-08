@@ -37,18 +37,24 @@ def vectors(oc, ac, q: Query) -> dict:
     return out
 
 
-def build(oc, ac, queries: list[Query], cache: dict | None = None, progress=None) -> dict:
-    """{listen_id: vectors(...)}; listens already in `cache` (keyed by the reading signature) are reused."""
+def build(oc, ac, queries: list[Query], cache: dict | None = None, progress=None, indexes: str = '') -> dict:
+    """{listen_id: vectors(...)}; listens already in `cache` with the same signature (their readings, the code `VERSION` and `indexes`, the snapshot identities of the indexes used) are reused, so a rebuilt index recomputes everything."""
     cache = cache or {}; out = {}
     for i, q in enumerate(queries):
-        sig = signature(q); hit = cache.get(str(q.listen_id))
+        sig = signature(q, indexes); hit = cache.get(str(q.listen_id))
         out[str(q.listen_id)] = hit if hit and hit.get('sig') == sig else dict(vectors(oc, ac, q), sig=sig)
         if progress and i % 25 == 0: progress(i, len(queries))
     return out
 
 
-def signature(q: Query) -> str:
-    return json.dumps([VERSION] + [[r.title, r.author] for r in q.readings[:C.MAX_READINGS]] + [q.narrators, q.asin, q.year, q.minutes, q.hints])
+def index_stamp(oc, ac) -> str:
+    """Which indexes candidates came from: the Open Library build time and the Audible snapshot, or 'none' when one is missing."""
+    from app.identify import audibleindex, olindex
+    return f"ol:{olindex.status().get('built', '?') if oc is not None else 'none'}|audible:{audibleindex.snapshot(ac) if ac is not None else 'none'}"
+
+
+def signature(q: Query, indexes: str = '') -> str:
+    return json.dumps([VERSION, indexes] + [[r.title, r.author] for r in q.readings[:C.MAX_READINGS]] + [q.narrators, q.asin, q.year, q.minutes, q.hints])
 
 
 def load_cache(name: str = 'vectors.json') -> dict:

@@ -151,3 +151,10 @@ def test_retrain_fits_saves_and_reapplies(s, listens, tmp_path, monkeypatch):
     counts = service.retrain_and_apply(lambda: nullcontext(s), validate=True)
     assert counts["accept"] == 4 and service.load_params() is not None and (tmp_path / "report.json").exists()
     assert service.STATE["running"] is False and service.STATE["report"]["labels"]["labelled"] == 0
+
+
+def test_rebuild_of_some_listens_keeps_the_others(s, listens):
+    apply.apply(s, data_for(listens), params())
+    one = listens["Books/Ben Ash - Salt Roads"]
+    assert apply.clear(s, ids={one.id}) == 1
+    assert s.scalar(select(func.count()).select_from(ListenPart).where(ListenPart.role == "match")) == 3 and one.status == "grouped"

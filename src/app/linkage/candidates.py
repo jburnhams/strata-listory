@@ -171,9 +171,16 @@ def _same_person(a: str, b: str) -> bool:
 def shares_author(xs: list[str], ys: list[str]) -> bool: return any(_same_person(x, y) for x in xs for y in ys)
 
 
-def same_book(titles_a: set[str], authors_a: list[str], titles_b: set[str], authors_b: list[str]) -> bool:
-    """Two records are one book when a title key (or main title, before any subtitle) is shared and an author is shared; records with no real author on either side join on the title alone."""
+def volumes(title_key: str) -> set[str]:
+    """Numbers in a title key (not years): 'salt roads volume 2' -> {'2'}."""
+    return {str(int(n)) for n in re.findall(r'\d+', title_key or '') if len(n) < 4}
+
+
+def same_book(titles_a: set[str], authors_a: list[str], titles_b: set[str], authors_b: list[str], full_a: str = '', full_b: str = '', aliases_b: frozenset[str] | set[str] = frozenset()) -> bool:
+    """Two records are one book when a title key (or main title, before any subtitle) is shared and an author is shared; records with no real author on either side join on the title alone. Unless the full titles are the same (or `a`'s is one `b` has been published under, `aliases_b`), the numbers in the full titles must agree: `Volume 1` and `Volume 2` of one main title are different books, and `Salt Roads` alone cannot chain them together."""
     if not titles_a & titles_b: return False
+    exact = bool(full_a) and (full_a == full_b or full_a in aliases_b)          # the same full title (or one the other has been published under)
+    if not exact and volumes(full_a) != volumes(full_b): return False         # joined only through a main title: the numbers must agree, or an unnumbered record would chain volumes together
     ra, rb = real(authors_a), real(authors_b)
     return shares_author(ra, rb) if ra and rb else not ra and not rb
 
@@ -197,22 +204,23 @@ def clusters(oc, works: dict[str, dict], found: dict[str, Product]) -> list[Clus
             if w in works: join(('au', r['asin']), ('ol', w))
     ol_names = {k: [a['name'] for a in w['authors']] for k, w in works.items()}
     ol_titles = {k: {tk.title_key(w['title']), main_key(w['title'])} - {''} for k, w in works.items()}
-    ol_aliases = {k: {n for (n, _), c in w['titles'].items() if c >= 2} | ol_titles[k] for k, w in works.items()}      # a title on one stray edition does not make a recording this work
+    ol_full = {k: {n for (n, _), c in w['titles'].items() if c >= 2} | {tk.title_key(w['title'])} for k, w in works.items()}      # full titles only (for the volume check)
+    ol_aliases = {k: ol_full[k] | ol_titles[k] for k in works}      # a title on one stray edition does not make a recording this work
     au_titles = {a: {p.title_key, p.main_key} - {''} for a, p in found.items()}
     for a, p in found.items():
         for i in tk.isbn_keys(p.isbn):
             for w in by_isbn.get(i, ()):
                 if w in works: join(('au', a), ('ol', w))
         for k in works:
-            if same_book(au_titles[a], p.authors, ol_aliases[k], ol_names[k]): join(('au', a), ('ol', k))
+            if same_book(au_titles[a], p.authors, ol_aliases[k], ol_names[k], p.title_key, tk.title_key(works[k]['title']), ol_full[k]): join(('au', a), ('ol', k))
     plist = list(found.values())
     for i, p in enumerate(plist):
         for p2 in plist[i + 1:]:
-            if same_book(au_titles[p.asin], p.authors, au_titles[p2.asin], p2.authors): join(('au', p.asin), ('au', p2.asin))
+            if same_book(au_titles[p.asin], p.authors, au_titles[p2.asin], p2.authors, p.title_key, p2.title_key): join(('au', p.asin), ('au', p2.asin))
     keys = list(works)
     for i, k in enumerate(keys):
         for k2 in keys[i + 1:]:
-            if same_book(ol_titles[k], ol_names[k], ol_titles[k2], ol_names[k2]): join(('ol', k), ('ol', k2))
+            if same_book(ol_titles[k], ol_names[k], ol_titles[k2], ol_names[k2], tk.title_key(works[k]['title']), tk.title_key(works[k2]['title'])): join(('ol', k), ('ol', k2))
     out: dict[tuple, Cluster] = {}
     for n in nodes:
         c = out.setdefault(root(n), Cluster())

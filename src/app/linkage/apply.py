@@ -47,12 +47,12 @@ def work_for(s: Session, summary: dict) -> Work:
     s.flush(); return w
 
 
-def clear(s: Session) -> int:
+def clear(s: Session, ids: set[int] | None = None) -> int:
     """Remove everything identification wrote (its listen-parts and their events, the works only it referenced) and put the listens back to `grouped`; a person's decisions are kept. Identification is derived data, like the listens themselves."""
     from sqlalchemy import delete, update
     keep = {lid for (lid,) in s.execute(select(ListenPart.listen_id).where(ListenPart.role.in_(('match', 'candidate')), ListenPart.linked_by == 'user'))}
     keep |= {lid for (lid,) in s.execute(select(ListenEvent.listen_id).join(ListenPart, ListenPart.id == ListenEvent.listen_part_id).where(ListenPart.role.in_(('match', 'candidate')), ListenEvent.actor_kind == 'user'))}
-    parts = [p for p in s.scalars(select(ListenPart).where(ListenPart.role.in_(('match', 'candidate')))) if p.listen_id not in keep]
+    parts = [p for p in s.scalars(select(ListenPart).where(ListenPart.role.in_(('match', 'candidate')))) if p.listen_id not in keep and (ids is None or p.listen_id in ids)]      # `ids`: only these listens
     ids = [p.id for p in parts]
     if ids:
         s.execute(delete(ListenEvent).where(ListenEvent.listen_part_id.in_(ids))); s.execute(delete(ListenPart).where(ListenPart.id.in_(ids)))
