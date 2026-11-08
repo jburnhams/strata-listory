@@ -136,6 +136,14 @@ def test_part_n_with_a_title_makes_the_parts_of_one_book():
     assert st.classify(leaf('Flashman', subs=[leaf('Book 1 - Flashman', *tracks(7)), leaf('Book 2 - Royal Flash', *tracks(7))])).kind == 'series'      # 'Book N' is a series of books
 
 
+def test_the_track_number_can_be_second_or_after_of_or_a_disc_track_pair():
+    flash = st.classify(leaf('MP4b', *[f'G.M. Fraser -12- Flashman on the March {i:02d} of 13.m4b' for i in range(1, 14)]))
+    assert flash.kind == 'book' and 'numbered' in flash.detail['reason'] or 'parts' in flash.detail['reason']
+    discs = st.classify(leaf('NurtureShock', *[f'{d}-{t:02d} NurtureShock - [Disc {d}] ~ Track.m4a' for d in (1, 2, 3) for t in range(1, 6)]))
+    assert discs.kind == 'book' and discs.subs == []                                           # one book, not 15 one-file books
+    assert st.classify(leaf('Albums', 'Bohemian 1999.m4a', 'Imagine 2001.m4a', 'Yesterday 1965.m4a', 'Hey Jude 1968.m4a')).kind == 'series'      # years are not track numbers
+
+
 def test_a_year_range_in_the_title_is_not_a_radio_date():
     assert st.classify(leaf('Lost Diaries', *[f'{i:02d} - The Lost Diaries of Adrian Mole, 1999-2001 - Sue Townsend.mp3' for i in range(1, 30)])).kind == 'book'
 

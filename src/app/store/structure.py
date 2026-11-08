@@ -54,6 +54,9 @@ def discish(labels: list[str]) -> str | None:
     if len(labels) < 2 and not (labels and DISC_WORD.match(labels[0].strip())): return None
     if all(DISC_WORD.match(l.strip()) for l in labels): return 'disc names'
     if len(labels) >= 2 and all(re.fullmatch(rf'\s*(\d+|{NUMBER_WORDS})\s*', l, re.I) for l in labels): return 'numbers or number words'
+    DISC_SUFFIX = r'[\[(]\s*(?:disc|cd|disk|part)\s*\d+\s*[\])]'
+    bare = [re.sub(DISC_SUFFIX, ' ', l, flags=re.I) for l in labels]
+    if len(labels) >= 2 and any(b != l for b, l in zip(bare, labels)) and len({re.sub(r'[\W_]+', '', b.lower()) for b in bare}) == 1: return 'same name with a [Disc N] suffix (the bare one is disc 1)'
     stems = {stem(l) for l in labels}
     if len(labels) >= 2 and len(stems) == 1 and any(re.search(r'\d', l) for l in labels): return 'same name, numbered'
     if len(labels) >= 2 and all(re.search(r'\b(cd|disc|disk)\s*\d+', l, re.I) for l in labels): return 'disc names inside longer names'
@@ -61,20 +64,36 @@ def discish(labels: list[str]) -> str | None:
     return None
 
 
-def numbered_run(names: list[str]) -> bool:
-    """True when almost every name carries a track number and the numbers run 1..n with hardly a gap or repeat ('TP - 007 - Chapter 3', 'Part 12 of 26'). Dates and years do not count as track numbers."""
-    if len(names) < 3: return False
-    nums = []
-    for x in names:
-        x = re.sub(r'\b(?:19|20)\d\d\b', ' ', re.sub(r'\[[^\]]*\]', ' ', os.path.splitext(x)[0]))      # years and [B0D23Y5KXP]-style ids are not track numbers
-        if m := re.search(r'\d+', x): nums.append(int(m.group()))
-    if len(nums) < 0.9 * len(names) or any(DATE.search(x) for x in names): return False
-    if len(set(nums)) < 0.9 * len(names): return False
+def _is_run(nums: list[int], n: int) -> bool:
+    """The numbers (one per file, `n` files) are distinct and run (about) 1..n, allowing a stray low outlier."""
+    if len(nums) < 0.9 * n or len(set(nums)) < 0.9 * n: return False
     ordered = sorted(nums)
-    for drop_low in range(max(1, int(0.05 * len(names))) + 1):                 # a stray 000 'dedication' file ahead of 301..360 should not break the run
+    for drop_low in range(max(1, int(0.05 * n)) + 1):                      # a stray 000 'dedication' file ahead of 301..360 should not break the run
         kept = ordered[drop_low:]
-        if len(kept) >= 0.9 * len(names) and kept[-1] - kept[0] + 1 <= 1.1 * len(kept) + 2: return True
+        if len(kept) >= 0.9 * n and kept[-1] - kept[0] + 1 <= 1.1 * len(kept) + 2: return True
     return False
+
+
+def _disc_track(ints: list[list[int]], n: int) -> bool:
+    """'1-01', '1-02' ... '2-01': pairs (disc, track) where each disc's tracks run 1..k and the discs are consecutive."""
+    pairs = [(i[0], i[1]) for i in ints if len(i) > 1]
+    if len(pairs) < 0.9 * n or len(set(pairs)) != len(pairs): return False
+    by: dict[int, list[int]] = {}
+    for d, t in pairs: by.setdefault(d, []).append(t)
+    discs = sorted(by)
+    return len(by) >= 2 and discs[-1] - discs[0] + 1 <= len(discs) + 1 and sum(len(v) for v in by.values() if sorted(v) == list(range(1, len(v) + 1))) >= 0.9 * len(pairs)
+
+
+def numbered_run(names: list[str]) -> bool:
+    """True when the names carry a track number that runs 1..n with hardly a gap or repeat. The number can be anywhere: 'TP - 007 - Chapter 3' (first), 'Flashman -12- on the March 03 of 13' (the one before 'of'; the first is the volume), '1-07 Title [Disc 1]' (disc-track pair). Dates, years and [ids] do not count."""
+    if len(names) < 3 or any(DATE.search(x) for x in names): return False
+    ints: list[list[int]] = []; before_of: list[int] = []
+    for x in names:
+        x = re.sub(r'(?<!\d)(?:19|20)\d\d(?!\d)', ' ', re.sub(r'\[[^\]]*\]', ' ', os.path.splitext(x)[0]))      # years and [B0D23Y5KXP]-style ids are not track numbers
+        ints.append([int(t) for t in re.findall(r'\d+', x)])
+        if m := re.search(r'(\d+)\s*of\s*\d+', x, re.I): before_of.append(int(m.group(1)))
+    cands = [[i[k] for i in ints if len(i) > k] for k in (0, 1)] + [[i[-1] for i in ints if i]] + [before_of]
+    return any(_is_run(c, len(names)) for c in cands if c) or _disc_track(ints, len(names))
 
 
 DATE = re.compile(r'\b(?:19|20)\d\d[-.]\d\d[-.]\d\d\b')       # a dated broadcast name (2012-01-03): episodes of a programme, not chapters of one work
@@ -188,7 +207,7 @@ def standalone(f: tuple[int, str], why: str) -> tuple[str, list[tuple[int, str]]
 def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[int, str]], dict]]:
     """Split the audio files directly in one folder into (kind, files, evidence) clusters: every whole-book file (.m4b/.m4a/.aac) is a book of its own, the rest are the chapter files of one work or unrelated tracks."""
     out = []; rest = []; whole = [f for f in files if os.path.splitext(f[1])[1].lower() in WHOLE_BOOK]
-    if len(whole) >= 3 and numbered_run([f[1] for f in whole]): out.append(('book', whole, {'reason': 'numbered m4b/m4a files are the chapters of one work', 'files': len(whole)})); whole = []
+    if len(whole) >= 3 and (numbered_run([f[1] for f in whole]) or parts_of_one([f[1] for f in whole])): out.append(('book', whole, {'reason': 'numbered m4b/m4a files are the chapters of one work', 'files': len(whole)})); whole = []
     out += [('book', [f], {'reason': 'whole-book file'}) for f in whole]
     rest = [f for f in files if os.path.splitext(f[1])[1].lower() not in WHOLE_BOOK]
     by_season = split_by_season(rest) if rest else []
