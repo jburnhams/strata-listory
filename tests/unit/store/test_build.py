@@ -86,5 +86,7 @@ def test_copies_of_one_recording_are_linked_into_one_listen_but_other_narrations
 def test_api_shows_the_number_of_copies(s, copies):
     build.build_listens(s, copies); build.link_copies(s)
     app = FastAPI(); app.include_router(api.listens_router); app.dependency_overrides[api.get_session] = lambda: s; c = TestClient(app)
-    rows = {r["label"]: r for r in c.get("/api/listens").json()["rows"]}
+    body = c.get("/api/listens").json(); rows = {r["label"]: r for r in body["rows"]}
+    assert body["total"] == len(body["rows"]) == len(rows) == 5 and sum(body["kinds"].values()) == 5      # one row per live listen, however many copies it has
+    assert c.get("/api/listens?limit=2&offset=4").json()["rows"].__len__() == 1       # and paging counts listens, not input parts
     assert max(r["copies"] for r in rows.values()) == 2 and sum(r["copies"] for r in rows.values()) == 6 and all(r["files"] == 3 for r in rows.values())      # the first copy's facts, never doubled
