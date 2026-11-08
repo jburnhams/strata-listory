@@ -91,6 +91,12 @@ def test_dated_broadcasts_are_loose_with_that_reason_and_unrelated_tracks_say_so
     assert st.classify(leaf('Mix', 'Bohemian.mp3', 'Imagine.mp3', 'Yesterday.mp3')).detail['reason'] == 'unrelated tracks'
 
 
+def test_a_numbered_radio_series_with_broadcast_dates_is_a_programme_not_a_book():
+    names = [f'{i:02d} of 12 - Title {i} ({i}th January 2013) [WebRip (mp3)].mp3' for i in range(1, 13)]
+    n = st.classify(leaf('Story', *names)); assert n.kind == 'programme' and n.detail['radio'] is True
+    assert st.classify(leaf('Novel', *[f'{i:02d} of 12 - Chapter {i}.mp3' for i in range(1, 13)])).kind == 'book'
+
+
 def test_a_year_range_in_the_title_is_not_a_radio_date():
     assert st.classify(leaf('Lost Diaries', *[f'{i:02d} - The Lost Diaries of Adrian Mole, 1999-2001 - Sue Townsend.mp3' for i in range(1, 30)])).kind == 'book'
 

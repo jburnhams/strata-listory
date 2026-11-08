@@ -72,6 +72,7 @@ def numbered_run(names: list[str]) -> bool:
 DATE = re.compile(r'\b(?:19|20)\d\d[-.]\d\d[-.]\d\d\b')       # a dated broadcast name (2012-01-03): episodes of a programme, not chapters of one work
 EPISODE = re.compile(r'\b(?:ep|episode|part)[\s._-]*(\d+)\b', re.I)
 SEASON_EPISODE = re.compile(r'\bs(\d{1,2})[\s._-]?e(\d{1,3})\b', re.I)
+BROADCAST = re.compile(r'\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:19|20)\d\d\b|\b(?:webrip|dabrip|dab rip)\b', re.I)       # '(3rd January 2013)', '[WebRip (mp3)]': a radio broadcast, not a book's chapter
 PART_OF = re.compile(r'\((\d+)\s*-\s*(\d+)\)|\b(\d+)[\s_]*of[\s_]*(\d+)\b', re.I)       # 'Rumpole (2-3)', 'Show 3_of_4'
 
 
@@ -147,7 +148,9 @@ def judge(part: list[tuple[int, str]]) -> tuple[str, dict]:
     if len(part) == 1: return 'book', {'reason': 'one file'}
     if one_work(names): return 'book', {'reason': 'chapter files of one work', 'files': len(part)}
     if episode_run(names): return 'programme', {'reason': 'numbered episodes of one programme', 'files': len(part), 'radio': True}
-    if parts_of_one(names): return 'book', {'reason': 'files say they are parts 1..n of one thing', 'files': len(part)}
+    if parts_of_one(names):
+        if sum(bool(BROADCAST.search(x)) for x in names) >= 0.7 * len(names): return 'programme', {'reason': 'numbered 1..n of one radio series (broadcast dates in the names)', 'files': len(part), 'radio': True}
+        return 'book', {'reason': 'files say they are parts 1..n of one thing', 'files': len(part)}
     if numbered_run(names): return 'book', {'reason': 'numbered tracks 1..n', 'files': len(part)}
     if sum(bool(DATE.search(x)) or bool(re.search(r'\b(?:19|20)\d\d\d\d\d\d\b', x)) for x in names) >= 0.7 * len(names): return 'loose', {'reason': 'dated broadcasts, each file stands alone', 'files': len(part), 'radio': True}
     return 'loose', {'reason': 'unrelated tracks', 'files': len(part)}
