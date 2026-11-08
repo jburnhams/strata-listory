@@ -56,6 +56,14 @@ export function subtitleOf(c: Pick<QueueCandidate, 'title' | 'recordings' | 'rec
   return ''
 }
 
+/** The title to show for a proposed work: the matched Audible recording's own title when there is one ("A Night to Remember", where Open Library's work is titled "La Nuit du Titanic"; "David Mitchell: Back Story" for the work "David Mitchell"), else the work title with any Audible subtitle added, else "Untitled". */
+export function displayTitle(c: Pick<QueueCandidate, 'title' | 'recordings' | 'recording'>): string {
+  const rec = c.recordings.find(r => r.asin === c.recording)
+  if (rec?.title?.trim()) return rec.title.trim()
+  const sub = subtitleOf(c)
+  return (c.title ?? 'Untitled') + (sub ? `: ${sub}` : '')
+}
+
 /** Names with spellings that differ only in case, accents or spacing collapsed to one ("Walter Lord" from Open Library and "Walter LORD" from Audible), keeping the spelling with the fewest all-capital words, then the first. */
 export function uniqueNames(names: string[]): string[] {
   const key = (n: string) => n.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim()
@@ -99,7 +107,7 @@ function Cover({ isbn, title }: { isbn?: string; title: string }) {
 }
 
 function Work({ c, minutes }: { c: QueueCandidate; minutes: number | null | undefined }) {
-  const sub = subtitleOf(c), title = (c.title ?? 'Untitled') + (sub ? `: ${sub}` : ''), asin = c.recording || c.recordings[0]?.asin
+  const title = displayTitle(c), asin = c.recording || c.recordings[0]?.asin
   return (
     <section aria-label="The proposed work" className="min-w-0 flex-1 basis-72 space-y-2">
       <p className="type-caption text-muted-foreground">Proposed work</p>
@@ -109,7 +117,7 @@ function Work({ c, minutes }: { c: QueueCandidate; minutes: number | null | unde
           <p className="type-heading break-words">{title} <span className="type-body text-muted-foreground">by {uniqueNames(c.authors).join(', ') || 'unknown author'}</span></p>
           <p className="type-caption text-muted-foreground tabular-nums">
             {[c.year, c.editions ? format.count(c.editions, 'edition') : null, c.recordings.length ? format.count(c.recordings.length, 'Audible recording') : null].filter(Boolean).join(' · ')}
-            {c.ol[0] && <> · <a className="underline" href={`https://openlibrary.org${c.ol[0]}`} target="_blank" rel="noreferrer">Open Library</a></>}
+            {c.ol[0] && <> · <a className="underline" href={`https://openlibrary.org${c.ol[0]}`} target="_blank" rel="noreferrer">Open Library{c.title && c.title !== title ? ` (${c.title})` : ''}</a></>}
             {asin && <> · <a className="underline" href={`https://www.audible.co.uk/pd/${asin}`} target="_blank" rel="noreferrer">Audible</a></>}
           </p>
         </div>

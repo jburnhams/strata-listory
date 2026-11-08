@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { installFakeIntersectionObserver, installLayoutShims, type FakeIntersectionObserverControls } from 'strata-react/testing'
 import { cleanup } from '@testing-library/react'
-import MatchQueuePage, { certainty, evidence, runtimeDelta, subtitleOf, uniqueNames } from '../../src/components/MatchQueuePage'
+import MatchQueuePage, { certainty, evidence, runtimeDelta, subtitleOf, uniqueNames, displayTitle } from '../../src/components/MatchQueuePage'
 import { setup, screen, within, waitFor } from '../utils/render'
 import { http, HttpResponse } from 'msw'
 import { matchState, server } from '../utils/server'
@@ -24,6 +24,19 @@ describe('subtitleOf', () => {
     expect(subtitleOf({ title: 'Dune', recording: null, recordings: [rec('B1', 'Dune Messiah: Book Two')] })).toBe('')
     expect(subtitleOf({ title: null, recording: null, recordings: [rec('B1', 'X: Y')] })).toBe('')
     expect(subtitleOf({ title: 'Dune', recording: null, recordings: [] })).toBe('')
+  })
+})
+
+describe('displayTitle', () => {
+  const rec = (asin: string, title: string) => ({ asin, title, narrators: [], minutes: 303, fmt: 'unabridged', year: 2015 })
+  it('prefers the matched recording\'s title over the work title', () => {
+    expect(displayTitle({ title: 'La Nuit du Titanic', recording: 'B2', recordings: [rec('B1', 'A Night to Remember (1955)'), rec('B2', 'A Night to Remember')] })).toBe('A Night to Remember')
+    expect(displayTitle({ title: 'David Mitchell', recording: 'B1', recordings: [rec('B1', 'David Mitchell: Back Story')] })).toBe('David Mitchell: Back Story')
+  })
+  it('falls back to the work title, with an Audible subtitle when no recording is chosen', () => {
+    expect(displayTitle({ title: 'David Mitchell', recording: null, recordings: [rec('B1', 'David Mitchell: Back Story')] })).toBe('David Mitchell: Back Story')
+    expect(displayTitle({ title: 'Dune', recording: null, recordings: [] })).toBe('Dune')
+    expect(displayTitle({ title: null, recording: null, recordings: [] })).toBe('Untitled')
   })
 })
 
