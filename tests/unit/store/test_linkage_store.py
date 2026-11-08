@@ -95,3 +95,59 @@ def test_all_labels_read_the_old_catalogue_file(s, listens, tmp_path, monkeypatc
     assert D.all_labels(s) == {}
     (tmp_path / "old-labels.json").write_text('{"5": {"target": {"work": "/works/OL1W"}, "origin": "manual"}}')
     assert D.all_labels(s) == {5: {"target": {"work": "/works/OL1W"}, "origin": "manual"}}
+
+
+def test_decisions_confirm_reject_and_none_feed_labels_and_the_next_run(s, listens):
+    p = params(); data = data_for(listens); apply.apply(s, data, p)
+    glass = listens["Books/Mara Quill - Glass Orchard"]; salt = listens["Books/Ben Ash - Salt Roads"]; other = listens["Books/Mara Quill - Glass Orchard (Ada Penn)"]
+    match = lambda l: s.scalars(select(ListenPart).where(ListenPart.listen_id == l.id, ListenPart.role.in_(("match", "candidate")), ListenPart.unlinked_at.is_(None), ListenPart.state != "rejected")).first()      # noqa: E731
+    apply.decide(s, glass, match(glass), "approve")                                # confirming an automatic acceptance
+    assert [e.actor_kind for e in s.scalars(select(ListenEvent).where(ListenEvent.listen_part_id == match(glass).id, ListenEvent.action == "accept"))] == ["auto_policy", "user"]
+    apply.decide(s, salt, match(salt), "reject")
+    assert salt.status == "review"
+    apply.decide(s, other, None, "none")
+    assert other.status == apply.NOT_FOUND
+    labels = D.catalogue_labels(s)
+    assert labels[glass.id]["target"]["key"] == GLASS["key"] and labels[salt.id]["rejects"] == [SALT["key"]] and labels[other.id]["none"]
+    counts = apply.apply(s, data, p)
+    assert counts["kept"] == 2                                                     # the confirmed and the "none of these" listen
+    nxt = match(salt)
+    assert nxt is not None and nxt.detail["candidate"] == GLASS["key"]             # the rejected work is out of the running, the rest is re-decided
+    with pytest.raises(ValueError): apply.decide(s, salt, None, "approve")
+    with pytest.raises(ValueError): apply.decide(s, salt, nxt, "maybe")
+
+
+def test_match_queue_api_pages_easiest_first_and_records_answers(s, listens, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.linkage import api as A, service
+    apply.apply(s, data_for(listens, sure=False), params())
+    app = FastAPI(); app.include_router(A.router); app.dependency_overrides[A.get_session] = lambda: s; c = TestClient(app)
+    first = c.get("/api/matches?limit=2").json()
+    assert first["summary"]["waiting"] == 4 and len(first["items"]) == 2 and first["items"][0]["p"] >= first["items"][1]["p"]
+    it = first["items"][0]
+    assert it["copies"][0]["minutes"] and it["chosen"]["title"] and it["candidates"][0]["recordings"] == [] and it["candidates"][0]["evidence"]["title"] == "exact_rare"
+    rest = c.get("/api/matches", params=dict(after=first["items"][-1]["cursor"])).json()["items"]
+    assert {i["listen_id"] for i in first["items"]} | {i["listen_id"] for i in rest} == {l.id for l in listens.values()} and len(rest) == 2
+    assert c.get("/api/matches?after=nonsense").status_code == 400
+    started = []; monkeypatch.setattr(service, "start", lambda factory, **kw: started.append(1) or True); monkeypatch.setattr(A, "AUTO_RETRAIN", 2)
+    r = c.post("/api/matches/decide", json=dict(listen_id=it["listen_id"], action="approve", part_id=it["candidates"][0]["part_id"])).json()
+    assert r["ok"] and r["status"] == "identified"
+    r = c.post("/api/matches/decide", json=dict(listen_id=rest[0]["listen_id"], action="reject", part_id=rest[0]["candidates"][0]["part_id"])).json()
+    assert r["retraining"] and started == [1]                                        # every AUTO_RETRAIN answers the model relearns
+    after = c.get("/api/matches").json()
+    assert after["summary"]["confirmed"] == 1 and it["listen_id"] not in [i["listen_id"] for i in after["items"]]
+    assert c.post("/api/matches/decide", json=dict(listen_id=999999, action="none")).status_code == 404
+    assert c.post("/api/matches/decide", json=dict(listen_id=it["listen_id"], action="sideways")).status_code == 400
+    assert c.post("/api/matches/retrain").json() == {"started": True}
+
+
+def test_retrain_fits_saves_and_reapplies(s, listens, tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from app.linkage import service
+    monkeypatch.setattr(D, "folder", lambda: tmp_path)
+    with pytest.raises(ValueError): service.train(s)
+    D.save_cache(data_for(listens))
+    counts = service.retrain_and_apply(lambda: nullcontext(s), validate=True)
+    assert counts["accept"] == 4 and service.load_params() is not None and (tmp_path / "report.json").exists()
+    assert service.STATE["running"] is False and service.STATE["report"]["labels"]["labelled"] == 0

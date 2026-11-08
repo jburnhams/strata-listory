@@ -95,9 +95,12 @@ def cases(data: dict, labels: dict[int, dict], canonical=None) -> tuple[list[Cas
         lab = labels.get(int(lid)); pos = None; neg: set[str] = set()
         if lab:
             stats['labelled'] += 1
-            if lab.get('reject'): neg = {k for k in d['clusters'] if lab['reject'] in d['clusters'][k]['ol'] or k == lab['reject']}
-            else:
+            rejects = set(lab.get('rejects') or []) | ({lab['reject']} if lab.get('reject') else set())
+            neg = {k for k in d['clusters'] if k in rejects or rejects & set(d['clusters'][k]['ol'])}
+            if lab.get('none'): pos = 'none'
+            elif lab.get('target'):
                 pos = positive_key(d['clusters'], lab['target'], canonical)
+                if pos in neg: pos = None                    # a person rejected what an older label said
                 if pos: stats['found'] += 1
                 else: stats['missing'].append(int(lid))
         out.append(Case(int(lid), d['vectors'], pos, neg, lab['origin'] if lab else ''))
@@ -105,18 +108,16 @@ def cases(data: dict, labels: dict[int, dict], canonical=None) -> tuple[list[Cas
 
 
 def catalogue_labels(s) -> dict[int, dict]:  # pragma: no cover - Postgres: tests/unit/store/test_linkage_store.py
-    """Decisions people made on listens here: an accepted match linked or accepted by a user is the answer; a rejected candidate is a known wrong work."""
+    """Decisions people made on listens here (the match queue): an approved or confirmed work is the answer, rejected candidates are known wrong works, and "none of these" says the work is not among the candidates."""
     from sqlalchemy import select
-    from app.store.models import ListenEvent, ListenPart, WorkIdentifier
+    from app.store.models import Listen, ListenEvent, ListenPart
     out: dict[int, dict] = {}
-    rows = s.execute(select(ListenPart).where(ListenPart.role.in_(('match', 'candidate')), ListenPart.state.in_(('accepted', 'rejected')))).scalars()
-    for p in rows:
-        by_user = p.linked_by == 'user' or s.scalars(select(ListenEvent).where(ListenEvent.listen_part_id == p.id, ListenEvent.actor_kind == 'user', ListenEvent.action.in_(('accept', 'reject')))).first() is not None
-        if not by_user or p.work_id is None: continue
-        ol = [v for (v,) in s.execute(select(WorkIdentifier.value).where(WorkIdentifier.work_id == p.work_id, WorkIdentifier.scheme == 'ol_work'))]
-        key = (p.detail or {}).get('candidate') or (ol[0] if ol else None)
-        if p.state == 'accepted' and p.unlinked_at is None: out[p.listen_id] = dict(target=dict(work=ol[0] if ol else None, key=key, title=(p.detail or {}).get('title', ''), authors=(p.detail or {}).get('authors') or []), origin='user')
-        elif p.state == 'rejected' and p.listen_id not in out: out[p.listen_id] = dict(reject=key, origin='user')
+    decided = select(ListenEvent.listen_part_id).where(ListenEvent.actor_kind == 'user', ListenEvent.action.in_(('accept', 'reject')))
+    for p in s.scalars(select(ListenPart).where(ListenPart.role.in_(('match', 'candidate')), ListenPart.state.in_(('accepted', 'rejected')), (ListenPart.linked_by == 'user') | ListenPart.id.in_(decided))):
+        d = p.detail or {}; lab = out.setdefault(p.listen_id, dict(origin='user', rejects=[]))
+        if p.state == 'accepted' and p.unlinked_at is None: lab['target'] = dict(key=d.get('candidate'), work=(d.get('ol') or [None])[0], title=d.get('title', ''), authors=d.get('authors') or [])
+        elif p.state == 'rejected' and d.get('candidate'): lab['rejects'].append(d['candidate'])
+    for (lid,) in s.execute(select(Listen.id).where(Listen.status == 'not_found')): out.setdefault(lid, dict(origin='user', rejects=[]))['none'] = True
     return out
 
 
@@ -124,4 +125,9 @@ def all_labels(s) -> dict[int, dict]:  # pragma: no cover - Postgres: tests/unit
     """This catalogue's decisions, over the old catalogue's approvals (`old-labels.json`, made by `listens-identify-prepare --old-catalogue`)."""
     try: old = {int(k): v for k, v in json.loads((folder() / 'old-labels.json').read_text(encoding='utf8')).items()}
     except (OSError, ValueError): old = {}
-    return {**old, **catalogue_labels(s)}
+    out = dict(old)
+    for lid, lab in catalogue_labels(s).items():
+        merged = {**old.get(lid, {}), **lab}
+        if 'target' not in lab and lab.get('rejects') and 'target' in merged: merged['origin'] = old[lid]['origin']      # only rejections here: the old answer still stands unless rejected (checked in `cases`)
+        out[lid] = merged
+    return out

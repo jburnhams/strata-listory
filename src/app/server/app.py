@@ -100,6 +100,8 @@ def create_app():
     try:
         from app.store.api import listens_router, router as filegroups_router      # needs omarchy-db; the rest of the app does not
         app.include_router(filegroups_router); app.include_router(listens_router)
+        from app.linkage.api import router as matches_router
+        app.include_router(matches_router)
     except ImportError: pass
 
     initial_settings=settings.all_settings()

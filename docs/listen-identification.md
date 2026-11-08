@@ -24,6 +24,17 @@ Which written work is each listen, and which recording of it? Code: `src/app/lin
 6. **Decision and writing** (`apply.py`). P ≥ 0.95: the work is linked as a `match` listen-part, accepted by `auto_policy` with P, runner-up, P(none), the comparison vector and the closest recording's ASIN in `detail`; status `identified`. Otherwise the top three works (P ≥ 0.02) are linked as `candidate` parts and the status is `review`. Works are `work` rows keyed by identifier `work` (the cluster's most-published Open Library work, or `asin:…` for Audible-only books) with the other Open Library works, ASINs and ISBNs as further identifiers, so every listen of one book links to one row. Reruns change nothing unless the answer changed; a listen a person has decided on is never touched; `--rebuild` clears the model's own output.
 7. **Copies** (`apply.merge_copies`, `--merge-copies`): listens accepted as the same work whose runtimes agree within 2% and whose narrators do not disagree are merged (preferred copy survives, event with the evidence; `split` undoes it). Different recordings of one work (another narrator, an abridgement) stay separate listens linked to the same work.
 
+## Match queue (home page, `#/`)
+
+The way to confirm matches quickly and teach the model. `GET /api/matches` lists every book listen whose work the model has proposed and nobody has decided, **most certain first** (the model's own acceptances, P ≥ 0.95, come first, so a run of one-key confirmations builds a large confirmed set fast), paged by a `probability:listen` cursor so answers given meanwhile cannot skip or repeat cards. Each card shows, side by side, what the files say (chosen title, author, narrator, year, every copy's length, folder, tags that differ, publisher, ASIN, file count, a link to the files) and the proposed work (title, authors, year, editions, Open Library and Audible links, an Open Library cover by ISBN, the Audible recordings with narrator, length and its difference from yours) with the evidence the model used as coloured words (title exact, narrator matches, runtime within 1.5%, author differs...). Other candidates sit below with **This one**.
+
+Keys: `A` approve, `R` not this book, `N` none of these, `J`/`K` next/previous, `U` undo (answers are saved when the five-second undo window closes). `POST /api/matches/decide` (`apply.decide`):
+* **approve** a candidate: it is accepted by the user (an automatic acceptance gets a user `accept` event, i.e. it is confirmed), the other candidates are unlinked, status `identified`.
+* **reject** (not this book): the candidate is marked rejected and stays linked as the record; status `review`. The next model run leaves that work out and decides among the rest.
+* **none** of these: all candidates rejected, status `not_found`; the model leaves the listen alone (a search UI is the next step).
+
+Every answer is a label (`dataset.catalogue_labels`: approved work, rejected works, or "none"), merged over the old catalogue's approvals. Every 25 answers (or **Learn from my answers**) `service.retrain_and_apply` refits the model in the background with the labels clamped and re-decides every undecided listen, so confirmed easy matches let it accept more on its own; the page polls while it runs and reloads the list when it finishes. A listen a person approved or marked "none" is never changed by the model. The older SQLite Review moved to **Pipeline → Old review**.
+
 ## Commands
 
 ```sh
@@ -54,7 +65,7 @@ Whole library (780 book listens after merging): 538 identified automatically, 24
 
 ## Known limits and next steps
 
-* A Review page for `review` listens (accept / reject a candidate, or search), feeding `catalogue_labels`; a rejected candidate currently freezes the listen until a person accepts something.
+* Search for listens with no right candidate (`not_found`, and the ~17 with no candidates at all, which the queue does not show).
 * Recall: misspelt titles or authors find nothing (no fuzzy full-text fallback in Open Library); collections and omnibus editions are weakly handled.
 * Radio (`radio_series`) is not identified yet.
 * Recording identity: the closest Audible recording is recorded in `detail.recording`, not yet as its own `audiobook` work.

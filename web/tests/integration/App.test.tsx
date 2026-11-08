@@ -8,22 +8,27 @@ const open = (route: string) => setup(<App />, { route })
 const nav = () => screen.getByRole('navigation', { name: /main|primary|site/i })
 
 describe('App shell', () => {
-  it('shows the server version and Review as home', async () => {
+  it('shows the server version and Matches as home', async () => {
     open('/')
     expect(await screen.findByText('v0.1.0')).toBeInTheDocument()
-    expect(await screen.findByRole('heading', { name: 'Review' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Matches' })).toBeInTheDocument()
   })
 
   it('renders cleanly when the health check fails', async () => {
     server.use(http.get('/api/health', () => new HttpResponse(null, { status: 500 })))
     open('/')
-    expect(await screen.findByRole('heading', { name: 'Review' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Matches' })).toBeInTheDocument()
     expect(screen.queryByText('v0.1.0')).toBeNull()
   })
 
-  it('lists Review first and moves between sections from the side navigation', async () => {
+  it('keeps the older Review as a Pipeline tab', async () => {
+    open('/pipeline?tab=review')
+    expect(await screen.findByRole('heading', { name: 'Review' })).toBeInTheDocument()
+  })
+
+  it('lists Matches first and moves between sections from the side navigation', async () => {
     const { user } = open('/')
-    expect(within(nav()).getAllByRole('link').map(a => a.textContent)).toEqual(['Review', 'Library', 'Listens', 'Files', 'Pipeline', 'Processing', 'Settings'])
+    expect(within(nav()).getAllByRole('link').map(a => a.textContent)).toEqual(['Matches', 'Library', 'Listens', 'Files', 'Pipeline', 'Processing', 'Settings'])
     await user.click(within(nav()).getByRole('link', { name: 'Library' }))
     expect(await screen.findByRole('heading', { name: 'Library' })).toBeInTheDocument()
     await user.click(within(nav()).getByRole('link', { name: 'Settings' }))
@@ -56,8 +61,8 @@ describe('App shell', () => {
     }
   })
 
-  it('sends unknown paths to Review', async () => {
+  it('sends unknown paths to Matches', async () => {
     open('/nowhere')
-    expect(await screen.findByRole('heading', { name: 'Review' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Matches' })).toBeInTheDocument()
   })
 })

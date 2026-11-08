@@ -47,7 +47,24 @@ export const mock: { settings: Settings; books: Book[]; extras: Record<string, {
   ],
 }
 
+// The match queue (/api/matches): invented books, most certain first.
+export function matchQueue(): import('../../src/api').QueueItem[] {
+  const cand = (part_id: number, p: number, title: string, extra: Partial<import('../../src/api').QueueCandidate> = {}): import('../../src/api').QueueCandidate => ({ part_id, ordinal: 1, state: p >= 0.95 ? 'accepted' : 'candidate', auto: p >= 0.95, p, work_id: part_id, key: `/works/OL${part_id}W`, title, authors: ['Mara Quill'], year: 2001, editions: 4, ol: [`/works/OL${part_id}W`], isbns: ['9780306406157'],
+    recordings: [{ asin: 'B0AAAAAAA1', title, narrators: ['Ada Penn'], minutes: 606, fmt: 'unabridged', year: 2015 }, { asin: 'B0AAAAAAA2', title, narrators: ['Tom Vale'], minutes: 300, fmt: 'abridged', year: 2009 }], recording: 'B0AAAAAAA1', alias: title.toLowerCase(), reading: 'tags',
+    evidence: { title: 'exact_rare', author: 'all', narrator: 'match', runtime: '1pct', sources: 'both', popularity: 'medium' }, p_none: 0, second: 0, ...extra })
+  const files = (title: string, narrator?: string) => ({ chosen: { title, author: 'Mara Quill', ...(narrator ? { narrator } : {}), year: 2015 }, tags: { album: `${title} (Unabridged)`, artist: 'Mara Quill', files: 12 }, folder: { title, folder: `Mara Quill - ${title}` }, copies: [{ minutes: 600, files: 12, bytes: 1, folder: `Mara Quill - ${title}`, path: `/x/${title}`, group_id: 7 }] })
+  return [
+    { listen_id: 1, p: 0.99, label: 'Glass Orchard', cursor: '0.99:1', candidates: [cand(11, 0.99, 'Glass Orchard')], ...files('Glass Orchard', 'Ada Penn') },
+    { listen_id: 2, p: 0.6, label: 'Salt Roads', cursor: '0.6:2', candidates: [cand(21, 0.6, 'Salt Roads', { evidence: { title: 'partial', author: 'conflict', runtime: 'far' }, second: 0.55 }), cand(22, 0.3, 'Salt Roads Again', { ordinal: 2, authors: [], year: null })], ...files('Salt Roads') },
+    { listen_id: 3, p: 0.4, label: 'Lune', cursor: '0.4:3', candidates: [cand(31, 0.4, 'Lune', { recordings: [], isbns: [], ol: [], evidence: {} })], ...files('Lune') },
+    { listen_id: 4, p: 0.2, label: 'Untagged folder', cursor: '0.2:4', candidates: [cand(41, 0.2, 'x', { title: null, authors: [], year: null, editions: null, isbns: [], recording: null, second: null, recordings: [{ asin: 'B0AAAAAAA9', title: 'x', narrators: [], minutes: null, fmt: 'original_recording', year: null }] })],
+      chosen: {}, tags: { composer: 'Someone Else', publisher: 'A Press' }, folder: {}, copies: [{ minutes: 60, files: null, bytes: null, folder: 'Untagged folder', path: null, group_id: null }, { minutes: 61, files: 3, bytes: 1, folder: 'Copy', path: null, group_id: null }] },
+  ]
+}
+export const matchState: { queue: import('../../src/api').QueueItem[]; decided: { listen_id: number; action: string; part_id?: number }[]; retrains: number; training: boolean; model: string | null } = { queue: matchQueue(), decided: [], retrains: 0, training: false, model: 'fs-test' }
+
 export const resetMock = () => {
+  matchState.queue = matchQueue(); matchState.decided = []; matchState.retrains = 0; matchState.training = false; matchState.model = 'fs-test'
   identifyState.queue = identifyQueue(3); identifyState.decided = []; identifyState.refreshes = []; identifyState.pipeline = () => ({ status: 'approved', note: 'the book was approved and the pipeline continues' })
   mock.settings = { ...defaultSettings }
   mock.books = [...initialBooks]
@@ -197,6 +214,17 @@ export const handlers = [
 ]
 
 export const server = setupServer(
+  http.get('/api/matches', ({ request }) => {
+    const u = new URL(request.url); const after = u.searchParams.get('after'); const limit = Number(u.searchParams.get('limit') ?? 20)
+    const open = matchState.queue.filter(i => !matchState.decided.some(d => d.listen_id === i.listen_id))
+    const start = after ? open.findIndex(i => i.cursor === after) + 1 : 0
+    return HttpResponse.json({ summary: { waiting: open.length, auto_unconfirmed: open.filter(i => i.candidates[0].auto).length, confirmed: matchState.decided.filter(d => d.action === 'approve').length, not_found: matchState.decided.filter(d => d.action === 'none').length, statuses: {}, decisions: matchState.decided.length, since_train: null, model: matchState.model, auto_retrain: 25, training: { running: matchState.training, finished: null, error: '', counts: null } }, items: open.slice(start, start + limit) })
+  }),
+  http.post('/api/matches/decide', async ({ request }) => {
+    const b = await request.json() as { listen_id: number; action: string; part_id?: number }
+    matchState.decided.push(b); return HttpResponse.json({ ok: true, status: 'identified', retraining: false })
+  }),
+  http.post('/api/matches/retrain', () => { matchState.retrains++; return HttpResponse.json({ started: true }) }),
   http.get('/api/identify/queue', ({ request }) => {
     const u = new URL(request.url), after = u.searchParams.get('after'), limit = Number(u.searchParams.get('limit') || 10)
     const open = identifyState.queue.filter(i => !identifyState.decided.some(d => d.group === i.group))

@@ -189,36 +189,26 @@ def cmd_listens_identify_prepare(args):
 
 
 def cmd_listens_identify_train(args):
-    """Fit the record-linkage model on every prepared listen (labelled ones clamped), cross-validate on the labelled ones and save data/linkage/model.json and report.json."""
-    import json as _json
+    """Fit the record-linkage model on every prepared listen (labelled ones clamped: old catalogue approvals and the match queue's answers), cross-validate on the labelled ones and save data/linkage/model.json and report.json."""
     from omarchy_db import connect
     from sqlalchemy.orm import Session
-    from app.identify import candidates as olc
-    from app.linkage import dataset, model as M
-    data = dataset.load_cache()
-    if not data: sys.exit('nothing prepared: run ./app listens-identify-prepare first')
-    with Session(connect('listory')) as s: labels = dataset.all_labels(s)
-    try: oc = olc.connect(); canonical = lambda w: olc.canonical(oc, [w])[w]      # noqa: E731
-    except FileNotFoundError: canonical = None
-    cases, stats = dataset.cases(data, labels, canonical)
-    params = M.train(cases); pred = M.cross_validate(cases)
-    report = dict(model=params.version(), prior=params.prior, temperature=params.temperature, labels=dict(labelled=stats['labelled'], found=stats['found'], missing=len(stats['missing'])), evidence_bits=params.explain(),
-                  cross_validation=M.summarise(pred), manual=M.summarise([p for p in pred if p['origin'] in ('manual', 'user')]))
-    (dataset.folder() / 'model.json').write_text(_json.dumps(params.to_json(), indent=1), encoding='utf8'); (dataset.folder() / 'report.json').write_text(_json.dumps(dict(report, predictions=pred), indent=1), encoding='utf8')
-    cv = report['cross_validation']
-    print(f"model {report['model']}: {len(cases)} listens, {stats['found']} of {stats['labelled']} labels found among the candidates; cross-validated top-1 {cv.get('top1')}, calibration error {cv.get('ece')}")
+    from app.linkage import service
+    with Session(connect('listory')) as s:
+        try: _params, report = service.train(s)
+        except ValueError as e: sys.exit(str(e))
+    cv, lab = report['cross_validation'], report['labels']
+    print(f"model {report['model']}: {lab['found']} of {lab['labelled']} labels found among the candidates ({lab['user']} from the match queue); cross-validated top-1 {cv.get('top1')}, calibration error {cv.get('ece')}")
     for t, a in (cv.get('at') or {}).items(): print(f"  P >= {t}: accept {a['accepted']} ({a['share']:.0%}), disagreeing with the label {a['false_positives']}")
     return 0
 
 
 def cmd_listens_identify(args):
     """Decide every prepared listen with the trained model: accept (P >= threshold), candidates for review, or none; writes match/candidate listen-parts and links listens of one work to one work row."""
-    import json as _json
     from omarchy_db import connect
     from sqlalchemy.orm import Session
-    from app.linkage import apply, dataset, model as M
-    try: params = M.Params.from_json(_json.loads((dataset.folder() / 'model.json').read_text(encoding='utf8')))
-    except OSError: sys.exit('no model yet: run ./app listens-identify-train first')
+    from app.linkage import apply, dataset, service
+    params = service.load_params()
+    if params is None: sys.exit('no model yet: run ./app listens-identify-train first')
     data = dataset.load_cache()
     with Session(connect('listory')) as s:
         if args.rebuild: print(f'cleared the earlier identification of {apply.clear(s)} listens')

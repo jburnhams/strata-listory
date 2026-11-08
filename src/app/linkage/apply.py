@@ -69,7 +69,8 @@ def clear(s: Session) -> int:
 def _detail(key, p, post, none, used, clusters) -> dict:
     second = sorted(post.values(), reverse=True)[1] if len(post) > 1 else 0.
     v = used.get(key) or {}; c = clusters.get(key) or {}
-    return dict(candidate=key, p=round(p, 4), second=round(second, 4), p_none=round(none, 4), vector={k: x for k, x in v.items() if not k.startswith('_')}, alias=v.get('_alias'), reading=v.get('_reading'), recording=v.get('_asin'), title=c.get('title'), authors=c.get('authors'), year=c.get('year'))
+    return dict(candidate=key, p=round(p, 4), second=round(second, 4), p_none=round(none, 4), vector={k: x for k, x in v.items() if not k.startswith('_')}, alias=v.get('_alias'), reading=v.get('_reading'), recording=v.get('_asin'), title=c.get('title'), authors=c.get('authors'), year=c.get('year'),
+                editions=c.get('editions'), ol=(c.get('ol') or [])[:5], isbns=(c.get('isbns') or [])[:5], recordings=(c.get('recordings') or [])[:6])      # what the review card shows, so it needs no index
 
 
 def apply(s: Session, data: dict, params: M.Params, *, threshold: float = THRESHOLD, ids=None) -> dict[str, int]:
@@ -80,15 +81,23 @@ def apply(s: Session, data: dict, params: M.Params, *, threshold: float = THRESH
         if ids and int(lid) not in ids: continue
         listen = s.get(Listen, int(lid))
         if listen is None or listen.merged_into_id is not None: continue
-        parts = list(s.scalars(select(ListenPart).where(ListenPart.listen_id == listen.id, ListenPart.role.in_(('match', 'candidate')), ListenPart.unlinked_at.is_(None))))
-        decided = parts and s.scalars(select(ListenEvent.id).where(ListenEvent.listen_part_id.in_([p.id for p in parts]), ListenEvent.actor_kind == 'user')).first() is not None
-        if decided or any(p.linked_by == 'user' or p.state == 'rejected' for p in parts): counts['kept'] += 1; continue      # a person has decided: never replaced
+        if listen.status == NOT_FOUND: counts['kept'] += 1; continue                       # a person said it is none of the candidates
+        everything = list(s.scalars(select(ListenPart).where(ListenPart.listen_id == listen.id, ListenPart.role.in_(('match', 'candidate')), ListenPart.unlinked_at.is_(None))))
+        by_user = person_decisions(s, everything)
+        if any(p.state == 'accepted' for p in everything if p.id in by_user or p.linked_by == 'user'): counts['kept'] += 1; continue      # a person approved a work: never replaced
+        rejected = {(p.detail or {}).get('candidate') for p in everything if p.state == 'rejected'}
+        parts = [p for p in everything if p.state != 'rejected']                                 # the model's own current answer; rejections stay linked as the record of the decision
+        d = dict(d, vectors={k: v for k, v in d['vectors'].items() if k not in rejected})        # a rejected work is out of the running; the rest are re-decided
         post, none, used = M.posterior(params, d['vectors'])
         decision, key = M.decide(post, none, threshold)
         want = [(key, 'accepted')] if decision == 'accept' else [(k, 'candidate') for k, p in sorted(post.items(), key=lambda kv: -kv[1])[:REVIEW_CANDIDATES] if p >= REVIEW_FLOOR] if decision == 'review' else []
         have = [((p.detail or {}).get('candidate'), p.state) for p in sorted(parts, key=lambda p: p.ordinal or 0)]
         status = 'identified' if decision == 'accept' else 'review'
-        if have == want and listen.status == status and all(abs((p.score or 0) - post.get((p.detail or {}).get('candidate'), 0)) < .01 for p in parts): counts['unchanged'] += 1; continue
+        if have == want and listen.status == status and all(abs((p.score or 0) - post.get((p.detail or {}).get('candidate'), 0)) < .01 for p in parts):
+            for p in parts:                     # same answer: only the evidence shown with it is refreshed (no event; the decision did not change)
+                fresh = _detail(p.detail['candidate'], post[p.detail['candidate']], post, none, used, d['clusters'])
+                if fresh != p.detail: p.detail = fresh
+            counts['unchanged'] += 1; continue
         for p in parts: L.unlink(s, p, actor_kind='model', actor_ref=ref, run_id=run.id, reason='replaced by a new identification')
         for n, (k, state) in enumerate(want, 1):
             work = work_for(s, d['clusters'][k])
@@ -99,6 +108,36 @@ def apply(s: Session, data: dict, params: M.Params, *, threshold: float = THRESH
                      reason='identified' if decision == 'accept' else 'probably none of the candidates' if decision == 'none' else 'not certain enough: review the candidates')
         counts[decision] += 1
     finish_run(s, run, 'done'); return counts
+
+
+NOT_FOUND = 'not_found'
+
+
+def person_decisions(s: Session, parts: list[ListenPart]) -> set[int]:
+    """Ids of the parts a person accepted, confirmed or rejected."""
+    if not parts: return set()
+    return {pid for (pid,) in s.execute(select(ListenEvent.listen_part_id).where(ListenEvent.listen_part_id.in_([p.id for p in parts]), ListenEvent.actor_kind == 'user', ListenEvent.action.in_(('accept', 'reject'))))}
+
+
+def decide(s: Session, listen: Listen, part: ListenPart | None, action: str, *, actor_ref: str = 'web') -> None:
+    """A person's answer on the match queue. `approve`: this work is the listen's (an automatic acceptance becomes a confirmed one); the other candidates are unlinked. `reject`: not this work; the listen goes back to review and the next model run decides among the rest. `none`: none of the candidates (all rejected, status `not_found`, left alone by the model)."""
+    others = list(s.scalars(select(ListenPart).where(ListenPart.listen_id == listen.id, ListenPart.role.in_(('match', 'candidate')), ListenPart.unlinked_at.is_(None), ListenPart.state != 'rejected')))
+    if action == 'approve':
+        if part is None or part.listen_id != listen.id: raise ValueError('approve needs one of this listen\'s candidates')
+        if part.state == 'accepted': L._event(s, listen, 'accept', 'user', part=part, actor_ref=actor_ref, reason='confirmed by a person', after={'state': 'accepted', 'confirmed': True})
+        else: L.set_state(s, part, 'accepted', actor_kind='user', actor_ref=actor_ref, reason='approved by a person')
+        for o in others:
+            if o.id != part.id: L.unlink(s, o, actor_kind='user', actor_ref=actor_ref, reason='another work was approved')
+        L.set_status(s, listen, 'identified', actor_kind='user', actor_ref=actor_ref, reason='approved by a person')
+    elif action == 'reject':
+        if part is None or part.listen_id != listen.id: raise ValueError('reject needs one of this listen\'s candidates')
+        L.set_state(s, part, 'rejected', actor_kind='user', actor_ref=actor_ref, reason='not this work')
+        L.set_status(s, listen, 'review', actor_kind='user', actor_ref=actor_ref, reason='a candidate was rejected')
+    elif action == 'none':
+        for o in others: L.set_state(s, o, 'rejected', actor_kind='user', actor_ref=actor_ref, reason='none of the candidates')
+        L.set_status(s, listen, NOT_FOUND, actor_kind='user', actor_ref=actor_ref, reason='none of the candidates is this listen')
+    else: raise ValueError(f'unknown action {action}')
+    s.flush()
 
 
 def same_work_groups(s: Session) -> dict[int, list[int]]:
