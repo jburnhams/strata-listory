@@ -6,7 +6,7 @@
     scripts/fetch_audible_categories.py --region uk [--rate 1] [--shard I/N] [--limit N] [--db ...] [--refresh-days D]
 
 Progress is a row per leaf in `query` (person_id `cat:<id>`, role `Category`), so it resumes."""
-import argparse, importlib.util, json, os, sqlite3, sys, time, urllib.request, zlib
+import argparse, importlib.util, json, os, sqlite3, sys, time, urllib.parse, urllib.request, zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location('fetch_audible_people', os.path.join(HERE, 'fetch_audible_people.py'))
@@ -84,7 +84,7 @@ def split_leaf(c, api, region: str, cid: str, words: list[str], patience: int = 
     for w in words:
         tried += 1; added, got, pg = 0, set(), -1
         while pg < 20:
-            pg += 1; pages += 1; ps = api.page('category_id', cid, pg, '-ReleaseDate', '&keywords=' + w); fresh = [p for p in ps if p['asin'] not in got]; got.update(p['asin'] for p in ps)
+            pg += 1; pages += 1; ps = api.page('category_id', cid, pg, '-ReleaseDate', '&keywords=' + urllib.parse.quote(w)); fresh = [p for p in ps if p['asin'] not in got]; got.update(p['asin'] for p in ps)
             with c:
                 for p in fresh:
                     if p['asin'] not in seen:
@@ -124,7 +124,8 @@ def main(argv=None) -> int:
         todo = [(r[0][4:], r[1]) for r in c.execute("SELECT person_id, name FROM query WHERE role='Category' AND region=? AND capped=1 ORDER BY person_id", (a.region,))]
         for cid, path in todo:
             if sn > 1 and zlib.crc32(cid.encode()) % sn != si: continue
-            if c.execute("SELECT 1 FROM query WHERE person_id=? AND role='CategoryKeywords' AND region=?", (f'catkw:{cid}', a.region)).fetchone(): continue
+            q = c.execute("SELECT fetched FROM query WHERE person_id=? AND role='CategoryKeywords' AND region=?", (f'catkw:{cid}', a.region)).fetchone()
+            if q and not (cutoff and q[0] < cutoff): continue      # done before, unless --refresh-days says it is stale
             pages, tried, new, seen, flat = split_leaf(c, api, a.region, cid, words); done += 1
             with c: c.execute("INSERT OR REPLACE INTO query (person_id, role, region, name, pages, returned, matched, capped, fetched, gv) VALUES (?,?,?,?,?,?,?,?,?,?)", (f'catkw:{cid}', 'CategoryKeywords', a.region, path, pages, seen, new, 0 if flat else 1, fp.now(), fp.GV))      # matched = new products found, capped = ran out of words before going quiet
             print(f'{fp.now()} split {path!r}: {tried} words, {seen} seen, {new} new{"" if flat else ", NOT saturated"}', flush=True)
