@@ -55,9 +55,9 @@ def test_a_year_range_in_the_title_is_not_a_radio_date():
     assert st.classify(leaf('Lost Diaries', *[f'{i:02d} - The Lost Diaries of Adrian Mole, 1999-2001 - Sue Townsend.mp3' for i in range(1, 30)])).kind == 'book'
 
 
-def test_unknown_mixture_stays_a_folder_with_the_reason():
+def test_a_mix_of_books_and_radio_is_a_collection():
     n = st.classify(leaf("Odd", subs=[leaf("Mix", "Bohemian.mp3", "Imagine.mp3", "Yesterday.mp3"), leaf("Book", *tracks(5))]))
-    assert n.kind == "folder" and n.detail["kinds"] == ["book", "loose"]
+    assert n.kind == "collection" and n.detail["kinds"] == ["book", "loose"]
 
 
 @pytest.fixture

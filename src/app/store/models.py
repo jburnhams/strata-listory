@@ -19,7 +19,7 @@ from omarchy_db import make_base
 Base = make_base()
 
 LISTEN_KINDS = ("book", "radio_series", "radio_show", "other")
-GROUP_KINDS = ("root", "folder", "disc", "book", "series", "loose")      # fixed list; grows as the grouping steps find real structure
+GROUP_KINDS = ("root", "folder", "disc", "book", "series", "collection", "loose")      # fixed list; grows as the grouping steps find real structure
 PART_ROLES = ("input", "output", "reference", "sidecar", "record", "candidate", "match")
 PART_STATES = ("active", "candidate", "accepted", "rejected")
 ACTOR_KINDS = ("user", "auto_policy", "model", "rule", "import")

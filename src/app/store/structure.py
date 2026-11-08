@@ -5,7 +5,8 @@ Classification of each folder, bottom-up (a folder is judged by what is directly
 * **book**: a folder whose sub-folders are all discs; chapter files of one work (`scan.one_work`, or numbered 1..n); or a single whole-book file (.m4b/.m4a/.aac). Files lying next to sub-folders, or several kinds of file in one folder (an mp3 set beside its m4b), are first split into clusters, each judged on its own and written as a group under the folder.
 * **series**: a folder whose sub-folders are books (an author folder, "Jack Reacher", "Hitchhiker's Guide").
 * **loose**: a leaf folder of unrelated tracks (episodes, a mix) that is not one work.
-* **folder**: anything the rules cannot call (a mix of files and sub-folders, books and non-books); `detail.reason` says why. These are what a person or a smarter step looks at next.
+* **collection**: a container whose contents are a mix (books, series, loose tracks such as radio series); each part is already classified inside it.
+* **folder**: anything the rules cannot call at all; `detail.reason` says why. These are what a person or a smarter step looks at next.
 Every group of the new run holds the same files as the folder it came from; the folder grouping it was built from is untouched."""
 from __future__ import annotations
 
@@ -85,7 +86,7 @@ def classify(n: Node) -> Node:
             n.subs.append(Node(-1, os.path.splitext(fl[0][1])[0] if len(fl) == 1 else f'{n.label} (files)', n.path, fl, kind=kind, detail=ev))
         n.files = []
         if all(c.kind in ('book', 'series') for c in n.subs): n.kind, n.detail = 'series', {'reason': 'several books or copies of one book side by side' if not any(c.id != -1 for c in n.subs) else 'its folders and files are books', 'books': len(n.subs)}
-        else: n.kind, n.detail = 'folder', {'reason': 'books mixed with something else', 'kinds': sorted({c.kind for c in n.subs})}
+        else: n.kind, n.detail = 'collection', {'reason': 'books mixed with something else', 'kinds': sorted({c.kind for c in n.subs})}
         return n
     if clusters: n.kind, n.detail = clusters[0][0], clusters[0][2]; return n
     why = discish([c.label for c in n.subs]) if all(not c.subs for c in n.subs) else None
@@ -94,7 +95,7 @@ def classify(n: Node) -> Node:
         n.kind, n.detail = 'book', {'reason': 'its folders are discs', 'discs': len(n.subs), 'because': why}
     elif all(c.kind in ('book', 'series') for c in n.subs): n.kind, n.detail = 'series', {'reason': 'its folders are books', 'books': len(n.subs)}
     else:
-        kinds = sorted({c.kind for c in n.subs}); n.kind, n.detail = 'folder', {'reason': 'sub-folders of different kinds or unknown', 'kinds': kinds}
+        kinds = sorted({c.kind for c in n.subs}); n.kind, n.detail = ('folder', {'reason': 'contains folders the rules could not call', 'kinds': kinds}) if 'folder' in kinds else ('collection', {'reason': 'sub-folders of different kinds', 'kinds': kinds})
     return n
 
 
