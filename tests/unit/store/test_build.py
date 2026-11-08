@@ -6,8 +6,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from app.store import api, build, filegroups as fg, structure as st
-from app.store.models import Listen, ListenEvent, ListenPart, PartFilegroup
+from app.store import api, build, filegroups as fg, metadata as md, structure as st
+from app.store.models import Listen, ListenChoice, ListenEvent, ListenPart, PartFilegroup
 
 
 @pytest.fixture
@@ -58,11 +58,10 @@ def test_api_lists_filters_and_shows_one_listen(s, structure):
 
 @pytest.fixture
 def copies(s, tmp_path):
-    """Two copies of one recording (one with an author prefix), a different narration of the same title, and a shorter title that merely starts the same way."""
-    layout = {"Library/Alpha Title": 3, "Backup/Jane Doe - Alpha Title": 3, "Library/Beta Title (Fry)": 3, "Library/Beta Title (Jarvis)": 3, "Library/Alpha": 3, "Library/Alpha Other Title": 3}
-    minutes = {"Library/Alpha Title": 300, "Backup/Jane Doe - Alpha Title": 303, "Library/Beta Title (Fry)": 600, "Library/Beta Title (Jarvis)": 900, "Library/Alpha": 301, "Library/Alpha Other Title": 299}
-    for folder, n in layout.items():
-        for i in range(1, n + 1):
+    """Folders (names only): an exact second copy of one recording, a copy with an author in front of the name, two narrations of one title, the same title by another author, and shorter titles that merely start the same way."""
+    minutes = {"Books/Alpha Title": 300, "Audible/Alpha Title": 303, "Audible/Jane Doe - Alpha Title": 302, "Spoken/John Roe - Alpha Title": 301, "Books/Beta Title (Fry)": 600, "Books/Beta Title (Jarvis)": 900, "Books/Alpha": 301, "Books/Alpha Other Title": 299}
+    for folder in minutes:
+        for i in range(1, 4):
             p = tmp_path / folder / f"{i:02d}.mp3"; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(f"{folder}{i}".encode())
     ids = fg.scan_files(s, str(tmp_path))
     for path, fid in ids.items():
@@ -70,23 +69,37 @@ def copies(s, tmp_path):
     s.flush(); folders = fg.group_by_folder(s, str(tmp_path), ids); top, _ = st.infer(s, folders); return top
 
 
-def test_copies_of_one_recording_are_linked_into_one_listen_but_other_narrations_and_other_titles_are_not(s, copies):
-    build.build_listens(s, copies)
+def test_copies_need_the_same_title_compatible_authors_and_the_same_runtime(s, copies):
+    build.build_listens(s, copies); md.add_metadata(s)
+    def live():
+        author = lambda l: next((c.value for c in s.scalars(select(ListenChoice).where(ListenChoice.listen_id == l.id, ListenChoice.field == "author", ListenChoice.unchosen_at.is_(None)))), "")
+        return [(l.label, author(l), l) for l in s.scalars(select(Listen).where(Listen.merged_into_id.is_(None)))]
+    assert len(live()) == 8
     r = build.link_copies(s)
-    assert r == {"listens_with_copies": 1, "copies_merged": 1}
-    live = {l.label: l for l in s.scalars(select(Listen).where(Listen.merged_into_id.is_(None)))}
-    assert sorted(live) == ["Alpha", "Alpha Other Title", "Beta Title (Fry)", "Beta Title (Jarvis)", "Jane Doe - Alpha Title"] or sorted(live) == ["Alpha", "Alpha Other Title", "Alpha Title", "Beta Title (Fry)", "Beta Title (Jarvis)"]
-    survivor = next(l for n, l in live.items() if "Alpha Title" in n)
+    assert r == {"listens_with_copies": 1, "copies_merged": 1}      # the two "Alpha Title" folders with no author (300 and 303 minutes) are copies; Jane Doe's and John Roe's differ in author from each other, and with two known authors an unknown one cannot be placed
+    now = live(); assert len(now) == 7
+    assert sorted(a for t, a, _ in now if t == "Alpha Title") == ["", "Jane Doe", "John Roe"]            # one merged, one by Jane Doe, one by John Roe
+    survivor = next(l for t, a, l in now if t == "Alpha Title" and a == "")
     parts = s.scalars(select(ListenPart).where(ListenPart.listen_id == survivor.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None)).order_by(ListenPart.ordinal)).all()
     assert [p.ordinal for p in parts] == [1, 2] and len({p.filegroup_id for p in parts}) == 2             # two copies, ranked
     ev = s.scalars(select(ListenEvent).where(ListenEvent.listen_id == survivor.id, ListenEvent.action == "merge")).one()
     assert ev.actor_kind == "rule" and "copies of one recording" in ev.reason and "300" in ev.reason
 
 
+def test_a_copy_with_an_unknown_author_may_join_one_known_author(s, tmp_path):
+    for folder, mins in (("Books/Jane Doe - Gamma", 200), ("Audible/Gamma", 202)):
+        for i in range(1, 4):
+            p = tmp_path / folder / f"{i:02d}.mp3"; p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(f"{folder}{i}".encode())
+    ids = fg.scan_files(s, str(tmp_path))
+    for path, fid in ids.items(): s.get(fg.PartFile, fid).duration_s = (200 if "Jane" in path else 202) * 60 / 3
+    s.flush(); top, _ = st.infer(s, fg.group_by_folder(s, str(tmp_path), ids)); build.build_listens(s, top); md.add_metadata(s)
+    assert build.link_copies(s) == {"listens_with_copies": 1, "copies_merged": 1}
+
+
 def test_api_shows_the_number_of_copies(s, copies):
-    build.build_listens(s, copies); build.link_copies(s)
+    build.build_listens(s, copies); md.add_metadata(s); build.link_copies(s)
     app = FastAPI(); app.include_router(api.listens_router); app.dependency_overrides[api.get_session] = lambda: s; c = TestClient(app)
-    body = c.get("/api/listens").json(); rows = {r["label"]: r for r in body["rows"]}
-    assert body["total"] == len(body["rows"]) == len(rows) == 5 and sum(body["kinds"].values()) == 5      # one row per live listen, however many copies it has
-    assert c.get("/api/listens?limit=2&offset=4").json()["rows"].__len__() == 1       # and paging counts listens, not input parts
-    assert max(r["copies"] for r in rows.values()) == 2 and sum(r["copies"] for r in rows.values()) == 6 and all(r["files"] == 3 for r in rows.values())      # the first copy's facts, never doubled
+    body = c.get("/api/listens").json(); rows = body["rows"]
+    assert body["total"] == len(rows) == 7 and sum(body["kinds"].values()) == 7                             # one row per live listen, however many copies it has
+    assert len(c.get("/api/listens?limit=2&offset=6").json()["rows"]) == 1                                  # and paging counts listens, not input parts
+    assert max(r["copies"] for r in rows) == 2 and sum(r["copies"] for r in rows) == 8 and all(r["files"] == 3 for r in rows)      # the first copy's facts, never doubled

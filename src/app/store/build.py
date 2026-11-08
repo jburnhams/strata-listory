@@ -74,39 +74,36 @@ def preference(part: ListenPart, label: str) -> tuple:
 
 
 def link_copies(s: Session, *, tolerance: float = 0.04) -> dict[str, int]:
-    """Merge listens that are copies of one recording: the same kind and title key and a runtime within `tolerance` of each other. A different runtime under the same title is a different recording (another narrator or edit) of the same work and stays a listen of its own. The preferred copy survives and the others become its later input parts; every merge has its event with the evidence, and `split` undoes one."""
+    """Merge book listens that are copies of one recording: the same chosen title (brackets, "unabridged"-style words, a leading index and years ignored; digits kept), authors that do not disagree (equal, or one unknown) and runtimes within `tolerance` of each other. Needs the metadata step first, so the title and author are what the tags say, not what a folder happens to be called. Anything less certain waits until the works are identified. A different runtime under the same title is another recording (narrator or edit) of the same work and stays its own listen; so does the same title by a different author. The preferred copy survives, the others become its later input parts; every merge has its event with the evidence, and `split` undoes it."""
     run = new_run(s, 'link_copies', {'tolerance': tolerance})
+    authors = {lid: v for lid, v in s.execute(select(ListenChoice.listen_id, ListenChoice.value).where(ListenChoice.field == 'author', ListenChoice.unchosen_at.is_(None)))}
     rows = s.execute(select(Listen, ListenPart).join(ListenPart, (ListenPart.listen_id == Listen.id) & (ListenPart.role == 'input') & ListenPart.unlinked_at.is_(None)).where(Listen.merged_into_id.is_(None), Listen.kind == 'book')).all()      # books only: radio series with the same title are different seasons, not copies
-    by: dict[tuple[str, str], list[tuple[Listen, ListenPart]]] = defaultdict(list)
+    by: dict[str, list[tuple[Listen, ListenPart]]] = defaultdict(list)
     for l, p in rows:
-        if title_key(l.label): by[(l.kind, title_key(l.label))].append((l, p))
-    keys = sorted({k for _, k in by}, key=len); root = {k: k for k in keys}
-    def find(k):
-        while root[k] != k: k = root[k]
-        return k
-    for i, a in enumerate(keys):                          # 'americanpsycho' also names 'bretastonellisamericanpsycho': an author in front of the title
-        for b in keys[i + 1:]:
-            if len(a) >= 10 and b.endswith(a): root[find(b)] = find(a)      # only a prefix in front (an author), never a shorter title that merely starts the same way
-    merged_by: dict[tuple[str, str], list[tuple[Listen, ListenPart]]] = defaultdict(list)
-    for (kind, k), items in by.items(): merged_by[(kind, find(k))] += items
-    by = merged_by
+        if title_key(l.label): by[title_key(l.label)].append((l, p))
+    akey = lambda l: re.sub(r'[^a-z0-9]+', '', str(authors.get(l.id) or '').lower())
+    minutes = lambda lp: (lp[1].detail or {}).get('minutes') or 0
     merges = copies = 0
-    for (kind, key), items in by.items():
+    for key, items in by.items():
         if len(items) < 2: continue
-        items.sort(key=lambda lp: (lp[1].detail or {}).get('minutes') or 0)
-        cluster: list[tuple[Listen, ListenPart]] = []; clusters = []
+        items.sort(key=minutes); clusters: list[list[tuple[Listen, ListenPart]]] = []; cluster: list[tuple[Listen, ListenPart]] = []
         for lp in items:
-            m = (lp[1].detail or {}).get('minutes') or 0
-            if cluster and m and (cluster[0][1].detail or {}).get('minutes') and (m - cluster[0][1].detail['minutes']) / m <= tolerance: cluster.append(lp)
+            m = minutes(lp)
+            if cluster and m and minutes(cluster[0]) and (m - minutes(cluster[0])) / m <= tolerance: cluster.append(lp)
             else:
                 if len(cluster) > 1: clusters.append(cluster)
                 cluster = [lp]
         if len(cluster) > 1: clusters.append(cluster)
         for cl in clusters:
-            cl.sort(key=lambda lp: preference(lp[1], lp[0].label))
-            survivor = cl[0][0]
-            for loser, _ in cl[1:]:
-                L.merge(s, survivor, loser, actor_kind='rule', actor_ref='copies', run_id=run.id, reason=f'copies of one recording: same title "{key[:60]}" and runtimes {[(lp[1].detail or {}).get("minutes") for lp in cl]} minutes within {tolerance:.0%}')
-                merges += 1
-            copies += len(cl)
+            by_author: dict[str, list[tuple[Listen, ListenPart]]] = defaultdict(list)
+            for lp in cl: by_author[akey(lp[0])].append(lp)
+            unknown = by_author.pop('', [])
+            if len(by_author) == 1: next(iter(by_author.values())).extend(unknown); unknown = []      # one known author: a copy with no author may join it
+            for group in [*by_author.values(), unknown]:          # different authors under one title are never copies; copies with no author only join each other
+                if len(group) < 2: continue
+                group.sort(key=lambda lp: preference(lp[1], lp[0].label)); survivor = group[0][0]
+                for loser, _ in group[1:]:
+                    L.merge(s, survivor, loser, actor_kind='rule', actor_ref='copies', run_id=run.id, reason=f'copies of one recording: same title "{key[:60]}", author {akey(survivor) or "unknown"}, runtimes {[minutes(lp) for lp in group]} minutes within {tolerance:.0%}')
+                    merges += 1
+                copies += len(group)
     finish_run(s, run, 'done'); return {'listens_with_copies': copies - merges, 'copies_merged': merges}

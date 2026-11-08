@@ -162,9 +162,9 @@ def cmd_listens_build(args):
         if src is None: sys.exit('no structure grouping yet: run ./app filegroups-structure first')
         try: counts = build.build_listens(s, src, rebuild=args.rebuild)
         except ValueError as e: sys.exit(str(e))
-        extra = build.link_copies(s) if not args.no_copies else {}
         from app.store import metadata
-        meta = metadata.add_metadata(s)
+        meta = metadata.add_metadata(s)                                    # first: copies are judged on the chosen title and author
+        extra = build.link_copies(s) if not args.no_copies else {}
         s.commit(); print(f"{counts['book']} books and {counts['radio_series']} radio series made into listens; {counts['loose_files_skipped']} loose files left for review" + (f"; {extra['copies_merged']} copies merged into {extra['listens_with_copies']} listens" if extra else '') + f"; metadata chosen for {meta['listens']} listens ({meta['from_tags']} values from tags, {meta['from_folder']} from folder names)"); return 0
 
 
