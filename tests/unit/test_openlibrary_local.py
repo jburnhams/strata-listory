@@ -1,262 +1,56 @@
-"""Offline dumps publish atomically and preserve work identity and rating provenance."""
-import gzip
-import json
-import sqlite3
-from pathlib import Path
-
+"""The offline Open Library provider reads the identify index and the full-record detail store built from the same dumps."""
 import pytest
 
+from app.identify import oldetail, olindex
 from app.providers import openlibrary_local as local
-
-
-def dump(path,rows):
-    with gzip.open(path,'wt',encoding='utf8') as stream:
-        for key,data in rows:stream.write(f'/type/record\t{key}\t1\t2026-10-31\t{json.dumps(data)}\n')
+from identify_dumps import dumps, row
 
 
 @pytest.fixture
-def dumps(tmp_path):
-    dump(tmp_path/'authors.txt.gz',[
-        ('/authors/OL1A',dict(name='Cormac McCarthy',alternate_names=['Charles McCarthy'])),
-        ('/authors/OL2A',dict(name='Other Writer')),
-    ])
-    dump(tmp_path/'works.txt.gz',[
-        ('/works/OL1W',dict(title='The Road',authors=[dict(author=dict(key='/authors/OL1A'))],first_publish_date='September 26, 2006',subjects=['Fiction'],covers=[-1,123])),
-        ('/works/OL2W',dict(title='The Road',authors=[dict(author=dict(key='/authors/OL2A'))])),
-        ('/works/OL3W',dict(title='Blood Méridian',authors=[dict(author=dict(key='/authors/OL1A'))])),
-    ])
-    with gzip.open(tmp_path/'ratings.txt.gz','wt') as stream:
-        stream.write('/works/OL1W\t\\N\t5\t2026-01-01\n/works/OL1W\t/books/OL1M\t3\t2026-02-01\n/works/OL2W\t\\N\t1\t2026-03-01\ninvalid\n/works/OL1W\t\\N\t8\t2026-04-01\n')
-    return tmp_path
+def stores(tmp_path):
+    d = dumps(tmp_path)
+    import gzip
+    with gzip.open(d / 'works.txt.gz', 'at', encoding='utf8') as f:      # a second author's work with the same title, and a cover on The Hobbit
+        f.write(row('/type/work', '/works/OL5W', dict(title='The Hobbit', authors=[dict(author=dict(key='/authors/OL9A'))], covers=[-1, 4242], first_publish_date='1950')))
+    with gzip.open(d / 'authors.txt.gz', 'at', encoding='utf8') as f: f.write(row('/type/author', '/authors/OL9A', dict(name='Somebody Else')))
+    with gzip.open(d / 'editions.txt.gz', 'at', encoding='utf8') as f: f.write(row('/type/edition', '/books/OL7M', dict(title='The Hobbit', subtitle='Illustrated', works=[dict(key='/works/OL1W')], publishers=['Allen & Unwin'], publish_date='1966', isbn_13=['9780048231222'], physical_format='Hardcover', languages=[dict(key='/languages/eng')])))
+    olindex.build(d, workers=0); oldetail.build(d, workers=2)
+    return d
 
 
-def test_offline_search_uses_author_identity_full_text_and_aggregated_work_ratings(dumps):
-    assert local.status()['stage']=='not_installed' and local.search('The Road')==[]
-    state=local.build(dumps)
-    assert state['ready'] and state['counts']==dict(authors=2,works=3,ratings=3)
-    [c]=local.search('The Road','Cormac McCarthy')
-    assert (c['id'],c['author'],c['original_year'],c['rating'],c['ratings_count'])==('/works/OL1W','Cormac McCarthy',2006,4,2)
-    assert c['cover_url']=='https://covers.openlibrary.org/b/id/123-L.jpg' and c['genres']==['Fiction']
-    assert local.search('Road','Cormac McCarthy')[0]['id']=='/works/OL1W'
-    assert local.search('The Road','Other Writer')[0]['id']=='/works/OL2W'
-    assert local.search('Blood Meridian','Cormac McCarthy')[0]['original_year'] is None
-    assert local.search('" OR * --')==[] and local.search('')==[]
+def test_search_uses_author_identity_ratings_and_detail_cover(stores):
+    [c] = local.search('The Hobbit', 'J. R. R. Tolkien')
+    assert (c['id'], c['authors'], c['original_year'], c['genres'], c['url']) == ('/works/OL1W', ['J. R. R. Tolkien'], 1937, ['Fantasy'], 'https://openlibrary.org/works/OL1W')
+    assert c['rating'] == 4.5 and c['ratings_count'] == 2 and c['cover_url'] == ''
+    assert local.search('The Hobbit', 'Somebody Else')[0]['cover_url'] == 'https://covers.openlibrary.org/b/id/4242-L.jpg'
+    assert local.search('') == [] and local.search('Nothing like this at all') == []
 
 
-@pytest.mark.year_lookup
-def test_offline_provider_is_primary_and_online_remains_a_fallback(dumps,fake_urlopen):
-    from app.providers.openlibrary import OpenLibrary
-    local.build(dumps);p=OpenLibrary()
-    assert p.search('The Road','Cormac McCarthy')[0]['rating']==4 and not fake_urlopen.calls
-    fake_urlopen.reply(dict(docs=[]))
-    assert p.search('Missing title','Writer')==[] and len(fake_urlopen.calls)==1
+def test_linked_work_lookup_follows_redirects_and_ignores_bad_keys(stores):
+    assert [c['id'] for c in local.work_candidates(['/works/OL2W', '/works/OL1W', 'nonsense', '/works/OL404W'])] == ['/works/OL1W']
+    assert local.work_candidates([]) == []
 
 
-def test_failed_import_keeps_the_previous_searchable_index(dumps):
-    local.build(dumps);previous=(local.folder()/'index.sqlite').stat().st_size
-    (dumps/'works.txt.gz').write_bytes(b'broken gzip')
-    with pytest.raises(OSError):local.build(dumps)
-    assert local.status()['stage']=='failed' and local.status()['ready']
-    assert (local.folder()/'index.sqlite').stat().st_size==previous and local.search('The Road','Cormac McCarthy')
-    with pytest.raises(ValueError,match='missing Open Library dump'):local.build(dumps/'absent')
+def test_editions_by_work_and_by_isbn_with_equivalent_isbn10_and_13(stores):
+    by_work = local.editions('/works/OL1W')
+    assert [e['key'] for e in by_work] == ['/books/OL7M', '/books/OL3M', '/books/OL1M']       # oldest first; the French edition is not in the store
+    illustrated = by_work[0]
+    assert (illustrated['subtitle'], illustrated['publishers'], illustrated['physical_format'], illustrated['year'], illustrated['work_key'], illustrated['works'], illustrated['languages']) == ('Illustrated', ['Allen & Unwin'], 'Hardcover', 1966, '/works/OL1W', ['/works/OL1W'], [dict(key='/languages/eng')])
+    assert [e['key'] for e in local.editions(isbn='0-261-10221-4')] == ['/books/OL1M'] and local.editions(isbn='9780261102217')[0]['isbns'] == ['0261102214', '9780261102217']
+    assert local.editions('bad') == [] and local.editions(isbn='12') == [] and local.editions() == [] and len(local.editions('/works/OL1W', limit=1)) == 1
 
 
-def test_offline_cli_import_and_status(dumps,capsys):
+def test_stores_missing_means_unavailable_and_status_reports_them(tmp_path):
+    assert local.search('The Hobbit') == [] and local.work_candidates(['/works/OL1W']) == [] and local.editions('/works/OL1W') is None
+    assert local.status()['detail'] is False
+
+
+def test_status_after_build_and_helpers(stores):
+    assert local.status()['ready'] and local.status()['detail']
+    assert local.isbn_keys('0-261-10221-4') == ['0261102214', '9780261102217'] and local.isbn_keys('9780261102218') == [] and local.year('Jan 5, 1999') == 1999
+    assert local.normalise('Blood Méridian') == 'blood meridian'
+
+
+def test_cli_status(stores, capsys):
     from app.cli import main
-    assert main(['openlibrary-import','--directory',str(dumps)])==0
-    assert json.loads(capsys.readouterr().out)['ready']
-    assert main(['openlibrary-status'])==0
-    assert json.loads(capsys.readouterr().out)['counts']['ratings']==3
-
-
-def test_common_surname_uses_full_author_name_before_bounded_fallback(dumps):
-    people=[(f'/authors/OL{i}A',dict(name=f'Person{i} King')) for i in range(3,1105)]
-    people += [('/authors/OL9999A',dict(name='Stephen King'))]
-    with gzip.open(dumps/'authors.txt.gz','at') as stream:
-        for key,data in people:stream.write(f'/type/author\t{key}\t1\t2026-10-31\t{json.dumps(data)}\n')
-    with gzip.open(dumps/'works.txt.gz','at') as stream:
-        stream.write('/type/work\t/works/OL9999W\t1\t2026-10-31\t'+json.dumps(dict(title='The Shining',authors=[dict(author=dict(key='/authors/OL9999A'))]))+'\n')
-    local.build(dumps)
-    assert local.search('The Shining','Stephen King')[0]['author']=='Stephen King'
-
-
-def identity_dumps(dumps):
-    dump(dumps/'authors.txt.gz',[(f'/authors/OL{i}A',dict(name=name)) for i,name in enumerate(['Philip Rucker','Carol Leonnig','Philip Rucker Carol Leonnig','Danny Dreyer','Chuck Klosterman'],1)])
-    rows=[('/works/OL1W',dict(title='A Very Stable Genius',authors=[dict(author=dict(key='/authors/OL1A')),dict(author=dict(key='/authors/OL2A'))])),('/works/OL2W',dict(title='ChiRunning',authors=[dict(author=dict(key='/authors/OL4A'))]))]
-    # Numerous author-prefixed essays must not push the actual numbered volume
-    # out of the bounded candidate list when the tags contain only its subtitle.
-    rows += [(f'/works/OL{i+10}W',dict(title='Chuck Klosterman on '+name,authors=[dict(author=dict(key='/authors/OL5A'))])) for i,name in enumerate(['Curious People','Dangerous Ideas','Pop Culture','Media','Living','Rock','Film'])]
-    rows += [('/works/OL99W',dict(title='Chuck Klosterman IV',authors=[dict(author=dict(key='/authors/OL5A'))]))]
-    dump(dumps/'works.txt.gz',rows);local.build(dumps)
-
-
-def test_local_discovery_handles_multiple_authors_subtitles_and_joined_title_words(dumps):
-    identity_dumps(dumps)
-    assert local.search("A Very Stable Genius: Donald J. Trump's Testing of America",'Philip Rucker, Carol Leonnig')[0]['id']=='/works/OL1W'
-    assert local.search('Chi Running','Danny Dreyer')[0]['id']=='/works/OL2W'
-    assert local.search('A Decade of Curious People and Dangerous Ideas','Chuck Klosterman')[0]['id']=='/works/OL99W'
-
-
-@pytest.mark.year_lookup
-def test_subtitle_only_search_uses_attached_editions_and_caches_the_evidence(dumps,monkeypatch):
-    from app.providers.openlibrary import OpenLibrary
-    from app.providers.base import candidate
-    identity_dumps(dumps);p=OpenLibrary();calls=[]
-    monkeypatch.setattr(local,'search',lambda *a:[candidate('openlibrary',id='/works/OL99W',title='Chuck Klosterman IV',authors=['Chuck Klosterman'])])
-    def request(url):
-        calls.append(url)
-        if '/editions.json' in url:return dict(entries=[dict(key='/books/OL1M',title='Chuck Klosterman IV',subtitle='Wrong work',works=[dict(key='/works/OL100W')]),dict(key='/books/OL2M',title='Chuck Klosterman IV',subtitle='A Decade of Curious People and Dangerous Ideas',works=[dict(key='/works/OL99W')])])
-        return dict(title='Chuck Klosterman IV')
-    monkeypatch.setattr(p.http,'request',request)
-    [c]=p.search('A Decade of Curious People and Dangerous Ideas','Chuck Klosterman')
-    assert (c['id'],c['subtitle_edition'])==('/works/OL99W','/books/OL2M')
-    assert p.search('A Decade of Curious People and Dangerous Ideas','Chuck Klosterman')==[c] and len(calls)==2
-
-
-def test_editions_import_retains_isbn_publisher_dates_and_work_links_without_inventing_original_years(dumps):
-    dump(dumps/'editions.txt.gz',[
-        ('/books/OL1M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_10=['0307387895'],isbn_13=['978-0-307-38789-9'],publish_date='March 2007',publishers=['Vintage'],languages=[dict(key='/languages/eng')],physical_format='Paperback')),
-        ('/books/OL2M',dict(title='The Road',works=[dict(key='/works/OL1W')],publish_date='2006',publishers=['Original Publisher'],languages=[dict(key='/languages/eng')],physical_format='Hardcover')),
-        ('/books/OL3M',dict(title='The Road',works=[dict(key='/works/OL1W')],publish_date='2005',publishers=['Audio Publisher'],physical_format='Audio CD')),
-        ('/books/OL4M',dict(title='Blood Meridian',works=[dict(key='/works/OL3W')],isbn_13=['9780679728757'],publish_date='1992',publishers=['Reprint Publisher'])),
-        ('/books/OL5M',dict(title='Combined volume',works=[dict(key='/works/OL1W'),dict(key='/works/OL3W')],isbn_10=['012345678X'])),
-        ('bad-key',dict(title='Bad record')),
-    ])
-    state=local.build(dumps,editions=True)
-    assert state['editions'] and state['counts']['editions']==5
-    rows=local.editions('/works/OL1W')
-    assert [r['key'] for r in rows]==['/books/OL3M','/books/OL2M','/books/OL1M','/books/OL5M']
-    [edition]=local.editions(isbn='978-0-307-38789-9')
-    assert edition['work_key']=='/works/OL1W' and edition['year']==2007
-    assert edition['publishers']==['Vintage'] and edition['isbns']==['0307387895','9780307387899']
-    assert edition['languages']==[dict(key='/languages/eng')]
-    assert local.search('The Road','Cormac McCarthy')[0]['original_year']==2006
-    assert local.search('Blood Meridian','Cormac McCarthy')[0]['original_year'] is None
-    assert local.editions(isbn='012345678X')[0]['work_key'] is None
-    assert local.editions(isbn='012345678X')[0]['works']==['/works/OL1W','/works/OL3W']
-    assert local.editions('/works/OL999W')==[] and local.editions(isbn='invalid')==[]
-    assert local.editions('unsafe')==[] and local.editions()==[]
-    from app.providers.openlibrary import OpenLibrary
-    published=OpenLibrary().edition_publishers('/works/OL1W')
-    assert [r['year'] for r in published]==[2006,2007]
-    assert published[-1]['isbns']==['0307387895','9780307387899']
-
-
-def test_editions_are_optional_and_failed_edition_import_preserves_published_index(dumps):
-    assert local.editions('/works/OL1W') is None
-    local.build(dumps)
-    assert local.editions('/works/OL1W') is None
-    with pytest.raises(ValueError,match='missing Open Library dump'):local.build(dumps,editions=True)
-    (dumps/'editions.txt.gz').write_bytes(b'corrupt gzip')
-    with pytest.raises(OSError):local.build(dumps,editions=True)
-    assert local.search('The Road','Cormac McCarthy')[0]['original_year']==2006
-    assert local.editions('/works/OL1W') is None
-
-
-def test_editions_cli_flag_imports_the_snapshot(dumps,capsys):
-    from app.cli import main
-    dump(dumps/'editions.txt.gz',[('/books/OL1M',dict(title='The Road',works=[dict(key='/works/OL1W')],publish_date='2006'))])
-    assert main(['openlibrary-import','--directory',str(dumps),'--editions'])==0
-    assert json.loads(capsys.readouterr().out)['counts']['editions']==1
-    assert local.editions('/works/OL1W')[0]['year']==2006
-
-
-@pytest.mark.parametrize('languages,keep', [([],True),(['/languages/eng'],True),(['/languages/fre'],False),(['/languages/ger','/languages/eng'],True),([''],True),(['/languages/not-a-code'],True),(['/languages/und'],True),(['/languages/mul'],True)])
-def test_edition_language_filter_keeps_english_and_unknown(languages,keep):
-    assert local.keep_edition(languages) is keep
-
-
-def test_import_excludes_explicit_foreign_editions_and_their_links(dumps):
-    dump(dumps/'editions.txt.gz',[(f'/books/OL{n}M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_10=[f'{n:010}'],languages=languages)) for n,languages in enumerate([
-        [dict(key='/languages/fre')],[dict(key='/languages/eng')],[],[dict(key='/languages/ger'),dict(key='/languages/eng')],[{}],
-    ],1)])
-    state=local.build(dumps,editions=True)
-    assert state['counts']['editions']==4 and state['edition_languages']=='english_or_unknown'
-    assert {r['key'] for r in local.editions('/works/OL1W')}=={'/books/OL2M','/books/OL3M','/books/OL4M','/books/OL5M'}
-    assert local.editions(isbn='0000000001')==[]
-
-
-def old_editions_index(dumps):
-    dump(dumps/'editions.txt.gz',[(f'/books/OL{n}M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_10=[f'{n:010}'])) for n in (1,2)])
-    local.build(dumps,editions=True)
-    c=sqlite3.connect(local.folder()/'index.sqlite')
-    with c:
-        snapshot=json.loads(c.execute("SELECT value FROM metadata WHERE key='snapshot'").fetchone()[0]);snapshot.pop('edition_languages')
-        c.execute("UPDATE metadata SET value=? WHERE key='snapshot'",(json.dumps(snapshot),))
-        c.execute("UPDATE editions SET languages=? WHERE key='/books/OL1M'",(json.dumps(['/languages/fre']),))
-        c.execute("UPDATE editions SET languages=? WHERE key='/books/OL2M'",(json.dumps(['/languages/und']),))
-    c.close()
-
-
-def test_compaction_removes_foreign_editions_links_and_reclaims_pages_atomically(dumps,capsys):
-    from app.cli import main
-    old_editions_index(dumps)
-    assert main(['openlibrary-compact'])==0
-    summary=json.loads(capsys.readouterr().out)
-    assert summary['counts']['editions']==1 and summary['editions_excluded']==1
-    assert local.status()['ready'] and local.status()['edition_languages']=='english_or_unknown'
-    assert [r['key'] for r in local.editions('/works/OL1W')]==['/books/OL2M']
-    assert local.editions(isbn='0000000001')==[]
-    assert local.search('The Road','Cormac McCarthy')[0]['original_year']==2006
-    assert local.compact_editions()==summary
-    assert not (local.folder()/'index.sqlite.compacting').exists()
-
-
-def test_failed_compaction_preserves_published_index(dumps,monkeypatch):
-    old_editions_index(dumps)
-    target=local.folder()/'index.sqlite';before=target.read_bytes();replace=Path.replace
-    def fail_publication(self,other):
-        if self.name=='index.sqlite.compacting':raise OSError('publication failed')
-        return replace(self,other)
-    monkeypatch.setattr(Path,'replace',fail_publication)
-    with pytest.raises(OSError,match='publication failed'):local.compact_editions()
-    assert target.read_bytes()==before and local.status()['ready']
-    assert len(local.editions('/works/OL1W'))==2
-    assert not (local.folder()/'index.sqlite.compacting').exists()
-
-
-def test_compaction_requires_a_published_editions_snapshot(dumps):
-    local.folder().mkdir(parents=True,exist_ok=True)
-    with pytest.raises(ValueError,match='no published'):local.compact_editions()
-    local.build(dumps)
-    with pytest.raises(ValueError,match='no editions'):local.compact_editions()
-
-
-@pytest.mark.parametrize('value,keys',[
-    ('0-307-38789-5',['0307387895','9780307387899']),
-    ('9780307387899',['9780307387899','0307387895']),
-    ('9780307387890',[]),('0307387890',[]),('not an isbn',[]),
-])
-def test_equivalent_isbn_keys_require_valid_checksums(value,keys):
-    assert local.isbn_keys(value)==keys
-
-
-def test_isbn_matching_traverses_all_duplicate_records_and_preserves_conflicting_authors(dumps):
-    from app.providers.openlibrary import OpenLibrary
-    from app.ingest import metadata as M
-    from app.ingest.observe import capture
-    dump(dumps/'editions.txt.gz',[
-        ('/books/OL1M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_10=['0307387895'],publish_date='2007',publishers=['Vintage'])),
-        ('/books/OL2M',dict(title='The Road',works=[dict(key='/works/OL2W')],isbn_13=['9780307387899'],publish_date='2008')),
-        ('/books/OL3M',dict(title='The Road',works=[dict(key='/works/OL1W')],isbn_13=['9780307387899'],publish_date='2009')),
-    ])
-    local.build(dumps,editions=True)
-    assert {r['key'] for r in local.editions(isbn='0307387895')}=={'/books/OL1M','/books/OL2M','/books/OL3M'}
-    found=OpenLibrary().by_isbn('9780307387899')
-    assert {c['id'] for c in found['candidates']}=={'/works/OL1W','/works/OL2W'}
-    correct=[c for c in found['candidates'] if c['id']=='/works/OL1W']
-    assert all(c['original_year']==2006 for c in correct)
-    assert {e['year'] for e in found['editions']}=={2007,2008,2009}
-    book=dict(title='The Road',author='Cormac McCarthy')
-    assert any(M.compatible_work(book,c,found['candidates']) for c in correct)
-    assert not any(M.compatible_work(book,c,found['candidates']) for c in found['candidates'] if c['id']=='/works/OL2W')
-    results=dict(openlibrary=dict(status='ok',candidates=[]));events=[]
-    with capture(events.append):M.collect_isbn_matches(dict(book=book,evidence=[dict(tags=dict(isbn='0307387895'))]),results)
-    assert len(results['openlibrary']['isbn_editions'])==3
-    assert results['openlibrary']['isbn_queries']==['0307387895']
-    assert any(e.get('raw',{}).get('snapshot') for e in events)
-    c=sqlite3.connect(local.folder()/'index.sqlite')
-    assert any('editions_edition' in row[-1] for row in c.execute('EXPLAIN QUERY PLAN SELECT work FROM edition_works WHERE edition=?',('/books/OL1M',)))
-    c.close()
-    assert local.work_candidates(['invalid','/works/OL999W'])==[]
-    assert OpenLibrary().by_isbn('invalid')==dict(candidates=[],editions=[])
+    assert main(['openlibrary-status']) == 0 and '"detail": true' in capsys.readouterr().out
