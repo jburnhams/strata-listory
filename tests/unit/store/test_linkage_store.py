@@ -150,7 +150,7 @@ def test_match_queue_api_filters_sorts_and_pages_within_the_filter(s, listens):
     salt = listens["Books/Ben Ash - Salt Roads"]; salt.kind = "radio_series"; s.flush()
     app = FastAPI(); app.include_router(A.router); app.dependency_overrides[A.get_session] = lambda: s; c = TestClient(app)
     whole = c.get("/api/matches").json()
-    assert whole["total"] == 4 and whole["facets"]["kind"] == {"book": 3, "radio_series": 1} and sum(whole["facets"]["certainty"].values()) == 4
+    assert whole["total"] == 4 and whole["facets"]["kind"] == {"book": 3, "radio_series": 1, "not-book": 1} and sum(whole["facets"]["certainty"].values()) == 4
     assert all(it["kind"] and it["status"] and it["added"] for it in whole["items"]) and "text" not in whole["items"][0]
     assert abs(whole["items"][0]["added"] - float(s.scalar(select(func.extract("epoch", func.now()))))) < 3600        # the instant the database added it, whatever zone the API host runs in
     ps = [it["p"] for it in c.get("/api/matches", params=dict(sort="uncertain")).json()["items"]]
@@ -188,6 +188,24 @@ def test_rebuild_of_some_listens_keeps_the_others(s, listens):
     assert apply.clear(s, ids={one.id}) == 1
     assert s.scalar(select(func.count()).select_from(ListenPart).where(ListenPart.role == "match")) == 3 and one.status == "grouped"
 
+
+def test_match_queue_carries_each_listens_kind_verdict_and_filters_by_it(s, listens):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.linkage import api as A
+    from app.store import kinds_db
+    apply.apply(s, data_for(listens, sure=False), params())
+    salt = listens["Books/Ben Ash - Salt Roads"]; glass = listens["Books/Mara Quill - Glass Orchard"]
+    kinds_db.set_kind(s, salt.id, "radio_series", actor_ref="test")                  # a person's call
+    s.add(kinds_db.ListenKind(listen_id=glass.id, kind="book", guess="play", p_broadcast=0.5, confidence=0.5, band="review", signals=[dict(name="play length", weight=0.6, detail="")], version=1)); s.flush()
+    app = FastAPI(); app.include_router(A.router); app.dependency_overrides[A.get_session] = lambda: s; c = TestClient(app)
+    items = {it["listen_id"]: it for it in c.get("/api/matches").json()["items"]}
+    assert items[salt.id]["kind_info"]["decided_by"] == "user" and items[glass.id]["kind_info"]["band"] == "review" and any(it["kind_info"] is None for it in items.values())
+    review = c.get("/api/matches?kind=review").json(); assert [it["listen_id"] for it in review["items"]] == [glass.id] and review["facets"]["kind"]["review"] == 1 and review["facets"]["kind"]["not-book"] == 1
+    assert [it["listen_id"] for it in c.get("/api/matches?kind=not-book").json()["items"]] == [salt.id]
+    assert [it["listen_id"] for it in c.get("/api/matches?kind=radio_series").json()["items"]] == [salt.id]
+    unsure = [it["listen_id"] for it in c.get("/api/matches?sort=kind-uncertain").json()["items"]]; assert unsure[0] == glass.id       # the close call comes first
+    assert c.get("/api/matches?sort=bogus").status_code == 400
 
 def test_rerun_after_a_rejected_first_candidate_numbers_the_new_candidates_past_it(s, listens):
     """A person rejects the top review candidate; the rejection stays linked (it is the record of the decision) and keeps its ordinal, so the next run's candidates must not reuse it (`listen_part_active_ordinal`)."""

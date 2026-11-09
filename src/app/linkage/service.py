@@ -41,6 +41,9 @@ def retrain_and_apply(session_factory, *, threshold: float = apply.THRESHOLD, va
         with session_factory() as s:
             params, report = train(s, validate=validate)
             counts = apply.apply(s, dataset.load_cache(), params, threshold=threshold); s.commit()
+            try:
+                from app.store import kinds_db; counts['kinds_changed'] = kinds_db.learn_and_classify(s)['changed']; s.commit()      # Learning also refits the book / radio weights from the same answers
+            except Exception: s.rollback()
         STATE.update(counts=counts, report={k: v for k, v in report.items() if k != 'evidence_bits'}); return counts
     except Exception as e:
         STATE.update(error=str(e)); raise

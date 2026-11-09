@@ -67,5 +67,5 @@ Whole library (780 book listens after merging): 538 identified automatically, 24
 
 * Search for listens with no right candidate (`not_found`, and the ~17 with no candidates at all, which the queue does not show).
 * Recall: misspelt titles or authors find nothing (no fuzzy full-text fallback in Open Library); collections and omnibus editions are weakly handled.
-* Radio (`radio_series`) is not identified yet.
+* Radio (`radio_series`, `radio_show`, `play`) is not identified yet; which listens are radio is decided by [listen-kinds.md](listen-kinds.md).
 * Recording identity: the closest Audible recording is recorded in `detail.recording`, not yet as its own `audiobook` work.

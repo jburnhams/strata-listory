@@ -11,14 +11,14 @@ from sqlalchemy.orm import Session
 
 from app.store import listens as L
 from app.store.filegroups import finish_run, new_run
-from app.store.models import Listen, ListenChoice, ListenEvent, ListenPart, PartFile, PartFilegroup, PartFilegroupMember, Run
+from app.store.models import Listen, ListenChoice, ListenEvent, ListenKind, ListenPart, PartFile, PartFilegroup, PartFilegroupMember, Run
 
 KIND_OF_GROUP = {'book': 'book', 'programme': 'radio_series'}
 
 
 def clear(s: Session) -> None:
     """Remove every listen and what hangs off it (events, choices, parts); runs stay, detached."""
-    for model in (ListenEvent, ListenChoice, ListenPart): s.execute(delete(model))
+    for model in (ListenEvent, ListenChoice, ListenPart, ListenKind): s.execute(delete(model))      # verdicts too: a rebuild starts the book / radio call afresh (a person's choices are labels again once `listens-kinds` runs; none survive the listens they were about)
     s.execute(update(Run).values(listen_id=None)); s.execute(update(Listen).values(merged_into_id=None)); s.execute(delete(Listen)); s.flush()
 
 

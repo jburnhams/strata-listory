@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.linkage import apply, service
 from app.linkage import queue as qf
+from app.store import kinds_db
 from app.store.api import _engine, get_session
 from app.store.models import Listen, ListenChoice, ListenEvent, ListenPart, PartRecord
 
@@ -53,6 +54,8 @@ def queue_items(s: Session) -> list[dict]:
     for it in items:
         kind, status, created = facts.get(it['listen_id'], (None, None, None))
         it.update(kind=kind, status=status, added=float(created) if created is not None else None)
+    infos = kinds_db.kind_infos(s, list(by))
+    for it in items: it['kind_info'] = infos.get(it['listen_id'])
     return sorted(items, key=lambda it: (-it['p'], it['listen_id']))
 
 

@@ -6,7 +6,8 @@ import { DataTable, DataView, EmptyState, Field, Input, PageHeader, Skeleton, St
 import { listenApi, type ListenRow } from '../api'
 import { size } from './FilesPage'
 
-export const KIND_LABEL: Record<string, string> = { book: 'Book', radio_series: 'Radio series', radio_show: 'Radio show', other: 'Other' }
+import KindInfo, { KIND_LABEL } from './KindInfo'
+export { KIND_LABEL }
 const kindCount = (k: string, n: number) => `${n} ${n === 1 ? (KIND_LABEL[k] ?? k).toLowerCase() : k === 'radio_series' ? 'radio series' : `${(KIND_LABEL[k] ?? k).toLowerCase()}s`}`
 export const hours = (minutes: number) => minutes >= 60 ? `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m` : minutes ? `${minutes}m` : ''
 
@@ -24,7 +25,7 @@ export default function ListensPage() {
   const load = useLoad({ queryKey: ['listens', q, kind], queryFn: () => listenApi.list(q, kind) })
   const columns: Column<ListenRow>[] = [
     { key: 'label', header: 'Listen', sort: (a, b) => a.label.localeCompare(b.label), cell: l => <div className="min-w-0"><p>{l.group_id ? <Link className="underline" to={`/files?group=${l.group_id}`}>{l.label}</Link> : l.label}</p><p className="type-body-sm text-muted-foreground">{[l.author, l.narrator && `read by ${l.narrator}`, l.year].filter(Boolean).join(' · ')}</p><p className="type-caption text-muted-foreground break-all">{l.path}</p></div> },
-    { key: 'kind', header: 'Kind', cell: l => <Status tone="neutral">{KIND_LABEL[l.kind] ?? l.kind}</Status> },
+    { key: 'kind', header: 'Kind', cell: l => <KindInfo listenId={l.id} kind={l.kind} info={l.kind_info} /> },
     { key: 'status', header: 'Status', cell: l => <div className="flex flex-wrap gap-1"><Status tone="info">{l.status}</Status>{l.copies > 1 && <Status tone="neutral">{`${l.copies} copies`}</Status>}</div> },
     { key: 'files', header: 'Files', numeric: true, sort: (a, b) => a.files - b.files, cell: l => l.files },
     { key: 'length', header: 'Length', numeric: true, sort: (a, b) => a.minutes - b.minutes, cell: l => hours(l.minutes) },
@@ -38,7 +39,7 @@ export default function ListensPage() {
       <Field label="Search listens" hint="Every word must appear in the title, author, narrator or folder path">
         <Input type="search" value={typed} onChange={e => setTyped(e.target.value)} placeholder="e.g. lee child" />
       </Field>
-      <Tabs param="kind" label="Kind of listen" items={[{ value: '', label: 'All' }, ...Object.keys(tabs).map(k => ({ value: k, label: `${KIND_LABEL[k] ?? k} (${tabs[k]})` }))]}>
+      <Tabs param="kind" label="Kind of listen" items={[{ value: '', label: 'All' }, ...Object.keys(tabs).map(k => ({ value: k, label: `${KIND_LABEL[k] ?? k} (${tabs[k]})` })), ...(load.status === 'ready' && load.data.not_book > 0 ? [{ value: 'not-book', label: `${KIND_LABEL['not-book']} (${load.data.not_book})` }] : []), ...(load.status === 'ready' && load.data.review > 0 ? [{ value: 'review', label: `${KIND_LABEL.review} (${load.data.review})` }] : [])]}>
         {() => (
           <DataView state={load} isEmpty={d => d.rows.length === 0} skeleton={<div className="space-y-3">{[0, 1, 2].map(i => <Skeleton key={i} className="h-10 w-full" />)}</div>}
             empty={<EmptyState title={q || kind ? 'No listens match' : 'No listens yet'}>{q || kind ? 'Try fewer words or another kind.' : <>Run <code>./app listens-build</code> after <code>./app filegroups</code> and <code>./app filegroups-structure</code>.</>}</EmptyState>}>

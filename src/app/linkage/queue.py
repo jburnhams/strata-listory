@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-SORTS = ('certain', 'uncertain', 'recent', 'oldest')      # most certain first (the default), least certain first, most recently added first, oldest first
+SORTS = ('certain', 'uncertain', 'recent', 'oldest', 'kind-certain', 'kind-uncertain')      # most certain match first (the default), least certain first, most recently added first, oldest first, and by how sure the book-or-radio call is
 BANDS = ('sure', 'likely', 'close', 'unsure')              # the certainty words the cards show (web MatchQueuePage `certainty`)
 
 
@@ -25,7 +25,7 @@ def band(p: float, second: float | None = None) -> str:
 class Filters:
     sort: str = 'certain'
     auto: str = ''          # '' any | skip: leave out matches the model accepted on its own | only: just those
-    kind: str = ''          # a listen kind (book, radio_series, ...)
+    kind: str = ''          # a listen kind (book, radio_series, radio_show, play, other), or `review` (the book-or-radio call is a close one) or `not-book` (radio, plays and programmes together)
     status: str = ''        # a listen status
     certainty: str = ''     # one of BANDS
     audible: str = ''       # '' any | yes: the proposed work has an Audible recording | no: it has none
@@ -40,11 +40,20 @@ def words(q: str) -> list[str]:
     return [w for w in re.split(r'\s+', q.lower().strip()) if w]
 
 
+KIND_FILTERS = ('review', 'not-book')
+
+
+def kind_fits(it: dict, kind: str) -> bool:
+    if kind == 'review': return (it.get('kind_info') or {}).get('band') == 'review'
+    if kind == 'not-book': return it.get('kind') not in (None, 'book')
+    return it.get('kind') == kind
+
+
 def matches(it: dict, f: Filters) -> bool:
     top = it['candidates'][0]
     if f.auto == 'skip' and top['auto']: return False
     if f.auto == 'only' and not top['auto']: return False
-    if f.kind and it.get('kind') != f.kind: return False
+    if f.kind and not kind_fits(it, f.kind): return False
     if f.status and it.get('status') != f.status: return False
     if f.certainty and band(top['p'], top.get('second')) != f.certainty: return False
     if f.audible and bool(top.get('recordings')) != (f.audible == 'yes'): return False
@@ -56,7 +65,8 @@ def matches(it: dict, f: Filters) -> bool:
 
 def key(it: dict, sort: str) -> float:
     """The number the order is by (ties go to the listen id; the newest listen first when sorting by recency, since a whole build is added at once)."""
-    return {'certain': -it['p'], 'uncertain': it['p'], 'recent': -(it.get('added') or 0.), 'oldest': it.get('added') or 0.}[sort]
+    sure = (it.get('kind_info') or {}).get('confidence', 1.)      # no verdict yet reads as a sure book, so the unclassified sink to the bottom of "least sure first"
+    return {'certain': -it['p'], 'uncertain': it['p'], 'recent': -(it.get('added') or 0.), 'oldest': it.get('added') or 0., 'kind-certain': -sure, 'kind-uncertain': sure}[sort]
 
 
 def order(it: dict, sort: str) -> tuple[float, int]:
@@ -92,4 +102,6 @@ def facets(items: list[dict]) -> dict:
         top = it['candidates'][0]
         for name, value in (('kind', it.get('kind')), ('status', it.get('status')), ('certainty', band(top['p'], top.get('second'))), ('auto', 'only' if top['auto'] else 'skip'), ('audible', 'yes' if top.get('recordings') else 'no')):
             if value: out[name][value] = out[name].get(value, 0) + 1
+        for extra in KIND_FILTERS:
+            if kind_fits(it, extra): out['kind'][extra] = out['kind'].get(extra, 0) + 1
     return out

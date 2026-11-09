@@ -11,7 +11,8 @@ import { Link, useSearchParams } from 'react-router'
 import { Ban, Check, X } from 'lucide-react'
 import { AsyncButton, Button, Done, EmptyState, Field, InfiniteList, Input, KeysLegend, Metric, MetricStrip, NativeSelect, PageHeader, Skeleton, Status, UndoBar, format, useActiveItem, useAsyncAction, useHotkeys, useInfiniteLoad, useUndoable, type ActiveItem, type Tone } from 'strata-react'
 import { matchApi, type QueueAction, type QueueCandidate, type QueueFacets, type QueueFilters, type QueueItem, type QueueRecording } from '../api'
-import { KIND_LABEL, hours } from './ListensPage'
+import { hours } from './ListensPage'
+import KindInfo, { KIND_LABEL } from './KindInfo'
 
 const PAGE = 20
 
@@ -20,6 +21,8 @@ export const SORTS: Record<QueueFilters['sort'], { label: string; scope: string;
   uncertain: { label: 'Least certain first', scope: 'Hardest first', finding: 'least certain first' },
   recent: { label: 'Most recently added first', scope: 'Newest first', finding: 'most recently added first' },
   oldest: { label: 'Oldest first', scope: 'Oldest first', finding: 'oldest first' },
+  'kind-certain': { label: 'Kind most sure first', scope: 'Sure kinds first', finding: 'most sure of the kind first' },
+  'kind-uncertain': { label: 'Kind least sure first', scope: 'Unsure kinds first', finding: 'least sure of the kind first' },
 }
 const CERTAINTY: Record<string, string> = { sure: 'Sure (95% or more)', likely: 'Likely (70% or more)', close: 'Close call', unsure: 'Unsure (under 70%)' }
 const FILTER_KEYS = ['auto', 'kind', 'status', 'certainty', 'audible', 'q'] as const
@@ -199,9 +202,9 @@ function Card({ it, active, itemProps, onAnswer }: { it: QueueItem; active: bool
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Status tone={sure.tone}>{sure.word}</Status>
         {top.auto && <Status tone="neutral">Accepted automatically, not yet confirmed</Status>}
-        {it.kind && it.kind !== 'book' && <Status tone="neutral">{KIND_LABEL[it.kind] ?? it.kind}</Status>}
         {it.added != null && <span className="type-caption text-muted-foreground">Added {format.shortDay.format(new Date(it.added * 1000))}</span>}
       </div>
+      {it.kind && (it.kind !== 'book' || it.kind_info) && <div className="mb-3"><KindInfo listenId={it.listen_id} kind={it.kind} info={it.kind_info} /></div>}
       <div className="flex flex-wrap gap-x-6 gap-y-4">
         <Files it={it} />
         <Work c={top} minutes={it.copies[0]?.minutes} />

@@ -47,6 +47,13 @@ export const mock: { settings: Settings; books: Book[]; extras: Record<string, {
   ],
 }
 
+// How the classifier (src/app/store/kinds.py) judged invented listens: a clear broadcast, and a close call that is still a book.
+export const kindInfos: Record<string, import('../../src/api').KindInfoData> = {
+  series: { kind: 'radio_series', guess: 'radio_series', band: 'broadcast', confidence: 0.97, p_broadcast: 0.97, decided_by: 'rule', signals: [{ name: 'channel', weight: 3.9, prior: 3, learned: true, detail: 'title: "BBC Radio 4"' }, { name: 'series number', weight: 1.8, prior: 1.8, learned: false, detail: 'title: "series 11"' }] },
+  close: { kind: 'book', guess: 'play', band: 'review', confidence: 0.5, p_broadcast: 0.5, decided_by: 'rule', signals: [{ name: 'play length', weight: 0.6, detail: '90 minutes in 1 file' }, { name: 'programme genre', weight: 0.8, detail: 'genre "Drama"' }] },
+}
+const kindState: { chosen: { id: number; kind: string }[] } = { chosen: [] }
+export const kindChoices = kindState.chosen
 // The match queue (/api/matches): invented books, most certain first.
 export function matchQueue(): import('../../src/api').QueueItem[] {
   const cand = (part_id: number, p: number, title: string, extra: Partial<import('../../src/api').QueueCandidate> = {}): import('../../src/api').QueueCandidate => ({ part_id, ordinal: 1, state: p >= 0.95 ? 'accepted' : 'candidate', auto: p >= 0.95, p, work_id: part_id, key: `/works/OL${part_id}W`, title, authors: ['Mara Quill'], year: 2001, editions: 4, ol: [`/works/OL${part_id}W`], isbns: ['9780306406157'],
@@ -58,7 +65,7 @@ export function matchQueue(): import('../../src/api').QueueItem[] {
     { listen_id: 2, p: 0.6, label: 'Salt Roads', cursor: '0.6:2', candidates: [cand(21, 0.6, 'Salt Roads', { evidence: { title: 'partial', author: 'conflict', runtime: 'far' }, second: 0.55 }), cand(22, 0.3, 'Salt Roads Again', { ordinal: 2, authors: [], year: null })], ...files('Salt Roads'), added: 1762500000 },
     { listen_id: 3, p: 0.4, label: 'Lune', cursor: '0.4:3', candidates: [cand(31, 0.4, 'Lune', { recordings: [], isbns: [], ol: [], evidence: {} })], ...files('Lune'), added: 1761000000 },
     { listen_id: 4, p: 0.2, label: 'Untagged folder', cursor: '0.2:4', candidates: [cand(41, 0.2, 'x', { title: null, authors: [], year: null, editions: null, isbns: [], recording: null, second: null, recordings: [{ asin: 'B0AAAAAAA9', title: 'x', narrators: [], minutes: null, fmt: 'original_recording', year: null }] })],
-      kind: 'radio_series', status: 'review', added: null, chosen: {}, tags: { composer: 'Someone Else', publisher: 'A Press' }, folder: {}, copies: [{ minutes: 60, files: null, bytes: null, folder: 'Untagged folder', path: null, group_id: null }, { minutes: 61, files: 3, bytes: 1, folder: 'Copy', path: null, group_id: null }] },
+      kind: 'radio_series', kind_info: kindInfos.series, status: 'review', added: null, chosen: {}, tags: { composer: 'Someone Else', publisher: 'A Press' }, folder: {}, copies: [{ minutes: 60, files: null, bytes: null, folder: 'Untagged folder', path: null, group_id: null }, { minutes: 61, files: 3, bytes: 1, folder: 'Copy', path: null, group_id: null }] },
   ]
 }
 export const matchState: { queue: import('../../src/api').QueueItem[]; decided: { listen_id: number; action: string; part_id?: number }[]; retrains: number; training: boolean; model: string | null } = { queue: matchQueue(), decided: [], retrains: 0, training: false, model: 'fs-test' }
@@ -83,9 +90,9 @@ const fgDetail = {
   2: { group: { id: 2, kind: 'folder', label: 'Red Dragon', path: '/audio/Red Dragon', file_count: 2, total_bytes: 2e9, group_count: 0 }, ancestors: [{ id: 1, label: 'audio', kind: 'root' }], children: [], files: [{ id: 10, ordinal: 1, name: 'CD1 01.mp3', path: null, size: 1e9, duration_s: null, codec: null, tags: {}, probe_error: 'moov atom not found' }, { id: 11, ordinal: 2, name: 'CD1 02.mp3', path: null, size: 1e9, duration_s: 95, codec: 'aac', tags: {}, probe_error: null }] },
 }
 const listenRows = [
-  { id: 1, label: 'Red Dragon', kind: 'book', status: 'grouped', files: 136, bytes: 2e9, minutes: 725, group_id: 2, path: '/audio/Red Dragon', copies: 3, author: 'Thomas Harris', narrator: 'Steven Weber', year: 1981 },
-  { id: 2, label: 'Persuader', kind: 'book', status: 'grouped', files: 99, bytes: 5e8, minutes: 45, group_id: 3, path: '/audio/Lee Child/Persuader', copies: 1, author: 'Lee Child', narrator: null, year: null },
-  { id: 3, label: 'Dead Ringers (season 11)', kind: 'radio_series', status: 'grouped', files: 6, bytes: 1e8, minutes: 0, group_id: null, path: null, copies: 1, author: null, narrator: null, year: null },
+  { id: 1, label: 'Red Dragon', kind: 'book', status: 'grouped', files: 136, bytes: 2e9, minutes: 725, group_id: 2, path: '/audio/Red Dragon', copies: 3, author: 'Thomas Harris', narrator: 'Steven Weber', year: 1981, kind_info: null },
+  { id: 2, label: 'Persuader', kind: 'book', status: 'grouped', files: 99, bytes: 5e8, minutes: 45, group_id: 3, path: '/audio/Lee Child/Persuader', copies: 1, author: 'Lee Child', narrator: null, year: null, kind_info: kindInfos.close },
+  { id: 3, label: 'Dead Ringers (season 11)', kind: 'radio_series', status: 'grouped', files: 6, bytes: 1e8, minutes: 0, group_id: null, path: null, copies: 1, author: null, narrator: null, year: null, kind_info: kindInfos.series },
 ]
 export const handlers = [
   http.get('/api/match-reviews', ({ request }) => { const mode = new URL(request.url).searchParams.get('mode') === 'automatic' ? 'automatic' : 'shortlist'; return HttpResponse.json({ rows: [matchReviewFixture(mode)], total: 1, offset: 0, limit: 10 }) }),
@@ -97,8 +104,13 @@ export const handlers = [
   http.get('/api/books/:id/output', () => HttpResponse.json({ book: {}, metadata: null, chapters: [] })),
   http.get('/api/listens', ({ request }) => {
     const u = new URL(request.url), q = (u.searchParams.get('q') ?? '').toLowerCase(), kind = u.searchParams.get('kind') ?? ''
-    const rows = listenRows.filter(r => (!kind || r.kind === kind) && q.split(' ').filter(Boolean).every(w => `${r.label} ${r.path}`.toLowerCase().includes(w)))
-    return HttpResponse.json({ total: rows.length + (q === 'big' ? 40 : 0), kinds: { book: 2, radio_series: 1 }, rows })
+    const rows = listenRows.filter(r => (!kind || (kind === 'review' ? r.kind_info?.band === 'review' : kind === 'not-book' ? r.kind !== 'book' : r.kind === kind)) && q.split(' ').filter(Boolean).every(w => `${r.label} ${r.path}`.toLowerCase().includes(w)))
+    return HttpResponse.json({ total: rows.length + (q === 'big' ? 40 : 0), kinds: { book: 2, radio_series: 1 }, review: 1, not_book: 1, rows })
+  }),
+  http.post('/api/listens/:id/kind', async ({ request, params }) => {
+    const b = await request.json() as { kind: string }
+    kindState.chosen.push({ id: Number(params.id), kind: b.kind })
+    return HttpResponse.json({ ok: true, retraining: false, kind_info: { ...kindInfos.close, kind: b.kind, decided_by: 'user', band: b.kind === 'book' ? 'book' : 'broadcast' } })
   }),
   http.get('/api/filegroups', () => HttpResponse.json({ root: fgRoot, groupings: 1 })),
   http.get('/api/filegroups/search', ({ request }) => {
@@ -220,14 +232,14 @@ export const server = setupServer(
     const open = matchState.queue.filter(i => !matchState.decided.some(d => d.listen_id === i.listen_id))
     const band = (i: typeof open[number]) => { const t = i.candidates[0], second = t.second ?? 0; return t.p >= 0.95 ? 'sure' : t.p - second < 0.15 && second > 0.05 ? 'close' : t.p >= 0.7 ? 'likely' : 'unsure' }
     const words = qp('q').toLowerCase().split(/\s+/).filter(Boolean)
-    const fits = open.filter(i => (qp('auto') !== 'skip' || !i.candidates[0].auto) && (qp('auto') !== 'only' || i.candidates[0].auto) && (!qp('kind') || i.kind === qp('kind')) && (!qp('status') || i.status === qp('status'))
+    const fits = open.filter(i => (qp('auto') !== 'skip' || !i.candidates[0].auto) && (qp('auto') !== 'only' || i.candidates[0].auto) && (!qp('kind') || (qp('kind') === 'review' ? i.kind_info?.band === 'review' : qp('kind') === 'not-book' ? i.kind !== 'book' : i.kind === qp('kind'))) && (!qp('status') || i.status === qp('status'))
       && (!qp('certainty') || band(i) === qp('certainty')) && (!qp('audible') || (i.candidates[0].recordings.length > 0) === (qp('audible') === 'yes'))
       && words.every(w => `${i.label} ${Object.values(i.chosen).join(' ')} ${i.candidates.map(c => `${c.title} ${c.authors.join(' ')}`).join(' ')}`.toLowerCase().includes(w)))
-    const sort = qp('sort') || 'certain', key = (i: typeof open[number]) => ({ certain: -i.p, uncertain: i.p, recent: -(i.added ?? 0), oldest: i.added ?? 0 } as Record<string, number>)[sort]
+    const sort = qp('sort') || 'certain', key = (i: typeof open[number]) => ({ certain: -i.p, uncertain: i.p, recent: -(i.added ?? 0), oldest: i.added ?? 0, 'kind-certain': -(i.kind_info?.confidence ?? 1), 'kind-uncertain': i.kind_info?.confidence ?? 1 } as Record<string, number>)[sort]
     const ordered = [...fits].sort((a, b) => key(a) - key(b) || (sort === 'recent' ? b.listen_id - a.listen_id : a.listen_id - b.listen_id))
     const start = after ? ordered.findIndex(i => i.cursor === after) + 1 : 0
     const count = (f: (i: typeof open[number]) => string | null) => open.reduce<Record<string, number>>((m, i) => { const v = f(i); if (v) m[v] = (m[v] ?? 0) + 1; return m }, {})
-    const facets = { kind: count(i => i.kind), status: count(i => i.status), certainty: count(band), auto: { skip: 0, only: 0, ...count(i => i.candidates[0].auto ? 'only' : 'skip') }, audible: { yes: 0, no: 0, ...count(i => i.candidates[0].recordings.length ? 'yes' : 'no') } }
+    const facets = { kind: { ...count(i => i.kind), ...(open.some(i => i.kind_info?.band === 'review') ? { review: open.filter(i => i.kind_info?.band === 'review').length } : {}), ...(open.some(i => i.kind !== 'book') ? { 'not-book': open.filter(i => i.kind !== 'book').length } : {}) }, status: count(i => i.status), certainty: count(band), auto: { skip: 0, only: 0, ...count(i => i.candidates[0].auto ? 'only' : 'skip') }, audible: { yes: 0, no: 0, ...count(i => i.candidates[0].recordings.length ? 'yes' : 'no') } }
     return HttpResponse.json({ summary: { waiting: open.length, auto_unconfirmed: open.filter(i => i.candidates[0].auto).length, confirmed: matchState.decided.filter(d => d.action === 'approve').length, not_found: matchState.decided.filter(d => d.action === 'none').length, statuses: {}, decisions: matchState.decided.length, since_train: null, model: matchState.model, auto_retrain: 25, training: { running: matchState.training, finished: null, error: '', counts: null } },
       total: fits.length, facets, items: ordered.slice(start, start + limit) })
   }),

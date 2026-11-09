@@ -93,5 +93,20 @@ def test_band_matches_the_words_on_the_cards(p, second, word):
 
 
 def test_facets_count_each_value_over_the_whole_queue():
-    assert Q.facets(ITEMS) == dict(kind={'book': 3, 'radio_series': 1}, status={'review': 3, 'identified': 1}, certainty={'sure': 1, 'close': 1, 'unsure': 1, 'likely': 1}, auto={'skip': 3, 'only': 1}, audible={'yes': 3, 'no': 1})
+    assert Q.facets(ITEMS) == dict(kind={'book': 3, 'radio_series': 1, 'not-book': 1}, status={'review': 3, 'identified': 1}, certainty={'sure': 1, 'close': 1, 'unsure': 1, 'likely': 1}, auto={'skip': 3, 'only': 1}, audible={'yes': 3, 'no': 1})
     assert Q.facets([]) == dict(kind={}, status={}, certainty={}, auto={'skip': 0, 'only': 0}, audible={'yes': 0, 'no': 0})
+
+
+def test_the_kind_filter_takes_each_kind_plus_close_calls_and_everything_that_is_not_a_book():
+    items = [dict(item(1, 0.9), kind_info=dict(band='review', confidence=0.55)), dict(item(2, 0.8, kind='radio_series'), kind_info=dict(band='broadcast', confidence=0.97)), dict(item(3, 0.7, kind='play'), kind_info=dict(band='broadcast', confidence=0.9)), item(4, 0.6)]
+    assert ids(Q.select(items, Q.Filters(kind='review'))) == [1]
+    assert ids(Q.select(items, Q.Filters(kind='not-book'))) == [2, 3]
+    assert ids(Q.select(items, Q.Filters(kind='play'))) == [3] and ids(Q.select(items, Q.Filters(kind='book'))) == [1, 4]
+    assert Q.facets(items)['kind'] == {'book': 2, 'radio_series': 1, 'play': 1, 'review': 1, 'not-book': 2}
+
+
+def test_sorting_by_how_sure_the_kind_call_is():
+    items = [dict(item(1, 0.9), kind_info=dict(band='review', confidence=0.55)), dict(item(2, 0.8, kind='radio_series'), kind_info=dict(band='broadcast', confidence=0.97)), item(3, 0.7)]
+    assert ids(Q.select(items, Q.Filters(sort='kind-certain'))) == [3, 2, 1]        # a listen with no verdict yet reads as a sure book
+    assert ids(Q.select(items, Q.Filters(sort='kind-uncertain'))) == [1, 2, 3]
+    page = Q.select(items, Q.Filters(sort='kind-uncertain')); assert ids(Q.after(page, Q.cursor(page[0], 'kind-uncertain'), 'kind-uncertain')) == [2, 3]

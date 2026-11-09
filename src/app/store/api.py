@@ -6,10 +6,12 @@ from collections import defaultdict
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import Text as sa_text, func, select
 from sqlalchemy.orm import Session
 
-from app.store.models import Listen, ListenChoice, ListenEvent, ListenPart, PartFile, PartFileLocation, PartFilegroup, PartFilegroupMember, Run
+from app.store import kinds_db
+from app.store.models import ListenKind, Listen, ListenChoice, ListenEvent, ListenPart, PartFile, PartFileLocation, PartFilegroup, PartFilegroupMember, Run
 
 router = APIRouter(prefix='/api/filegroups')
 
@@ -111,8 +113,10 @@ def list_listens(q: str = '', kind: str = '', status: str = '', limit: int = 100
     """Listens (newest build first order is by label), filtered by words in the label or folder path, kind and status."""
     limit = max(1, min(limit, 500))
     stmt = select(Listen, ListenPart).outerjoin(ListenPart, (ListenPart.listen_id == Listen.id) & (ListenPart.role == 'input') & (ListenPart.ordinal == 1) & ListenPart.unlinked_at.is_(None)).where(Listen.merged_into_id.is_(None))
-    if kind: stmt = stmt.where(Listen.kind == kind)
+    if kind and kind not in ('review', 'not-book'): stmt = stmt.where(Listen.kind == kind)
     if status: stmt = stmt.where(Listen.status == status)
+    if kind == 'review': stmt = stmt.where(select(ListenKind.listen_id).where(ListenKind.listen_id == Listen.id, ListenKind.band == 'review').exists())
+    elif kind == 'not-book': stmt = stmt.where(Listen.kind != 'book')
     for w in q.split():                                    # a word may be in the title, the folder path or any chosen value (author, narrator, year...)
         chosen = select(ListenChoice.id).where(ListenChoice.listen_id == Listen.id, ListenChoice.unchosen_at.is_(None), func.cast(ListenChoice.value, sa_text).icontains(w, autoescape=True)).exists()
         stmt = stmt.where(func.concat(Listen.label, ' ', func.coalesce(ListenPart.detail['path'].astext, '')).icontains(w, autoescape=True) | chosen)
@@ -122,7 +126,23 @@ def list_listens(q: str = '', kind: str = '', status: str = '', limit: int = 100
     copies = dict(s.execute(select(ListenPart.listen_id, func.count()).where(ListenPart.listen_id.in_([l.id for l, _ in rows]), ListenPart.role == 'input', ListenPart.unlinked_at.is_(None)).group_by(ListenPart.listen_id)).all())
     chosen: dict[int, dict] = defaultdict(dict)
     for lid, field, value in s.execute(select(ListenChoice.listen_id, ListenChoice.field, ListenChoice.value).where(ListenChoice.listen_id.in_([l.id for l, _ in rows]), ListenChoice.unchosen_at.is_(None))): chosen[lid][field] = value
-    return dict(total=total, kinds=kinds, rows=[dict(_listen_row(l, p), copies=copies.get(l.id, 1), author=chosen[l.id].get('author'), narrator=chosen[l.id].get('narrator'), year=chosen[l.id].get('year')) for l, p in rows])
+    infos = kinds_db.kind_infos(s, [l.id for l, _ in rows])
+    review = s.scalar(select(func.count()).select_from(ListenKind).join(Listen, Listen.id == ListenKind.listen_id).where(Listen.merged_into_id.is_(None), ListenKind.band == 'review')) or 0
+    return dict(total=total, kinds=kinds, review=review, not_book=sum(n for k, n in kinds.items() if k != 'book'), rows=[dict(_listen_row(l, p), kind_info=infos.get(l.id), copies=copies.get(l.id, 1), author=chosen[l.id].get('author'), narrator=chosen[l.id].get('narrator'), year=chosen[l.id].get('year')) for l, p in rows])
+
+
+class KindChoice(BaseModel):
+    kind: str
+
+
+@listens_router.post('/{listen_id}/kind')
+def set_listen_kind(listen_id: int, body: KindChoice, s: Session = Depends(get_session)):
+    """A person's call on what a listen is (book, radio series, radio programme, play, other); the classifier never changes it afterwards."""
+    try: row = kinds_db.set_kind(s, listen_id, body.kind, actor_ref='web')
+    except LookupError: raise HTTPException(404, 'no such listen')
+    except ValueError as e: raise HTTPException(400, str(e))
+    s.commit(); retraining = kinds_db.start_learning(lambda: Session(_engine()))      # every answer is a label: refit the weights in the background
+    return dict(ok=True, retraining=retraining, kind_info=kinds_db.kind_infos(s, [listen_id]).get(listen_id))
 
 
 @listens_router.get('/{listen_id}')

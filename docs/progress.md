@@ -1,5 +1,9 @@
 # Progress log
 
+## 2026-11-09: book or radio? a scored classification
+
+Listens are now classified as book, radio series, radio programme or play from many weak signals (channel names, series/episode wording, genre tags, slot-length parts, Audible content type, a local BBC/Wikidata programme index) with the reasons kept, instead of file-name rules alone; an unabridged reading by a BBC actor stays a book. A person's choice is never overwritten; close calls are flagged for review. See [listen-kinds.md](listen-kinds.md).
+
 ## 2026-11-09: Learning failed after a rejected top candidate
 
 "Learn from my answers" failed with a unique violation on `listen_part_active_ordinal` (listen, role, ordinal). Cause: rejecting a review candidate keeps it linked (state `rejected`, its ordinal kept, as the record of the decision), and the next run numbered its new candidates from 1 again, so whenever the rejected one had been #1 and the listen stayed in review the insert collided and the whole run rolled back. Every listen whose top candidate was rejected hit it, so one rejection stopped all learning. `apply` now numbers new parts after the highest ordinal a rejection holds in that role (rank order kept), and a run takes a transaction-scoped Postgres advisory lock, so a CLI run and the web's Learning cannot interleave (the web's thread lock only covers one process). No data was left bad: the failed run rolled back; listens whose only parts are rejections drop out of the queue until the next successful run re-decides them.
