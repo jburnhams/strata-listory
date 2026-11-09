@@ -19,7 +19,7 @@ LONG_BOOK_MINUTES = 360       # nobody broadcasts six hours as one listen; omnib
 PLAY_MINUTES = 140            # one or two files and under this long: play length
 
 CHANNEL = re.compile(r'\bbbc[\s._-]*(?:radio[\s._-]*(?:[1-7]\b|four|three|two|one|scotland|wales|ulster|cymru|nan|wm|london)|r[1-7]x?\b|world service|iplayer|sounds)|\bradio[\s._-]*4[\s._-]*extra\b|\bradio[\s._-]*[1-7]\b|\bworld service\b|\b(?:bbc\s+)?r[1-7]x?\s+(?:drama|comedy|extra)\b|\bget_iplayer\b|\bbbc\s+iplayer\b|\brte\s+radio\b|\bradio\s+times\b', re.I)
-BARE_RADIO = re.compile(r'^\s*(?:bbc\s+)?radio\s*$', re.I)               # an author or artist that is just "BBC Radio"
+BARE_RADIO = re.compile(r'^\s*(?:bbc\s+)?radio\b|\bbbc\s+radio\b', re.I)               # a credit that is "BBC Radio", "BBC Radio Adaptation" or "Some Author - BBC Radio" (a channel with a number is the stronger `channel`)
 BARE_BBC = re.compile(r'^\s*bbc(?:\s+(?:audio|digital audio|radio\s*collection))?\s*$', re.I)
 STRAND = re.compile(r'\b(?:drama on (?:3|four|three)|afternoon (?:drama|play|reading)|saturday (?:play|night theatre)|sunday (?:play|feature)|the monday play|the wednesday play|woman.?s hour|book (?:at bedtime|of the week)|friday play|classic serial|the archers|feature on 4|start the week|desert island discs)\b', re.I)
 RADIO_ADAPTATION = re.compile(r'\bradio\s+(?:adaptations?|dramas?|plays?|dramati[sz]ations?|serials?|series|comedy|shows?|collection|programmes?|specials?|versions?)\b|\bbbc\s+audio\s+adaptations?\b|\bbroadcast\b', re.I)

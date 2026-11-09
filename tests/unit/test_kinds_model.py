@@ -51,3 +51,11 @@ def test_params_round_trip_and_version_follows_the_weights(tmp_path, monkeypatch
     assert K.Params(mult={'a': 2.}).version() != K.Params(mult={'a': 1.}).version()
     KM.path().write_text('{"bias": "x"}'); assert KM.load() is None
     KM.path().write_text(json.dumps([])); assert KM.load() is None
+
+
+def test_one_sided_labels_leave_the_bias_alone_but_still_rescale_signals():
+    books = [([K.Signal('slot-length parts', 1.2)], False, 0.5)] * 40
+    p = KM.fit(books)
+    assert p.bias == K.PRIOR and p.mult['slot-length parts'] < 1.0
+    both = KM.fit(books + [([K.Signal('channel', 3.0)], True, 1.0)] * 6)
+    assert both.bias != K.PRIOR
