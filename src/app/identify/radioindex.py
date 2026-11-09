@@ -8,7 +8,7 @@ Not usable: BBC Genome (Radio Times listings 1923-2009) sits behind a human-veri
 A title in this index is *evidence*, not proof: book titles and programme titles collide ("Middlemarch", "Just William"), so the classifier gives it a moderate weight and never lets it outvote a matched unabridged recording."""
 from __future__ import annotations
 
-import json, math, os, sqlite3
+import json, math, os, re, sqlite3
 from pathlib import Path
 
 from app import settings
@@ -18,6 +18,7 @@ BBC_LETTERS = 'abcdefghijklmnopqrstuvwxyz@'
 BBC_URL = 'https://www.bbc.co.uk/programmes/a-z/by/{letter}/all.json?page={page}'
 WIKIDATA_URL = 'https://query.wikidata.org/sparql'
 WIKIDATA_CLASSES = {'Q1555508': 'wikidata_radio', 'Q2635894': 'wikidata_drama'}        # radio programme, radio drama (direct instances)
+CHANNEL_NAME = re.compile(r'^(?:the\s+)?(?:bbc\s+)?(?:radio\s*6\s*music|radio\s*(?:[1-7]|one|two|three|four|five|live|scotland|wales|cymru|ulster|nan\s+gaidheal|wm|london|kent)(?:\s+(?:extra|live|xtra))?|world\s+service|6\s*music|asian\s+network|1xtra|r[1-7]x?)$', re.I)      # a programme "titled" Radio 4 is the channel's own listing, not a show
 MIN_KEY_LEN = 6      # shorter keys ("it", "dune") collide with book titles far too often to mean anything
 
 
@@ -100,7 +101,7 @@ def find(titles: list[str], *, path: Path | None = None) -> list[dict]:
     if not keys: return []
     db = sqlite3.connect(f'file:{p}?mode=ro', uri=True)
     try:
-        return [dict(source=s, ref=r, title=t, service=svc, first_broadcast=fb) for s, r, t, svc, fb in db.execute(f'SELECT source, ref, title, service, first_broadcast FROM programme WHERE title_key IN ({",".join("?" * len(keys))}) ORDER BY source, ref', sorted(keys))]
+        return [dict(source=s, ref=r, title=t, service=svc, first_broadcast=fb) for s, r, t, svc, fb in db.execute(f'SELECT source, ref, title, service, first_broadcast FROM programme WHERE title_key IN ({",".join("?" * len(keys))}) ORDER BY source, ref', sorted(keys)) if not CHANNEL_NAME.match(t.strip())]
     except sqlite3.Error: return []
     finally: db.close()
 
