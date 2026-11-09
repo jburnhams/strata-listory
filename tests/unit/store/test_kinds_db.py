@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.store import api, filegroups as fg, kinds_db, listens as L
+from app.store import api, filegroups as fg, kinds as K, kinds_db, kinds_model as KM, listens as L
 from app.store.models import Listen, ListenEvent, ListenKind, ListenPart, PartFile, PartFilegroup, PartFilegroupMember, PartRecord, Work
 
 NO_AUDIBLE, NO_RADIO = (lambda asins: {}), (lambda titles: [])
@@ -108,16 +108,66 @@ def test_gather_reads_tags_folder_choices_and_the_structure_prior(s):
     assert (f.label, f.author, f.narrator, f.publisher, f.folder, f.structure_kind, f.structure_reason) == ("Greenhouse", "Hana Vell", "Ada Penn", "A Press", "Greenhouse S01", "programme", "made for the test")
 
 
-def test_the_listens_api_filters_by_check_and_saves_a_choice(s):
+def test_the_listens_api_filters_by_kind_and_saves_a_choice(s):
     radio = make(s, "Greenhouse Series 1", tags=dict(artist="BBC Radio 4"), part_minutes=(28, 28, 28, 28))
     close = make(s, "One Voice", tags=dict(genre="Comedy"), part_minutes=(60,))
     plain = make(s, "Plain Novel", part_minutes=(400,))
     kinds_db.classify_listens(s, audible=NO_AUDIBLE, radio=NO_RADIO)
     app = FastAPI(); app.include_router(api.listens_router); app.dependency_overrides[api.get_session] = lambda: s; c = TestClient(app)
-    review = c.get("/api/listens?check=review").json(); assert [r["id"] for r in review["rows"]] == [close.id] and review["review"] == 1
+    review = c.get("/api/listens?kind=review").json(); assert [r["id"] for r in review["rows"]] == [close.id] and review["review"] == 1
     assert review["rows"][0]["kind_info"]["band"] == "review" and review["rows"][0]["kind_info"]["guess"] == "radio_show"
-    assert [r["id"] for r in c.get("/api/listens?check=broadcast").json()["rows"]] == [radio.id]
-    assert c.get("/api/listens?check=bogus").status_code == 400
+    assert [r["id"] for r in c.get("/api/listens?kind=not-book").json()["rows"]] == [radio.id]
     info = next(r for r in c.get("/api/listens").json()["rows"] if r["id"] == plain.id)["kind_info"]; assert info["band"] == "book" and info["signals"][0]["weight"] != 0
     ok = c.post(f"/api/listens/{radio.id}/kind", json={"kind": "book"}); assert ok.status_code == 200 and ok.json()["kind_info"]["decided_by"] == "user" and kind_of(s, radio) == "book"
     assert c.post(f"/api/listens/{radio.id}/kind", json={"kind": "nonsense"}).status_code == 400 and c.post("/api/listens/999999/kind", json={"kind": "book"}).status_code == 404
+
+
+def test_implied_labels_come_only_from_safe_accepted_audible_matches():
+    f = lambda **a: K.Features(audible=[dict(asin="B0X", diff=0.005, p=0.99, **a)])
+    assert kinds_db.implied(f(content_type="Product", publisher="Tantor Audio"), True) is False
+    assert kinds_db.implied(f(content_type="Product", publisher="BBC Audio"), True) is None            # BBC files readings under every type
+    assert kinds_db.implied(f(content_type="Radio/TV Program", publisher="BBC Audio", keywords=["dramatizations"]), True) is True
+    assert kinds_db.implied(f(content_type="Radio/TV Program", publisher="BBC Audio"), True) is None   # could be a reading
+    assert kinds_db.implied(f(content_type="Product", publisher="Tantor Audio"), False) is None         # not accepted
+    assert kinds_db.implied(K.Features(audible=[dict(asin="B0X", diff=0.2, p=0.99, content_type="Product", publisher="Tantor Audio")]), True) is None      # a different length
+    assert kinds_db.implied(K.Features(audible=[dict(asin="B0X", diff=0.0, p=0.5, content_type="Product", publisher="Tantor Audio")]), True) is None      # a doubtful match
+
+
+def test_a_persons_choices_and_confirmations_are_labels_and_learning_refits_the_weights(s, tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_DATA", str(tmp_path))
+    radio = [make(s, f"Greenhouse Series {i}", tags=dict(artist="BBC Radio 4"), part_minutes=(28, 28, 28, 28)) for i in range(1, 4)]
+    odd = make(s, "One Voice", tags=dict(genre="Comedy"), part_minutes=(60,))
+    plain = make(s, "Plain Novel", part_minutes=(400,))
+    kinds_db.classify_listens(s, audible=NO_AUDIBLE, radio=NO_RADIO, params=None)
+    for l in radio[:2]: kinds_db.set_kind(s, l.id, "radio_series")             # "the kind is right": a confirmation is the same answer as the current kind
+    kinds_db.set_kind(s, odd.id, "book")
+    params, counts = kinds_db.learn(s, audible=NO_AUDIBLE, radio=NO_RADIO)
+    assert counts == {"user": 3, "audible match": 0, "broadcast": 2, "book": 1}
+    assert params.seen["channel"] == 2 and params.seen["programme genre"] == 1 and params.mult["programme genre"] < 1.0 and params.mult["channel"] > 1.0
+    assert KM.load().version() == params.version()
+    out = kinds_db.learn_and_classify(s, audible=NO_AUDIBLE, radio=NO_RADIO)
+    assert out["labels"]["user"] == 3 and out["version"] == params.version()
+    row = s.get(ListenKind, radio[2].id); assert row.decided_by == "rule" and "prior" in {x["name"]: x for x in row.signals}["channel"]      # the third series is re-judged with learned weights, which the reasons show against the prior
+    assert s.get(ListenKind, odd.id).decided_by == "user" and kind_of(s, odd) == "book" and kind_of(s, plain) == "book"
+
+
+def test_an_accepted_audible_match_is_a_half_weight_label_whose_own_evidence_is_left_out(s, tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_DATA", str(tmp_path))
+    rec = dict(asin="B0TESTBBBB", fmt="unabridged", minutes=400, title="Plain Novel", narrators=[])
+    l = make(s, "Plain Novel", part_minutes=(400,), candidates=[(0.99, [rec])])
+    part = s.scalars(select(ListenPart).where(ListenPart.listen_id == l.id, ListenPart.role == "candidate")).one()
+    part.role = "match"; part.state = "accepted"; s.flush()
+    audible = lambda asins: {"B0TESTBBBB": dict(content_type="Product", keywords=[], publisher="Tantor Audio")}
+    params, counts = kinds_db.learn(s, audible=audible, radio=NO_RADIO)
+    assert counts == {"user": 0, "audible match": 1, "broadcast": 0, "book": 1}
+    assert "audible audiobook" not in params.seen          # learned from the length and tags, not from the evidence that created the label
+    assert "long" in params.seen
+
+
+def test_a_rebuild_clears_the_verdicts_with_the_listens(s):
+    from app.store import build
+    make(s, "Greenhouse Series 1", tags=dict(artist="BBC Radio 4"), part_minutes=(28, 28, 28, 28))
+    kinds_db.classify_listens(s, audible=NO_AUDIBLE, radio=NO_RADIO, params=None)
+    assert s.scalars(select(ListenKind)).all()
+    build.clear(s)
+    assert not s.scalars(select(ListenKind)).all() and not s.scalars(select(Listen)).all()

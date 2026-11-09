@@ -178,13 +178,13 @@ export const fileGroupApi = {
 
 // Listens (src/app/store/api.py): the things you would listen to in one go, made from the book and programme groups.
 /** How a listen was classified (src/app/store/kinds.py): the kind, what it would be if not a book, the band (broadcast, book or review), P(broadcast) and the signals behind it. */
-export interface KindSignal { name: string; weight: number; detail: string }
-export interface KindInfoData { kind: string; guess: string; band: 'broadcast' | 'book' | 'review'; p_broadcast: number; decided_by: 'rule' | 'user'; signals: KindSignal[] }
+export interface KindSignal { name: string; weight: number; detail: string; prior?: number; learned?: boolean }
+export interface KindInfoData { kind: string; guess: string; band: 'broadcast' | 'book' | 'review'; confidence: number; p_broadcast: number; decided_by: 'rule' | 'user'; signals: KindSignal[] }
 export interface ListenRow { id: number; label: string; kind: 'book' | 'radio_series' | 'radio_show' | 'play' | 'other'; kind_info: KindInfoData | null; status: string; files: number; bytes: number; minutes: number; group_id: number | null; path: string | null; copies: number; author: string | null; narrator: string | null; year: number | null }
-export interface ListenList { total: number; kinds: Record<string, number>; review: number; rows: ListenRow[] }
+export interface ListenList { total: number; kinds: Record<string, number>; review: number; not_book: number; rows: ListenRow[] }
 export const listenApi = {
-  list: (q = '', kind = '', status = '', check = '', limit = 500) => req<ListenList>(`/api/listens?${new URLSearchParams({ q, kind, status, check, limit: String(limit) })}`),
-  setKind: (id: number, kind: string) => req<{ ok: boolean; kind_info: KindInfoData | null }>(`/api/listens/${id}/kind`, send('POST', { kind })),
+  list: (q = '', kind = '', status = '', limit = 500) => req<ListenList>(`/api/listens?${new URLSearchParams({ q, kind, status, limit: String(limit) })}`),
+  setKind: (id: number, kind: string) => req<{ ok: boolean; retraining: boolean; kind_info: KindInfoData | null }>(`/api/listens/${id}/kind`, send('POST', { kind })),
 }
 
 // The match queue (src/app/linkage/api.py): book listens with the model's candidate works, easiest first; answers become labels for the next fit.
@@ -195,8 +195,8 @@ export interface QueueCopy { minutes: number | null; files: number | null; bytes
 export interface QueueItem { listen_id: number; p: number; label: string; cursor: string; kind: string | null; status: string | null; added: number | null; kind_info?: KindInfoData | null; candidates: QueueCandidate[]; chosen: Record<string, string | number>; tags: Record<string, string | number>; folder: Record<string, string | number>; copies: QueueCopy[] }
 export interface QueueSummary { waiting: number; auto_unconfirmed: number; confirmed: number; not_found: number; statuses: Record<string, number>; decisions: number; since_train: number | null; model: string | null; auto_retrain: number; training: { running: boolean; finished: number | null; error: string; counts: Record<string, number> | null } }
 /** The match queue's order and filters, as the page keeps them in its URL; '' means any. */
-export interface QueueFilters { sort: 'certain' | 'uncertain' | 'recent' | 'oldest'; auto: '' | 'skip' | 'only'; kind: string; status: string; certainty: '' | 'sure' | 'likely' | 'close' | 'unsure'; audible: '' | 'yes' | 'no'; check: '' | 'review' | 'broadcast'; q: string }
-export type QueueFacets = Record<'kind' | 'status' | 'certainty' | 'auto' | 'audible' | 'check', Record<string, number>>
+export interface QueueFilters { sort: 'certain' | 'uncertain' | 'recent' | 'oldest' | 'kind-certain' | 'kind-uncertain'; auto: '' | 'skip' | 'only'; kind: string; status: string; certainty: '' | 'sure' | 'likely' | 'close' | 'unsure'; audible: '' | 'yes' | 'no'; q: string }
+export type QueueFacets = Record<'kind' | 'status' | 'certainty' | 'auto' | 'audible', Record<string, number>>
 export interface QueuePage { summary: QueueSummary; total: number; facets: QueueFacets; items: QueueItem[] }
 export type QueueAction = 'approve' | 'reject' | 'none'
 export const matchApi = {

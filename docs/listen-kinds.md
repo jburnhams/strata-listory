@@ -8,7 +8,17 @@ The structure step (`store/structure.py`) decides book or programme from file na
 
 So each piece of evidence is a *signal* with a weight in log-odds, added to a prior (about 17% broadcast); a logistic gives `p_broadcast`. At 85% or more the listen is classified as broadcast, at 25% or less as a book, in between it stays as it was and is flagged **review** with the kind it would be. Every verdict keeps its signals, so a card can say why.
 
-## Signals (weights in log-odds; positive points to broadcast)
+## Learning
+
+The weights below are the **prior**. They are learned from labels the way identification learns (`kinds_model.py`, saved as `data/kinds/model.json`): the signals are the features, the model is logistic, `P(broadcast) = sigmoid(b + sum m_s * w_s)` with one multiplier `m_s` per signal (start 1) and a bias `b` (start at the prior), and the fit is regularised toward the hand-set values (4 pseudo-labels of agreement per parameter). With no labels it is exactly the hand-set classifier; with a few, only the signals those labels show move, a little; each label moves them more. Multipliers stay in [0, 3], so learning rescales evidence and never flips it. The "Why?" list marks each weight `prior` or `learned, was +3`.
+
+Labels:
+* **Your answers** (weight 1, `decided_by = user`): the "It is a ..." buttons and **Kind is right** (a confirmation is the same answer as the current kind) on the Matches card and the Listens table, or `POST /api/listens/{id}/kind`.
+* **Accepted Audible matches** (weight 0.5, only the safe cases): a listen accepted as a recording of the same length (2%, P 0.9 or more) that Audible calls an ordinary audiobook (`Product`) from a non-BBC publisher is a book; one Audible keywords as a dramatisation and files as a Radio/TV Program or Show is broadcast. BBC Audio files readings as Radio/TV Program too, so that alone labels nothing. The Audible signals are left out of the features of these listens, so a label is never learned from the evidence that made it.
+
+Retraining: after every answer in the web app (in the background), when identification's **Learning** runs (`linkage.service.retrain_and_apply`), after `listens-identify`, and with `./app listens-kinds --learn`. A retrain re-judges every listen a person has not decided.
+
+## Signals (hand-set prior weights, log-odds; positive points to broadcast)
 
 | Signal | Weight | Fires on |
 |---|---|---|
@@ -49,7 +59,7 @@ A person's choice (`decided_by = user`, from the "Why?" buttons or `POST /api/li
 ./app listens-identify ...   # classifies again afterwards: matched Audible recordings add evidence (--no-kinds to skip)
 ```
 
-Web: the Matches page has a **Kind check** filter (radio, plays and programmes / kind is a close call), its cards show the kind, how sure, the reasons behind "Why?" and buttons to overrule; the Listens page has the same check filter and column. `GET /api/matches?check=review|broadcast`, `GET /api/listens?check=review|broadcast`.
+Web: the one **Kind of listen** filter on the Matches page takes each kind (book, radio series, radio show, play, other) plus **Radio, plays and programmes** (`kind=not-book`) and **Kind is a close call** (`kind=review`), and the order can be **Kind most/least sure first** (`sort=kind-certain|kind-uncertain`); all are URL parameters. Cards show the kind, how sure, the reasons behind "Why?" and the buttons (Kind is right, It is a ...). The Listens page has the same values as tabs. Rebuilding listens (`listens-build --rebuild`) clears the verdicts along with the listens.
 
 ## Radio catalogues
 

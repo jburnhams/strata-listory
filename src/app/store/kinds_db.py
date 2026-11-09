@@ -3,15 +3,18 @@
 Rules of the road: a verdict a person set (`decided_by = 'user'`) is never recomputed over; a rerun with nothing new changes nothing (no event, no new row version); a listen whose kind changes gets a `reclassify` event with the signals. Audible and the radio index are optional evidence: when they are missing the other signals still decide."""
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.store import kinds as K
+from app.store import kinds as K, kinds_model as KM
 from app.store.models import Listen, ListenChoice, ListenKind, ListenPart, ListenEvent, PartFile, PartFilegroupMember, PartRecord
 
 ACTOR = 'kinds-v%d' % K.VERSION
+IMPLICIT_WEIGHT = 0.5         # a label implied by an accepted Audible match counts half a person's choice
+CLOSE = 0.02                  # the matched recording is the same length (2%) before it can imply a label
 DIFF_ROLES = ('match', 'candidate')
 
 
@@ -75,19 +78,20 @@ def gather(s: Session, ids: list[int], *, audible=None, radio=None) -> dict[int,
     return feats
 
 
-def classify_listens(s: Session, ids: list[int] | None = None, *, audible=None, radio=None, apply: bool = True, actor_ref: str = ACTOR) -> list[dict]:
+def classify_listens(s: Session, ids: list[int] | None = None, *, audible=None, radio=None, apply: bool = True, actor_ref: str = ACTOR, params: K.Params | None | str = 'saved') -> list[dict]:
     """Classify live listens (all, or `ids`). Returns one dict per listen: id, label, before (kind), the verdict, and `changed`. With apply=False nothing is written."""
     q = select(Listen.id, Listen.kind, Listen.label).where(Listen.merged_into_id.is_(None))
     if ids is not None: q = q.where(Listen.id.in_(ids))
     rows = list(s.execute(q))
     if not rows: return []
+    if params == 'saved': params = KM.load()
     feats = gather(s, [r[0] for r in rows], audible=audible, radio=radio)
     existing = _existing(s, [r[0] for r in rows])
     out = []
     for lid, kind, label in rows:
         cur = existing.get(lid)
         if cur is not None and cur.decided_by == 'user': out.append(dict(id=lid, label=label, before=kind, changed=False, user=True, **cur_dict(cur))); continue
-        v = K.classify(feats[lid]); guess = K._kind(feats[lid], v.signals) if v.band != 'book' else 'book'
+        v = K.classify(feats[lid], params); guess = K._kind(feats[lid], v.signals) if v.band != 'book' else 'book'
         new_kind = v.kind
         d = v.as_dict(); d.update(guess=guess)
         changed = new_kind != kind
@@ -131,4 +135,63 @@ def set_kind(s: Session, listen_id: int, kind: str, *, actor_ref: str = '') -> L
 def kind_infos(s: Session, ids: list[int]) -> dict[int, dict]:
     """The stored verdict of each listen, shaped for the pages: kind, what it would be if not a book (`guess`), band, probability, who decided, and the signals (strongest first)."""
     if not ids: return {}
-    return {k.listen_id: dict(kind=k.kind, guess=k.guess, band=k.band, p_broadcast=round(k.p_broadcast, 3), decided_by=k.decided_by, signals=sorted(k.signals, key=lambda x: -abs(x.get('weight', 0)))) for k in s.scalars(select(ListenKind).where(ListenKind.listen_id.in_(ids)))}
+    return {k.listen_id: dict(kind=k.kind, guess=k.guess, band=k.band, confidence=round(k.confidence, 3), p_broadcast=round(k.p_broadcast, 3), decided_by=k.decided_by, signals=sorted(k.signals, key=lambda x: -abs(x.get('weight', 0)))) for k in s.scalars(select(ListenKind).where(ListenKind.listen_id.in_(ids)))}
+
+
+def implied(f: K.Features, accepted: bool) -> bool | None:
+    """The kind an accepted Audible match implies: True broadcast, False book, None when it implies nothing. Only the safe cases: an ordinary audiobook (content type Product) from a publisher that is not the BBC, or a recording that Audible keywords as a dramatisation and files as a radio programme or show. BBC Audio files readings as "Radio/TV Program" too, so that alone implies nothing."""
+    if not accepted: return None
+    for a in sorted(f.audible, key=lambda a: a['diff']):
+        if a['diff'] > CLOSE or (a.get('p') or 0) < 0.9: continue
+        c = K._content_class(a.get('content_type') or ''); kw = ' '.join(a.get('keywords') or []).lower()
+        if c == 'book' and not K.BBC_PUBLISHERS.match((a.get('publisher') or '').strip()) and 'radio' not in (a.get('publisher') or '').lower(): return False
+        if c in ('broadcast', 'show') and re.search(r'dramati[sz]', kw): return True
+        return None
+    return None
+
+
+def labels(s: Session, ids: list[int], feats: dict[int, K.Features]) -> dict[int, tuple[bool, float, str]]:
+    """{listen id: (broadcast?, sample weight, source)}: a person's choice or confirmation of the kind (`user`, weight 1), else the kind an accepted Audible match implies (`audible match`, half weight)."""
+    out: dict[int, tuple[bool, float, str]] = {}
+    for k in s.scalars(select(ListenKind).where(ListenKind.listen_id.in_(ids), ListenKind.decided_by == 'user')): out[k.listen_id] = (k.kind != 'book', 1.0, 'user')
+    accepted = {lid for (lid,) in s.execute(select(ListenPart.listen_id).where(ListenPart.listen_id.in_(ids), ListenPart.role == 'match', ListenPart.state == 'accepted', ListenPart.unlinked_at.is_(None)))}
+    for lid in ids:
+        if lid in out: continue
+        y = implied(feats[lid], lid in accepted)
+        if y is not None: out[lid] = (y, IMPLICIT_WEIGHT, 'audible match')
+    return out
+
+
+def learn(s: Session, *, audible=None, radio=None) -> tuple[K.Params, dict]:
+    """Fit the weights on every labelled listen (person's choices and confirmations clamped, implied labels at half weight), save them, and return them with the label counts. The Audible signals are dropped from the features of implied labels: a label is never learned from the evidence that made it."""
+    ids = [i for (i,) in s.execute(select(Listen.id).where(Listen.merged_into_id.is_(None)))]
+    feats = gather(s, ids, audible=audible, radio=radio); lab = labels(s, ids, feats)
+    rows = []
+    for lid, (y, w, src) in lab.items():
+        sigs = K.signals(feats[lid])
+        if src != 'user': sigs = [x for x in sigs if x.name not in KM.AUDIBLE_SIGNALS]
+        rows.append((sigs, y, w))
+    counts = {src: sum(1 for v in lab.values() if v[2] == src) for src in ('user', 'audible match')}
+    counts.update(broadcast=sum(1 for v in lab.values() if v[0]), book=sum(1 for v in lab.values() if not v[0]))
+    params = KM.fit(rows, counts); KM.save(params); return params, counts
+
+
+def learn_and_classify(s: Session, *, audible=None, radio=None) -> dict:
+    """What a retrain does: learn from the labels, then re-judge every listen a person has not decided. Returns label counts and how many kinds changed."""
+    params, counts = learn(s, audible=audible, radio=radio)
+    res = classify_listens(s, audible=audible, radio=radio, params=params)
+    return dict(labels=counts, version=params.version(), changed=sum(r['changed'] for r in res), review=sum(r['band'] == 'review' for r in res))
+
+
+_lock = __import__('threading').Lock()
+
+
+def start_learning(session_factory, **kw) -> bool:
+    """Retrain in the background after a person's answer; False when one is already running."""
+    if not _lock.acquire(blocking=False): return False
+    def run():
+        try:
+            with session_factory() as s: learn_and_classify(s, **kw); s.commit()
+        except Exception: pass                  # the next answer retrains again; nothing depends on this one
+        finally: _lock.release()
+    __import__('threading').Thread(target=run, name='kinds-learn', daemon=True).start(); return True

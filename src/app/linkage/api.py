@@ -81,11 +81,11 @@ def _search_text(s: Session, ids: list[int]) -> dict[int, str]:
 
 
 @router.get('')
-def queue(after: str = '', limit: int = 20, sort: str = 'certain', auto: str = '', kind: str = '', status: str = '', certainty: str = '', audible: str = '', check: str = '', q: str = '', s: Session = Depends(get_session)):
+def queue(after: str = '', limit: int = 20, sort: str = 'certain', auto: str = '', kind: str = '', status: str = '', certainty: str = '', audible: str = '', q: str = '', s: Session = Depends(get_session)):
     """A page of the queue, filtered and in the chosen order (`queue.SORTS`), after the cursor `key:listen_id` (the last item held), so answers given meanwhile cannot skip or repeat cards.
     `total` is how many pass the filters; `facets` counts each filter value over the whole queue."""
     limit = max(1, min(limit, 100)); items = queue_items(s)
-    try: f = qf.Filters(sort=sort, auto=auto, kind=kind, status=status, certainty=certainty, audible=audible, check=check, q=q)
+    try: f = qf.Filters(sort=sort, auto=auto, kind=kind, status=status, certainty=certainty, audible=audible, q=q)
     except ValueError as e: raise HTTPException(400, str(e))
     if f.q:
         text = _search_text(s, [it['listen_id'] for it in items])

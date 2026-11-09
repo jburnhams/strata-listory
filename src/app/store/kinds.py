@@ -64,11 +64,32 @@ class Features:
 
 
 @dataclass
+class Params:
+    """What learning changes (see `kinds_model`): a bias (the prior) and one multiplier per signal name applied to the hand-set weights. The default is the hand-set weights themselves (every multiplier 1), so an untrained classifier is exactly the one described above."""
+    bias: float = PRIOR
+    mult: dict[str, float] = field(default_factory=dict)
+    seen: dict[str, int] = field(default_factory=dict)      # labelled listens each signal fired on: 0 means its weight is still the prior
+    labels: dict[str, int] = field(default_factory=dict)     # label counts by source
+    trained: float = 0.
+    def version(self) -> str:
+        import hashlib, json
+        return 'kinds-' + hashlib.sha1(json.dumps([round(self.bias, 3), sorted((k, round(v, 3)) for k, v in self.mult.items())]).encode()).hexdigest()[:8]
+    def to_json(self) -> dict: return dict(bias=self.bias, mult=self.mult, seen=self.seen, labels=self.labels, trained=self.trained)
+    @classmethod
+    def from_json(cls, d: dict) -> 'Params': return cls(bias=float(d['bias']), mult={k: float(v) for k, v in d['mult'].items()}, seen={k: int(v) for k, v in d.get('seen', {}).items()}, labels=dict(d.get('labels', {})), trained=float(d.get('trained', 0)))
+
+
+@dataclass
 class Signal:
     name: str
-    weight: float
+    weight: float             # in the verdict: the weight in use (hand-set weight times what was learned)
     detail: str = ''
-    def as_dict(self) -> dict: return dict(name=self.name, weight=round(self.weight, 2), detail=self.detail)
+    prior: float | None = None      # the hand-set weight when learning changed it
+    learned: bool = False           # a labelled listen showed this signal, so its weight has moved from the prior
+    def as_dict(self) -> dict:
+        d = dict(name=self.name, weight=round(self.weight, 2), detail=self.detail)
+        if self.prior is not None: d.update(prior=round(self.prior, 2), learned=self.learned)
+        return d
 
 
 @dataclass
@@ -186,8 +207,14 @@ def _kind(f: Features, sigs: list[Signal]) -> str:
     return 'radio_series' if seriesish else 'radio_show'
 
 
-def classify(f: Features) -> Verdict:
-    sigs = signals(f); total = PRIOR + sum(s.weight for s in sigs)
+def classify(f: Features, params: Params | None = None) -> Verdict:
+    """The verdict; with `params` (learned from labels) each signal's hand-set weight is scaled and the prior moved, else the hand-set weights stand."""
+    sigs = signals(f); bias = PRIOR
+    if params is not None:
+        bias = params.bias
+        for x in sigs:
+            m = params.mult.get(x.name, 1.); x.prior = x.weight; x.weight = x.weight * m; x.learned = params.seen.get(x.name, 0) > 0 and abs(m - 1) > 0.02
+    total = bias + sum(x.weight for x in sigs)
     p = 1 / (1 + math.exp(-total))
     band = 'broadcast' if p >= BROADCAST_AT else 'book' if p <= BOOK_AT else 'review'
     if band == 'book': return Verdict('book', p, 1 - p, band, sigs)

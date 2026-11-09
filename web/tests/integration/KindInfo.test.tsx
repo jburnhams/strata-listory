@@ -35,20 +35,45 @@ describe('KindInfo', () => {
     await waitFor(() => expect(kindChoices).toEqual([{ id: 9, kind: 'play' }]))
   })
 
-  it('has no reasons button for a listen the classifier has not seen', () => {
-    setup(<KindInfo listenId={9} kind="book" info={null} />)
-    expect(screen.queryByRole('button', { name: 'Why?' })).toBeNull()
+  it('shows which weights were learned from your answers and which are still the prior', async () => {
+    const { user } = setup(<KindInfo listenId={9} kind="radio_series" info={kindInfos.series} />)
+    await user.click(screen.getByRole('button', { name: 'Why?' }))
+    expect(screen.getByText('(learned, was +3)')).toBeInTheDocument()
+    expect(screen.getByText('(prior)')).toBeInTheDocument()
+  })
+
+  it('counts "Kind is right" as an answer, and not again once it is your choice', async () => {
+    kindChoices.length = 0
+    const { user } = setup(<KindInfo listenId={9} kind="radio_series" info={kindInfos.series} />)
+    await user.click(screen.getByRole('button', { name: 'Why?' }))
+    await user.click(screen.getByRole('button', { name: 'Kind is right' }))
+    await waitFor(() => expect(kindChoices).toEqual([{ id: 9, kind: 'radio_series' }]))
+  })
+
+  it('offers no confirmation for a kind you already chose', async () => {
+    const { user } = setup(<KindInfo listenId={9} kind="book" info={{ ...kindInfos.close, decided_by: 'user' }} />)
+    await user.click(screen.getByRole('button', { name: 'Why?' }))
+    expect(screen.queryByRole('button', { name: 'Kind is right' })).toBeNull()
+  })
+
+  it('still lets you correct a listen the classifier saw no signals in', async () => {
+    kindChoices.length = 0
+    const { user } = setup(<KindInfo listenId={9} kind="book" info={null} />)
+    await user.click(screen.getByRole('button', { name: 'Why?' }))
+    expect(screen.getByText(/No signal pointed either way/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'It is a radio series' }))
+    await waitFor(() => expect(kindChoices).toEqual([{ id: 9, kind: 'radio_series' }]))
   })
 })
 
-describe('ListensPage kind check', () => {
+describe('ListensPage kind tabs', () => {
   it('lists only the close calls, then only the radio, plays and programmes', async () => {
     const { user } = setup(<ListensPage />, { route: '/listens' })
     await screen.findByText('Red Dragon')
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Kind check' }), 'review')
+    await user.click(screen.getByRole('tab', { name: 'Kind is a close call (1)' }))
     await waitFor(() => expect(screen.queryByText('Red Dragon')).toBeNull())
     expect(screen.getByText('Persuader')).toBeInTheDocument()
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Kind check' }), 'broadcast')
+    await user.click(screen.getByRole('tab', { name: 'Radio, plays and programmes (1)' }))
     expect(await screen.findByText('Dead Ringers (season 11)')).toBeInTheDocument()
     expect(screen.queryByText('Persuader')).toBeNull()
   })

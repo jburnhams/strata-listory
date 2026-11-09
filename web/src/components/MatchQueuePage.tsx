@@ -21,16 +21,18 @@ export const SORTS: Record<QueueFilters['sort'], { label: string; scope: string;
   uncertain: { label: 'Least certain first', scope: 'Hardest first', finding: 'least certain first' },
   recent: { label: 'Most recently added first', scope: 'Newest first', finding: 'most recently added first' },
   oldest: { label: 'Oldest first', scope: 'Oldest first', finding: 'oldest first' },
+  'kind-certain': { label: 'Kind most sure first', scope: 'Sure kinds first', finding: 'most sure of the kind first' },
+  'kind-uncertain': { label: 'Kind least sure first', scope: 'Unsure kinds first', finding: 'least sure of the kind first' },
 }
 const CERTAINTY: Record<string, string> = { sure: 'Sure (95% or more)', likely: 'Likely (70% or more)', close: 'Close call', unsure: 'Unsure (under 70%)' }
-const FILTER_KEYS = ['auto', 'kind', 'status', 'certainty', 'audible', 'check', 'q'] as const
+const FILTER_KEYS = ['auto', 'kind', 'status', 'certainty', 'audible', 'q'] as const
 
 /** The queue's order and filters from the page URL; anything unknown reads as the default. */
 export function readFilters(params: URLSearchParams): QueueFilters {
   const pick = <T extends string>(key: string, ok: readonly T[], fallback: T): T => { const v = params.get(key) ?? ''; return (ok as readonly string[]).includes(v) ? v as T : fallback }
   return {
     sort: pick('sort', Object.keys(SORTS) as QueueFilters['sort'][], 'certain'), auto: pick('auto', ['skip', 'only'] as const, ''), certainty: pick('certainty', ['sure', 'likely', 'close', 'unsure'] as const, ''),
-    audible: pick('audible', ['yes', 'no'] as const, ''), check: pick('check', ['review', 'broadcast'] as const, ''), kind: params.get('kind') ?? '', status: params.get('status') ?? '', q: (params.get('q') ?? '').trim(),
+    audible: pick('audible', ['yes', 'no'] as const, ''), kind: params.get('kind') ?? '', status: params.get('status') ?? '', q: (params.get('q') ?? '').trim(),
   }
 }
 
@@ -61,9 +63,6 @@ function QueueControls({ filters, facets, set, clear }: { filters: QueueFilters;
       </NativeSelect></Field>
       <Field label="Certainty"><NativeSelect value={filters.certainty} onChange={e => set('certainty', e.target.value)}><option value="">Any certainty</option>{['sure', 'likely', 'close', 'unsure'].map(v => <option key={v} value={v}>{counted(CERTAINTY[v], facets?.certainty[v] ?? 0)}</option>)}</NativeSelect></Field>
       <Field label="Kind of listen"><NativeSelect value={filters.kind} onChange={e => set('kind', e.target.value)}><option value="">Any kind</option>{options('kind', v => KIND_LABEL[v] ?? v, filters.kind)}</NativeSelect></Field>
-      <Field label="Kind check"><NativeSelect value={filters.check} onChange={e => set('check', e.target.value)}>
-        <option value="">Any</option><option value="broadcast">{counted('Radio, plays and programmes', facets?.check?.broadcast)}</option><option value="review">{counted('Kind is a close call', facets?.check?.review)}</option>
-      </NativeSelect></Field>
       <Field label="Audible"><NativeSelect value={filters.audible} onChange={e => set('audible', e.target.value)}>
         <option value="">Any</option><option value="yes">{counted('Has an Audible recording', facets?.audible.yes)}</option><option value="no">{counted('No Audible recording', facets?.audible.no)}</option>
       </NativeSelect></Field>

@@ -49,8 +49,8 @@ export const mock: { settings: Settings; books: Book[]; extras: Record<string, {
 
 // How the classifier (src/app/store/kinds.py) judged invented listens: a clear broadcast, and a close call that is still a book.
 export const kindInfos: Record<string, import('../../src/api').KindInfoData> = {
-  series: { kind: 'radio_series', guess: 'radio_series', band: 'broadcast', p_broadcast: 0.97, decided_by: 'rule', signals: [{ name: 'channel', weight: 3, detail: 'title: "BBC Radio 4"' }, { name: 'series number', weight: 1.8, detail: 'title: "series 11"' }] },
-  close: { kind: 'book', guess: 'play', band: 'review', p_broadcast: 0.5, decided_by: 'rule', signals: [{ name: 'play length', weight: 0.6, detail: '90 minutes in 1 file' }, { name: 'programme genre', weight: 0.8, detail: 'genre "Drama"' }] },
+  series: { kind: 'radio_series', guess: 'radio_series', band: 'broadcast', confidence: 0.97, p_broadcast: 0.97, decided_by: 'rule', signals: [{ name: 'channel', weight: 3.9, prior: 3, learned: true, detail: 'title: "BBC Radio 4"' }, { name: 'series number', weight: 1.8, prior: 1.8, learned: false, detail: 'title: "series 11"' }] },
+  close: { kind: 'book', guess: 'play', band: 'review', confidence: 0.5, p_broadcast: 0.5, decided_by: 'rule', signals: [{ name: 'play length', weight: 0.6, detail: '90 minutes in 1 file' }, { name: 'programme genre', weight: 0.8, detail: 'genre "Drama"' }] },
 }
 const kindState: { chosen: { id: number; kind: string }[] } = { chosen: [] }
 export const kindChoices = kindState.chosen
@@ -104,14 +104,13 @@ export const handlers = [
   http.get('/api/books/:id/output', () => HttpResponse.json({ book: {}, metadata: null, chapters: [] })),
   http.get('/api/listens', ({ request }) => {
     const u = new URL(request.url), q = (u.searchParams.get('q') ?? '').toLowerCase(), kind = u.searchParams.get('kind') ?? ''
-    const check = u.searchParams.get('check') ?? ''
-    const rows = listenRows.filter(r => (!kind || r.kind === kind) && (check !== 'review' || r.kind_info?.band === 'review') && (check !== 'broadcast' || r.kind !== 'book') && q.split(' ').filter(Boolean).every(w => `${r.label} ${r.path}`.toLowerCase().includes(w)))
-    return HttpResponse.json({ total: rows.length + (q === 'big' ? 40 : 0), kinds: { book: 2, radio_series: 1 }, review: 1, rows })
+    const rows = listenRows.filter(r => (!kind || (kind === 'review' ? r.kind_info?.band === 'review' : kind === 'not-book' ? r.kind !== 'book' : r.kind === kind)) && q.split(' ').filter(Boolean).every(w => `${r.label} ${r.path}`.toLowerCase().includes(w)))
+    return HttpResponse.json({ total: rows.length + (q === 'big' ? 40 : 0), kinds: { book: 2, radio_series: 1 }, review: 1, not_book: 1, rows })
   }),
   http.post('/api/listens/:id/kind', async ({ request, params }) => {
     const b = await request.json() as { kind: string }
     kindState.chosen.push({ id: Number(params.id), kind: b.kind })
-    return HttpResponse.json({ ok: true, kind_info: { ...kindInfos.close, kind: b.kind, decided_by: 'user', band: b.kind === 'book' ? 'book' : 'broadcast' } })
+    return HttpResponse.json({ ok: true, retraining: false, kind_info: { ...kindInfos.close, kind: b.kind, decided_by: 'user', band: b.kind === 'book' ? 'book' : 'broadcast' } })
   }),
   http.get('/api/filegroups', () => HttpResponse.json({ root: fgRoot, groupings: 1 })),
   http.get('/api/filegroups/search', ({ request }) => {
@@ -233,14 +232,14 @@ export const server = setupServer(
     const open = matchState.queue.filter(i => !matchState.decided.some(d => d.listen_id === i.listen_id))
     const band = (i: typeof open[number]) => { const t = i.candidates[0], second = t.second ?? 0; return t.p >= 0.95 ? 'sure' : t.p - second < 0.15 && second > 0.05 ? 'close' : t.p >= 0.7 ? 'likely' : 'unsure' }
     const words = qp('q').toLowerCase().split(/\s+/).filter(Boolean)
-    const fits = open.filter(i => (qp('auto') !== 'skip' || !i.candidates[0].auto) && (qp('auto') !== 'only' || i.candidates[0].auto) && (!qp('kind') || i.kind === qp('kind')) && (!qp('status') || i.status === qp('status'))
-      && (qp('check') !== 'review' || i.kind_info?.band === 'review') && (qp('check') !== 'broadcast' || i.kind !== 'book') && (!qp('certainty') || band(i) === qp('certainty')) && (!qp('audible') || (i.candidates[0].recordings.length > 0) === (qp('audible') === 'yes'))
+    const fits = open.filter(i => (qp('auto') !== 'skip' || !i.candidates[0].auto) && (qp('auto') !== 'only' || i.candidates[0].auto) && (!qp('kind') || (qp('kind') === 'review' ? i.kind_info?.band === 'review' : qp('kind') === 'not-book' ? i.kind !== 'book' : i.kind === qp('kind'))) && (!qp('status') || i.status === qp('status'))
+      && (!qp('certainty') || band(i) === qp('certainty')) && (!qp('audible') || (i.candidates[0].recordings.length > 0) === (qp('audible') === 'yes'))
       && words.every(w => `${i.label} ${Object.values(i.chosen).join(' ')} ${i.candidates.map(c => `${c.title} ${c.authors.join(' ')}`).join(' ')}`.toLowerCase().includes(w)))
-    const sort = qp('sort') || 'certain', key = (i: typeof open[number]) => ({ certain: -i.p, uncertain: i.p, recent: -(i.added ?? 0), oldest: i.added ?? 0 } as Record<string, number>)[sort]
+    const sort = qp('sort') || 'certain', key = (i: typeof open[number]) => ({ certain: -i.p, uncertain: i.p, recent: -(i.added ?? 0), oldest: i.added ?? 0, 'kind-certain': -(i.kind_info?.confidence ?? 1), 'kind-uncertain': i.kind_info?.confidence ?? 1 } as Record<string, number>)[sort]
     const ordered = [...fits].sort((a, b) => key(a) - key(b) || (sort === 'recent' ? b.listen_id - a.listen_id : a.listen_id - b.listen_id))
     const start = after ? ordered.findIndex(i => i.cursor === after) + 1 : 0
     const count = (f: (i: typeof open[number]) => string | null) => open.reduce<Record<string, number>>((m, i) => { const v = f(i); if (v) m[v] = (m[v] ?? 0) + 1; return m }, {})
-    const facets = { kind: count(i => i.kind), status: count(i => i.status), certainty: count(band), auto: { skip: 0, only: 0, ...count(i => i.candidates[0].auto ? 'only' : 'skip') }, audible: { yes: 0, no: 0, ...count(i => i.candidates[0].recordings.length ? 'yes' : 'no') }, check: { review: open.filter(i => i.kind_info?.band === 'review').length, broadcast: open.filter(i => i.kind !== 'book').length } }
+    const facets = { kind: { ...count(i => i.kind), ...(open.some(i => i.kind_info?.band === 'review') ? { review: open.filter(i => i.kind_info?.band === 'review').length } : {}), ...(open.some(i => i.kind !== 'book') ? { 'not-book': open.filter(i => i.kind !== 'book').length } : {}) }, status: count(i => i.status), certainty: count(band), auto: { skip: 0, only: 0, ...count(i => i.candidates[0].auto ? 'only' : 'skip') }, audible: { yes: 0, no: 0, ...count(i => i.candidates[0].recordings.length ? 'yes' : 'no') } }
     return HttpResponse.json({ summary: { waiting: open.length, auto_unconfirmed: open.filter(i => i.candidates[0].auto).length, confirmed: matchState.decided.filter(d => d.action === 'approve').length, not_found: matchState.decided.filter(d => d.action === 'none').length, statuses: {}, decisions: matchState.decided.length, since_train: null, model: matchState.model, auto_retrain: 25, training: { running: matchState.training, finished: null, error: '', counts: null } },
       total: fits.length, facets, items: ordered.slice(start, start + limit) })
   }),
