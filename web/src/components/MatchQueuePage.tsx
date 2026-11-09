@@ -229,7 +229,7 @@ function Card({ it, active, itemProps, onAnswer }: { it: QueueItem; active: bool
         {top.auto && <Status tone="neutral">Accepted automatically, not yet confirmed</Status>}
         {it.added != null && <span className="type-caption text-muted-foreground">Added {format.shortDay.format(new Date(it.added * 1000))}</span>}
       </div>
-      {it.kind && (it.kind !== 'book' || it.kind_info) && <div className="mb-3"><KindInfo listenId={it.listen_id} kind={it.kind} info={it.kind_info} /></div>}
+      {it.kind && <div className="mb-3"><KindInfo listenId={it.listen_id} kind={it.kind} info={it.kind_info} /></div>}
       <div className="flex flex-wrap gap-x-6 gap-y-4">
         <Files it={it} />
         <Work c={top} minutes={it.copies[0]?.minutes} />

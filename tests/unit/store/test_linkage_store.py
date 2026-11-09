@@ -287,3 +287,28 @@ def test_a_persons_approved_radio_candidate_is_a_label_and_radio_listens_are_nev
             if (p.detail or {}).get("candidate") == "radio:harbour-lights": p.role = "match"; p.state = "accepted"
     s.flush()
     assert apply.same_work_groups(s) and apply.merge_copies(s) == [] and a.merged_into_id is None and b.merged_into_id is None
+
+
+def test_changing_a_kind_identifies_that_listen_again(monkeypatch, tmp_path):
+    """reidentify_listen: with no model it does nothing; with one it builds that listen's vectors, clears the model's earlier answer and applies again for that listen only."""
+    from contextlib import nullcontext
+    from app.identify import audibleindex, candidates as olc
+    from app.linkage import apply, dataset, query, service
+    monkeypatch.setattr(dataset, "folder", lambda: tmp_path)
+    monkeypatch.setattr(service, "load_params", lambda: None)
+    assert service.reidentify_listen(lambda: nullcontext(object()), 7) is None
+    calls = []
+    class S:
+        def commit(self): calls.append("commit")
+    monkeypatch.setattr(service, "load_params", lambda: "params")
+    monkeypatch.setattr(olc, "connect", lambda: (_ for _ in ()).throw(FileNotFoundError()))
+    monkeypatch.setattr(audibleindex, "connect", lambda: None)
+    monkeypatch.setattr(dataset, "index_stamp", lambda oc, ac: "none")
+    monkeypatch.setattr(query, "load", lambda s, ids=None, **kw: [] if ids == [8] else [type("Q", (), dict(listen_id=7))()])
+    monkeypatch.setattr(dataset, "build", lambda oc, ac, qs, cache, indexes="": {"7": {"sig": "x"}})
+    monkeypatch.setattr(apply, "clear", lambda s, ids=None: calls.append(("clear", ids)))
+    monkeypatch.setattr(apply, "apply", lambda s, data, params, threshold, ids: calls.append(("apply", sorted(data), params, ids)) or {"accept": 1})
+    assert service.reidentify_listen(lambda: nullcontext(S()), 8) is None and calls == []      # no such live listen
+    assert service.reidentify_listen(lambda: nullcontext(S()), 7) == {"accept": 1}
+    assert calls == [("clear", {7}), ("apply", ["7"], "params", {7}), "commit"] and dataset.load_cache() == {"7": {"sig": "x"}}
+
