@@ -93,5 +93,13 @@ def test_band_matches_the_words_on_the_cards(p, second, word):
 
 
 def test_facets_count_each_value_over_the_whole_queue():
-    assert Q.facets(ITEMS) == dict(kind={'book': 3, 'radio_series': 1}, status={'review': 3, 'identified': 1}, certainty={'sure': 1, 'close': 1, 'unsure': 1, 'likely': 1}, auto={'skip': 3, 'only': 1}, audible={'yes': 3, 'no': 1})
-    assert Q.facets([]) == dict(kind={}, status={}, certainty={}, auto={'skip': 0, 'only': 0}, audible={'yes': 0, 'no': 0})
+    assert Q.facets(ITEMS) == dict(kind={'book': 3, 'radio_series': 1}, status={'review': 3, 'identified': 1}, certainty={'sure': 1, 'close': 1, 'unsure': 1, 'likely': 1}, auto={'skip': 3, 'only': 1}, audible={'yes': 3, 'no': 1}, check={'review': 0, 'broadcast': 1})
+    assert Q.facets([]) == dict(kind={}, status={}, certainty={}, auto={'skip': 0, 'only': 0}, audible={'yes': 0, 'no': 0}, check={'review': 0, 'broadcast': 0})
+
+
+def test_the_kind_check_filter_finds_close_calls_and_broadcast_kinds():
+    items = [dict(item(1, 0.9), kind_info=dict(band='review')), dict(item(2, 0.8, kind='radio_series'), kind_info=dict(band='broadcast')), item(3, 0.7)]
+    assert ids(Q.select(items, Q.Filters(check='review'))) == [1]
+    assert ids(Q.select(items, Q.Filters(check='broadcast'))) == [2]
+    assert Q.facets(items)['check'] == {'review': 1, 'broadcast': 1}
+    with pytest.raises(ValueError, match='check must be one of'): Q.Filters(check='nonsense')

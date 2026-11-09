@@ -187,3 +187,20 @@ def test_rebuild_of_some_listens_keeps_the_others(s, listens):
     one = listens["Books/Ben Ash - Salt Roads"]
     assert apply.clear(s, ids={one.id}) == 1
     assert s.scalar(select(func.count()).select_from(ListenPart).where(ListenPart.role == "match")) == 3 and one.status == "grouped"
+
+
+def test_match_queue_carries_each_listens_kind_verdict_and_filters_by_it(s, listens):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.linkage import api as A
+    from app.store import kinds_db
+    apply.apply(s, data_for(listens, sure=False), params())
+    salt = listens["Books/Ben Ash - Salt Roads"]; glass = listens["Books/Mara Quill - Glass Orchard"]
+    kinds_db.set_kind(s, salt.id, "radio_series", actor_ref="test")                  # a person's call
+    s.add(kinds_db.ListenKind(listen_id=glass.id, kind="book", guess="play", p_broadcast=0.5, confidence=0.5, band="review", signals=[dict(name="play length", weight=0.6, detail="")], version=1)); s.flush()
+    app = FastAPI(); app.include_router(A.router); app.dependency_overrides[A.get_session] = lambda: s; c = TestClient(app)
+    items = {it["listen_id"]: it for it in c.get("/api/matches").json()["items"]}
+    assert items[salt.id]["kind_info"]["decided_by"] == "user" and items[glass.id]["kind_info"]["band"] == "review" and any(it["kind_info"] is None for it in items.values())
+    review = c.get("/api/matches?check=review").json(); assert [it["listen_id"] for it in review["items"]] == [glass.id] and review["facets"]["check"] == {"review": 1, "broadcast": 1}
+    assert [it["listen_id"] for it in c.get("/api/matches?check=broadcast").json()["items"]] == [salt.id]
+    assert c.get("/api/matches?check=bogus").status_code == 400

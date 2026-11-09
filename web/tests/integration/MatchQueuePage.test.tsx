@@ -208,4 +208,21 @@ describe('match helpers', () => {
     const rec = { asin: 'x', title: 't', narrators: [], minutes: 660, fmt: '', year: null }
     expect(runtimeDelta(rec, 600)).toBe('+10%'); expect(runtimeDelta(rec, 660)).toBe('same length'); expect(runtimeDelta({ ...rec, minutes: null }, 600)).toBe('')
   })
+
+  it('filters by the kind check and shows why a listen is not a book', async () => {
+    const { user } = setup(<MatchQueuePage />, { route: '/?check=broadcast' })
+    const list = await screen.findByRole('list', { name: 'Matches to check' })
+    expect(within(list).getAllByRole('article')).toHaveLength(1)
+    expect(within(list).getByRole('article', { name: 'Untagged folder' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Kind check' })).toHaveValue('broadcast')
+    expect(screen.getByRole('option', { name: 'Radio, plays and programmes (1)' })).toBeInTheDocument()
+    await user.click(within(list).getByRole('button', { name: 'Why?' }))
+    expect(within(list).getByText('series number')).toBeInTheDocument()
+  })
+
+  it('has nothing to show when no kind is a close call', async () => {
+    setup(<MatchQueuePage />, { route: '/?check=review' })
+    expect(await screen.findByRole('combobox', { name: 'Kind check' })).toHaveValue('review')
+    await waitFor(() => expect(screen.queryAllByRole('article')).toHaveLength(0))
+  })
 })

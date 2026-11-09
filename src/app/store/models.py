@@ -18,12 +18,12 @@ from omarchy_db import make_base
 
 Base = make_base()
 
-LISTEN_KINDS = ("book", "radio_series", "radio_show", "other")
+LISTEN_KINDS = ("book", "radio_series", "radio_show", "play", "other")
 GROUP_KINDS = ("root", "folder", "disc", "book", "series", "programme", "collection", "loose")      # fixed list; grows as the grouping steps find real structure
 PART_ROLES = ("input", "output", "reference", "sidecar", "record", "candidate", "match")
 PART_STATES = ("active", "candidate", "accepted", "rejected")
 ACTOR_KINDS = ("user", "auto_policy", "model", "rule", "import")
-EVENT_ACTIONS = ("create", "link", "unlink", "relink", "reorder", "merge", "split", "status_change", "accept", "reject", "revoke", "choose", "unchoose", "retire")
+EVENT_ACTIONS = ("create", "link", "unlink", "relink", "reorder", "merge", "split", "status_change", "accept", "reject", "revoke", "choose", "unchoose", "retire", "reclassify")
 
 
 def _in(col: str, values: tuple[str, ...]) -> str:
@@ -258,3 +258,19 @@ class ListenEvent(Base):
     after: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=None)   # auto accepts: score, margin, model version, policy revision
     at: Mapped[datetime] = mapped_column(server_default=func.now(), init=False)
     __table_args__ = (CheckConstraint(_in("action", EVENT_ACTIONS), name="listen_event_action"), CheckConstraint(_in("actor_kind", ACTOR_KINDS), name="listen_event_actor"))
+
+
+class ListenKind(Base):
+    """How a listen was classified as book / radio series / radio programme / play (`app.store.kinds`): the verdict, the probability that it is broadcast material rather than a book, and the signals that fired, so a card can say why. `decided_by` is `rule` (recomputed on every run) or `user` (a person's choice, never overwritten)."""
+    __tablename__ = "listen_kind"
+    listen_id: Mapped[int] = mapped_column(ForeignKey("listen.id"), primary_key=True)
+    kind: Mapped[str]                                               # the kind the listen has now
+    guess: Mapped[str]                                              # the best broadcast kind (what it would be if it is not a book); equals `kind` when decided
+    p_broadcast: Mapped[float]
+    confidence: Mapped[float]
+    band: Mapped[str]                                               # broadcast | book | review
+    signals: Mapped[list[Any]] = mapped_column(JSONB)
+    version: Mapped[int]
+    decided_by: Mapped[str] = mapped_column(server_default="rule", default="rule")
+    computed_at: Mapped[datetime] = mapped_column(server_default=func.now(), init=False)
+    __table_args__ = (CheckConstraint(_in("kind", LISTEN_KINDS), name="listen_kind_kind"), CheckConstraint(_in("band", ("broadcast", "book", "review")), name="listen_kind_band"), CheckConstraint(_in("decided_by", ("rule", "user")), name="listen_kind_decided_by"))

@@ -50,3 +50,17 @@ def test_main_title_match_is_not_strong(tmp_path):
     c = built(tmp_path)
     r = ai.find(c, title='Dune', author='Frank Herbert', narrators=['Scott Brick'])[0]
     assert r['evidence']['title'] == 'main' and r['grade'] == 'weak' and r['abridged'] is True
+
+
+def test_content_info_reads_the_content_type_keywords_and_publisher_by_asin(tmp_path):
+    path = tmp_path / 'a.sqlite'; archive(path); c = sqlite3.connect(path)
+    c.execute('UPDATE product SET raw = ? WHERE asin = ? AND region = ?', (json.dumps({'product': {'content_type': 'Radio/TV Program', 'thesaurus_subject_keywords': ['dramatizations'], 'publisher_name': 'BBC Audio'}}), 'B000000001', 'uk'))
+    c.execute('UPDATE product SET raw = ? WHERE asin = ? AND region = ?', (zlib.compress(json.dumps({'content_type': 'Product'}).encode()), 'B000000001', 'us'))
+    c.execute('UPDATE product SET raw = ? WHERE asin = ?', ('not json', 'B000000002')); c.commit(); c.close()
+    info = ai.content_info(['B000000001', 'B000000002', 'B0MISSING', '', None], archive=path)
+    assert info == {'B000000001': dict(content_type='Radio/TV Program', keywords=['dramatizations'], publisher='BBC Audio', region='uk')}      # the UK record wins, unreadable ones are skipped
+
+
+def test_content_info_is_empty_without_an_archive_or_asins(tmp_path):
+    assert ai.content_info(['B000000001'], archive=tmp_path / 'none.sqlite') == {} and ai.content_info([], archive=tmp_path / 'none.sqlite') == {}
+    (tmp_path / 'bad.sqlite').write_text('nope'); assert ai.content_info(['B000000001'], archive=tmp_path / 'bad.sqlite') == {}

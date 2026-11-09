@@ -106,3 +106,21 @@ def find(c, title: str = '', author: str = '', narrators=(), runtime_min: float 
     out.sort(key=rank); seen: set[str] = set()
     out = [d for d in out if not (d['asin'] in seen or seen.add(d['asin']))]      # one ASIN listed by both stores is one recording
     return out[:limit]
+
+
+def content_info(asins, *, archive: str | Path | None = None) -> dict[str, dict]:
+    """What Audible calls each product beyond the index's columns: `content_type` ("Radio/TV Program" for BBC dramatisations and broadcasts, "Audiobook" for readings), subject `keywords` ("dramatizations") and publisher, read from the archive by ASIN (a primary-key lookup, fast even on the 10 GB file). {} when the archive is missing or locked: the kind classifier treats Audible's view as optional evidence."""
+    asins = sorted({a for a in asins if a}); archive = Path(archive or archive_path())
+    if not asins or not archive.exists(): return {}
+    out: dict[str, dict] = {}
+    try:
+        db = sqlite3.connect(f'file:{archive}?mode=ro', uri=True, timeout=5)
+        try:
+            for asin, region, value in db.execute(f"SELECT asin, region, raw FROM product WHERE asin IN ({','.join('?' * len(asins))})", asins):
+                try: p = raw(value); p = p.get('product', p)
+                except (ValueError, zlib.error, TypeError): continue
+                cur = dict(content_type=p.get('content_type') or '', keywords=list(p.get('thesaurus_subject_keywords') or []), publisher=p.get('publisher_name') or '', region=region)
+                if asin not in out or region == 'uk': out[asin] = cur
+        finally: db.close()
+    except sqlite3.Error: return {}
+    return out
