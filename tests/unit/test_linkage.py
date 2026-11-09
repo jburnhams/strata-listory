@@ -272,3 +272,16 @@ def test_cache_signature_follows_the_indexes(monkeypatch, tmp_path):
     D.build(None, None, [q], cache=first, indexes='ol:1|audible:2'); assert calls == [4, 4]          # a rebuilt index recomputes
     assert D.index_stamp(None, None) == 'ol:none|audible:none|radio:none:none'
     ac = audible(tmp_path); assert D.index_stamp(None, ac).startswith('ol:none|audible:20')
+
+
+def test_a_single_files_name_is_a_reading_even_when_the_title_came_from_the_container_folder():
+    # a stand-alone file's name is the title itself; here the chosen title is the container folder and the tags say nothing
+    file = Q.scan.parse_name('The Invented Handbook.m4b')
+    rs = Q.make_readings(dict(title='Books'), {}, dict(title='Books', folder='Books'), file)
+    assert ('The Invented Handbook', 'file') in [(r.title, r.source) for r in rs]
+    q = Q.from_parts(3, 'book', 'Books', dict(title='Books'), {}, dict(title='Books', folder='Books'), [], filename='The Invented Handbook.m4b')
+    assert any(r.title == 'The Invented Handbook' for r in q.readings)
+    # tags that already say the same thing add no duplicate reading
+    tags = dict(tagged=1, album=dict(value='The Invented Handbook', share=1.))
+    assert [r.title for r in Q.make_readings({}, tags, {}, file)].count('The Invented Handbook') == 1
+    assert Q.make_readings({}, {}, {}, Q.scan.parse_name('Books.m4b')) == []           # a generic file name says nothing
