@@ -142,6 +142,35 @@ def test_match_queue_api_pages_easiest_first_and_records_answers(s, listens, mon
     assert c.post("/api/matches/retrain").json() == {"started": True}
 
 
+def test_match_queue_api_filters_sorts_and_pages_within_the_filter(s, listens):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.linkage import api as A
+    apply.apply(s, data_for(listens, sure=False), params())
+    salt = listens["Books/Ben Ash - Salt Roads"]; salt.kind = "radio_series"; s.flush()
+    app = FastAPI(); app.include_router(A.router); app.dependency_overrides[A.get_session] = lambda: s; c = TestClient(app)
+    whole = c.get("/api/matches").json()
+    assert whole["total"] == 4 and whole["facets"]["kind"] == {"book": 3, "radio_series": 1} and sum(whole["facets"]["certainty"].values()) == 4
+    assert all(it["kind"] and it["status"] and it["added"] for it in whole["items"]) and "text" not in whole["items"][0]
+    assert abs(whole["items"][0]["added"] - float(s.scalar(select(func.extract("epoch", func.now()))))) < 3600        # the instant the database added it, whatever zone the API host runs in
+    ps = [it["p"] for it in c.get("/api/matches", params=dict(sort="uncertain")).json()["items"]]
+    assert ps == sorted(ps)
+    recent = [it["listen_id"] for it in c.get("/api/matches", params=dict(sort="recent")).json()["items"]]
+    assert recent == sorted(recent, reverse=True)                                    # built together, so the newest listen first
+    radio = c.get("/api/matches", params=dict(kind="radio_series")).json()
+    assert [it["listen_id"] for it in radio["items"]] == [salt.id] and radio["total"] == 1 and radio["summary"]["waiting"] == 4      # the summary is the whole queue
+    found = c.get("/api/matches", params=dict(q="ben ash")).json()                  # the folder and the chosen author are searched
+    assert [it["listen_id"] for it in found["items"]] == [salt.id]
+    assert c.get("/api/matches", params=dict(q="glass orchard")).json()["total"] == 4    # every listen has Glass Orchard as a candidate
+    skip = c.get("/api/matches", params=dict(auto="skip")).json()
+    assert all(not it["candidates"][0]["auto"] for it in skip["items"]) and skip["total"] == whole["facets"]["auto"]["skip"]
+    first = c.get("/api/matches", params=dict(sort="uncertain", limit=3)).json()["items"]
+    rest = c.get("/api/matches", params=dict(sort="uncertain", after=first[-1]["cursor"])).json()
+    assert [it["listen_id"] for it in first + rest["items"]] == [it["listen_id"] for it in c.get("/api/matches", params=dict(sort="uncertain")).json()["items"]] and rest["total"] == 4
+    assert c.get("/api/matches", params=dict(sort="random")).status_code == 400
+    assert c.get("/api/matches", params=dict(certainty="certain")).status_code == 400
+
+
 def test_retrain_fits_saves_and_reapplies(s, listens, tmp_path, monkeypatch):
     from contextlib import nullcontext
     from app.linkage import service

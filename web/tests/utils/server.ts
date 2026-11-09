@@ -52,13 +52,13 @@ export function matchQueue(): import('../../src/api').QueueItem[] {
   const cand = (part_id: number, p: number, title: string, extra: Partial<import('../../src/api').QueueCandidate> = {}): import('../../src/api').QueueCandidate => ({ part_id, ordinal: 1, state: p >= 0.95 ? 'accepted' : 'candidate', auto: p >= 0.95, p, work_id: part_id, key: `/works/OL${part_id}W`, title, authors: ['Mara Quill'], year: 2001, editions: 4, ol: [`/works/OL${part_id}W`], isbns: ['9780306406157'],
     recordings: [{ asin: 'B0AAAAAAA1', title, narrators: ['Ada Penn'], minutes: 606, fmt: 'unabridged', year: 2015 }, { asin: 'B0AAAAAAA2', title, narrators: ['Tom Vale'], minutes: 300, fmt: 'abridged', year: 2009 }], recording: 'B0AAAAAAA1', alias: title.toLowerCase(), reading: 'tags',
     evidence: { title: 'exact_rare', author: 'all', narrator: 'match', runtime: '1pct', sources: 'both', popularity: 'medium' }, p_none: 0, second: 0, ...extra })
-  const files = (title: string, narrator?: string) => ({ chosen: { title, author: 'Mara Quill', ...(narrator ? { narrator } : {}), year: 2015 }, tags: { album: `${title} (Unabridged)`, artist: 'Mara Quill', files: 12 }, folder: { title, folder: `Mara Quill - ${title}` }, copies: [{ minutes: 600, files: 12, bytes: 1, folder: `Mara Quill - ${title}`, path: `/x/${title}`, group_id: 7 }] })
+  const files = (title: string, narrator?: string) => ({ kind: 'book', status: 'review', added: 1762000000, chosen: { title, author: 'Mara Quill', ...(narrator ? { narrator } : {}), year: 2015 }, tags: { album: `${title} (Unabridged)`, artist: 'Mara Quill', files: 12 }, folder: { title, folder: `Mara Quill - ${title}` }, copies: [{ minutes: 600, files: 12, bytes: 1, folder: `Mara Quill - ${title}`, path: `/x/${title}`, group_id: 7 }] })
   return [
     { listen_id: 1, p: 0.99, label: 'Glass Orchard', cursor: '0.99:1', candidates: [cand(11, 0.99, 'Glass Orchard')], ...files('Glass Orchard', 'Ada Penn') },
-    { listen_id: 2, p: 0.6, label: 'Salt Roads', cursor: '0.6:2', candidates: [cand(21, 0.6, 'Salt Roads', { evidence: { title: 'partial', author: 'conflict', runtime: 'far' }, second: 0.55 }), cand(22, 0.3, 'Salt Roads Again', { ordinal: 2, authors: [], year: null })], ...files('Salt Roads') },
-    { listen_id: 3, p: 0.4, label: 'Lune', cursor: '0.4:3', candidates: [cand(31, 0.4, 'Lune', { recordings: [], isbns: [], ol: [], evidence: {} })], ...files('Lune') },
+    { listen_id: 2, p: 0.6, label: 'Salt Roads', cursor: '0.6:2', candidates: [cand(21, 0.6, 'Salt Roads', { evidence: { title: 'partial', author: 'conflict', runtime: 'far' }, second: 0.55 }), cand(22, 0.3, 'Salt Roads Again', { ordinal: 2, authors: [], year: null })], ...files('Salt Roads'), added: 1762500000 },
+    { listen_id: 3, p: 0.4, label: 'Lune', cursor: '0.4:3', candidates: [cand(31, 0.4, 'Lune', { recordings: [], isbns: [], ol: [], evidence: {} })], ...files('Lune'), added: 1761000000 },
     { listen_id: 4, p: 0.2, label: 'Untagged folder', cursor: '0.2:4', candidates: [cand(41, 0.2, 'x', { title: null, authors: [], year: null, editions: null, isbns: [], recording: null, second: null, recordings: [{ asin: 'B0AAAAAAA9', title: 'x', narrators: [], minutes: null, fmt: 'original_recording', year: null }] })],
-      chosen: {}, tags: { composer: 'Someone Else', publisher: 'A Press' }, folder: {}, copies: [{ minutes: 60, files: null, bytes: null, folder: 'Untagged folder', path: null, group_id: null }, { minutes: 61, files: 3, bytes: 1, folder: 'Copy', path: null, group_id: null }] },
+      kind: 'radio_series', status: 'review', added: null, chosen: {}, tags: { composer: 'Someone Else', publisher: 'A Press' }, folder: {}, copies: [{ minutes: 60, files: null, bytes: null, folder: 'Untagged folder', path: null, group_id: null }, { minutes: 61, files: 3, bytes: 1, folder: 'Copy', path: null, group_id: null }] },
   ]
 }
 export const matchState: { queue: import('../../src/api').QueueItem[]; decided: { listen_id: number; action: string; part_id?: number }[]; retrains: number; training: boolean; model: string | null } = { queue: matchQueue(), decided: [], retrains: 0, training: false, model: 'fs-test' }
@@ -215,10 +215,21 @@ export const handlers = [
 
 export const server = setupServer(
   http.get('/api/matches', ({ request }) => {
-    const u = new URL(request.url); const after = u.searchParams.get('after'); const limit = Number(u.searchParams.get('limit') ?? 20)
+    // The order and filters as the server applies them (src/app/linkage/queue.py), over the invented queue; the cursor is the listen id, which is enough here.
+    const u = new URL(request.url), qp = (k: string) => u.searchParams.get(k) ?? ''; const after = qp('after'); const limit = Number(u.searchParams.get('limit') ?? 20)
     const open = matchState.queue.filter(i => !matchState.decided.some(d => d.listen_id === i.listen_id))
-    const start = after ? open.findIndex(i => i.cursor === after) + 1 : 0
-    return HttpResponse.json({ summary: { waiting: open.length, auto_unconfirmed: open.filter(i => i.candidates[0].auto).length, confirmed: matchState.decided.filter(d => d.action === 'approve').length, not_found: matchState.decided.filter(d => d.action === 'none').length, statuses: {}, decisions: matchState.decided.length, since_train: null, model: matchState.model, auto_retrain: 25, training: { running: matchState.training, finished: null, error: '', counts: null } }, items: open.slice(start, start + limit) })
+    const band = (i: typeof open[number]) => { const t = i.candidates[0], second = t.second ?? 0; return t.p >= 0.95 ? 'sure' : t.p - second < 0.15 && second > 0.05 ? 'close' : t.p >= 0.7 ? 'likely' : 'unsure' }
+    const words = qp('q').toLowerCase().split(/\s+/).filter(Boolean)
+    const fits = open.filter(i => (qp('auto') !== 'skip' || !i.candidates[0].auto) && (qp('auto') !== 'only' || i.candidates[0].auto) && (!qp('kind') || i.kind === qp('kind')) && (!qp('status') || i.status === qp('status'))
+      && (!qp('certainty') || band(i) === qp('certainty')) && (!qp('audible') || (i.candidates[0].recordings.length > 0) === (qp('audible') === 'yes'))
+      && words.every(w => `${i.label} ${Object.values(i.chosen).join(' ')} ${i.candidates.map(c => `${c.title} ${c.authors.join(' ')}`).join(' ')}`.toLowerCase().includes(w)))
+    const sort = qp('sort') || 'certain', key = (i: typeof open[number]) => ({ certain: -i.p, uncertain: i.p, recent: -(i.added ?? 0), oldest: i.added ?? 0 } as Record<string, number>)[sort]
+    const ordered = [...fits].sort((a, b) => key(a) - key(b) || (sort === 'recent' ? b.listen_id - a.listen_id : a.listen_id - b.listen_id))
+    const start = after ? ordered.findIndex(i => i.cursor === after) + 1 : 0
+    const count = (f: (i: typeof open[number]) => string | null) => open.reduce<Record<string, number>>((m, i) => { const v = f(i); if (v) m[v] = (m[v] ?? 0) + 1; return m }, {})
+    const facets = { kind: count(i => i.kind), status: count(i => i.status), certainty: count(band), auto: { skip: 0, only: 0, ...count(i => i.candidates[0].auto ? 'only' : 'skip') }, audible: { yes: 0, no: 0, ...count(i => i.candidates[0].recordings.length ? 'yes' : 'no') } }
+    return HttpResponse.json({ summary: { waiting: open.length, auto_unconfirmed: open.filter(i => i.candidates[0].auto).length, confirmed: matchState.decided.filter(d => d.action === 'approve').length, not_found: matchState.decided.filter(d => d.action === 'none').length, statuses: {}, decisions: matchState.decided.length, since_train: null, model: matchState.model, auto_retrain: 25, training: { running: matchState.training, finished: null, error: '', counts: null } },
+      total: fits.length, facets, items: ordered.slice(start, start + limit) })
   }),
   http.post('/api/matches/decide', async ({ request }) => {
     const b = await request.json() as { listen_id: number; action: string; part_id?: number }
