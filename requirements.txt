@@ -2,3 +2,4 @@
 fastapi
 uvicorn
 pydantic
+zstandard; python_version < "3.14"
