@@ -34,7 +34,7 @@ def _listen_info(s: Session, ids: list[int]) -> dict[int, dict]:
 def _candidate(p: ListenPart) -> dict:
     d = p.detail or {}
     return dict(part_id=p.id, ordinal=p.ordinal, state=p.state, auto=p.state == 'accepted', p=p.score or 0., work_id=p.work_id, key=d.get('candidate'), title=d.get('title'), authors=d.get('authors') or [], year=d.get('year'), editions=d.get('editions'),
-                ol=d.get('ol') or [], isbns=d.get('isbns') or [], recordings=d.get('recordings') or [], recording=d.get('recording'), alias=d.get('alias'), reading=d.get('reading'), evidence=d.get('vector') or {}, p_none=d.get('p_none'), second=d.get('second'))
+                ol=d.get('ol') or [], isbns=d.get('isbns') or [], recordings=d.get('recordings') or [], programmes=d.get('programmes') or [], recording=d.get('recording'), alias=d.get('alias'), reading=d.get('reading'), evidence=d.get('vector') or {}, p_none=d.get('p_none'), second=d.get('second'))
 
 
 def queue_items(s: Session) -> list[dict]:

@@ -9,7 +9,7 @@ from app.identify import textkeys as tk
 from app.linkage.candidates import Cluster, main_key, real, shares_author, _same_person
 from app.linkage.query import Query, Reading
 
-FIELDS = ('title', 'author', 'narrator', 'runtime', 'asin', 'year', 'numbers', 'sources', 'popularity')
+FIELDS = ('title', 'author', 'narrator', 'runtime', 'asin', 'year', 'numbers', 'sources', 'popularity', 'channel', 'form')
 LEVELS = {
     'title': ('exact_rare', 'exact_common', 'exact_generic', 'main', 'close', 'partial', 'weak'),
     'author': ('all', 'some', 'surname', 'conflict'),
@@ -18,8 +18,10 @@ LEVELS = {
     'asin': ('match', 'other'),
     'year': ('same', 'close', 'later', 'earlier'),
     'numbers': ('agree', 'local_only', 'other_only', 'differ'),
-    'sources': ('both', 'openlibrary', 'audible'),
+    'sources': ('both', 'radio', 'openlibrary', 'audible'),
     'popularity': ('high', 'medium', 'low', 'none'),
+    'channel': ('match', 'conflict'),             # radio programmes only: the listen's tags and names point to the programme's BBC service, or to another
+    'form': ('agree', 'neutral', 'conflict'),      # the kind classifier's call for the listen against the candidate's type (a programme or a book): the prior that keeps books from radio candidates and radio from book ones
 }
 
 
@@ -98,6 +100,20 @@ def popularity_level(cluster: Cluster) -> str:
     return 'none'
 
 
+def channel_level(q: Query, cluster: Cluster) -> str | None:
+    services = {p.service or p.detail.get('service') for p in cluster.programmes} - {None, ''}
+    if not cluster.programmes or not q.channels or not services: return None
+    return 'match' if any(svc.startswith(c) or c.startswith(svc) for svc in services for c in q.channels) else 'conflict'
+
+
+def form_level(q: Query, cluster: Cluster) -> str | None:
+    """Is the candidate the right *kind* of thing for this listen? Unknown when the classifier has not run."""
+    if not q.band: return None
+    if q.band == 'review': return 'neutral'
+    broadcast = q.band == 'broadcast'; radio = bool(cluster.programmes) and not cluster.works and not cluster.products
+    return 'agree' if broadcast == radio else 'conflict'
+
+
 def compare(q: Query, reading: Reading, cluster: Cluster, homonyms: int) -> dict:
     """{field: level or None} plus `_alias` (best matching title) and `_asin` (closest recording) for display."""
     title, alias = title_level(reading, cluster.title_keys(), homonyms)
@@ -105,5 +121,5 @@ def compare(q: Query, reading: Reading, cluster: Cluster, homonyms: int) -> dict
     asins = {p.asin for p in cluster.products}
     return dict(title=title, author=author_level(reading, cluster), narrator=narrator_level(q, cluster), runtime=runtime,
                 asin=None if not q.asin else 'match' if q.asin in asins else 'other' if cluster.products else None,
-                year=year_level(q, cluster), numbers=numbers_level(reading, alias), sources='both' if cluster.works and cluster.products else 'openlibrary' if cluster.works else 'audible',
-                popularity=popularity_level(cluster), _alias=alias, _asin=q.asin if q.asin in asins else asin, _reading=reading.source)
+                year=year_level(q, cluster), numbers=numbers_level(reading, alias), sources='radio' if cluster.programmes and not cluster.works and not cluster.products else 'both' if cluster.works and cluster.products else 'openlibrary' if cluster.works else 'audible',
+                popularity=popularity_level(cluster), channel=channel_level(q, cluster), form=form_level(q, cluster), _alias=alias, _asin=q.asin if q.asin in asins else asin, _reading=reading.source)

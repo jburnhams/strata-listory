@@ -142,7 +142,7 @@ def test_a_persons_choices_and_confirmations_are_labels_and_learning_refits_the_
     for l in radio[:2]: kinds_db.set_kind(s, l.id, "radio_series")             # "the kind is right": a confirmation is the same answer as the current kind
     kinds_db.set_kind(s, odd.id, "book")
     params, counts = kinds_db.learn(s, audible=NO_AUDIBLE, radio=NO_RADIO)
-    assert counts == {"user": 3, "audible match": 0, "broadcast": 2, "book": 1}
+    assert counts == {"user": 3, "audible match": 0, "radio match": 0, "broadcast": 2, "book": 1}
     assert params.seen["channel"] == 2 and params.seen["programme genre"] == 1 and params.mult["programme genre"] < 1.0 and params.mult["channel"] > 1.0
     assert KM.load().version() == params.version()
     out = kinds_db.learn_and_classify(s, audible=NO_AUDIBLE, radio=NO_RADIO)
@@ -159,7 +159,7 @@ def test_an_accepted_audible_match_is_a_half_weight_label_whose_own_evidence_is_
     part.role = "match"; part.state = "accepted"; s.flush()
     audible = lambda asins: {"B0TESTBBBB": dict(content_type="Product", keywords=[], publisher="Tantor Audio")}
     params, counts = kinds_db.learn(s, audible=audible, radio=NO_RADIO)
-    assert counts == {"user": 0, "audible match": 1, "broadcast": 0, "book": 1}
+    assert counts == {"user": 0, "audible match": 1, "radio match": 0, "broadcast": 0, "book": 1}
     assert "audible audiobook" not in params.seen          # learned from the length and tags, not from the evidence that created the label
     assert "long" in params.seen
 

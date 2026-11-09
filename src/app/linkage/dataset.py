@@ -12,7 +12,7 @@ from app.linkage import candidates as C, compare as K
 from app.linkage.model import Case
 from app.linkage.query import Query, relpath
 
-VERSION = 5          # bump when candidates or comparisons change: cached vectors of older versions are recomputed
+VERSION = 6          # bump when candidates or comparisons change: cached vectors of older versions are recomputed
 
 
 def folder() -> Path: return Path(settings.data_dir()) / 'linkage'
@@ -22,16 +22,18 @@ def summary(cluster: C.Cluster) -> dict:
     """What review and apply need to know about a candidate work without the indexes."""
     return dict(key=cluster.key, title=cluster.title, authors=cluster.authors[:6], year=cluster.year, ol=[w['key'] for w in cluster.works], editions=sum(w['editions'] for w in cluster.works),
                 asins=[p.asin for p in cluster.products][:40], recordings=[dict(asin=p.asin, title=p.title, narrators=p.narrators[:4], minutes=p.runtime, fmt=p.fmt, year=p.year) for p in sorted(cluster.products, key=lambda p: -p.ratings)[:12]],
-                isbns=sorted({p.isbn for p in cluster.products if p.isbn})[:20])
+                isbns=sorted({p.isbn for p in cluster.products if p.isbn})[:20],
+                programmes=[dict(source=p.source, ref=p.ref, title=p.title, service=p.service or p.detail.get('service') or '', channel=p.detail.get('channel') or '', first_broadcast=p.first_broadcast or p.detail.get('first_broadcast') or '', type=p.detail.get('type') or '', episodes=p.detail.get('episodes'),
+                             genres=(p.detail.get('genres') or [])[:3], synopsis=p.detail.get('synopsis') or '') for p in cluster.programmes][:6])
 
 
-def vectors(oc, ac, q: Query) -> dict:
+def vectors(oc, ac, q: Query, radio=C.radio_candidates) -> dict:
     """{'clusters': {key: summary}, 'vectors': {key: [vector per reading]}} for one listen."""
-    found = C.for_query(oc, ac, q)
+    found = C.for_query(oc, ac, q, radio)
     homonyms = {r.title: olc.homonyms(oc, r.title) if oc is not None else 0 for r in q.readings[:C.MAX_READINGS]}
     out = {'clusters': {}, 'vectors': {}}
     for c in found:
-        vs = [K.compare(q, r, c, homonyms[r.title]) for r in q.readings[:C.MAX_READINGS]]
+        vs = [K.compare(q, r, c, homonyms[r.title] if not c.programmes or c.works or c.products else len(c.programmes)) for r in q.readings[:C.MAX_READINGS]]
         vs = [v for v in vs if v['title'] is not None]
         if vs: out['clusters'][c.key] = summary(c); out['vectors'][c.key] = vs
     return out
@@ -50,11 +52,13 @@ def build(oc, ac, queries: list[Query], cache: dict | None = None, progress=None
 def index_stamp(oc, ac) -> str:
     """Which indexes candidates came from: the Open Library build time and the Audible snapshot, or 'none' when one is missing."""
     from app.identify import audibleindex, olindex
-    return f"ol:{olindex.status().get('built', '?') if oc is not None else 'none'}|audible:{audibleindex.snapshot(ac) if ac is not None else 'none'}"
+    from app.identify import radioindex
+    ri = radioindex.index_path(); dt = radioindex.detail_path()
+    return f"ol:{olindex.status().get('built', '?') if oc is not None else 'none'}|audible:{audibleindex.snapshot(ac) if ac is not None else 'none'}|radio:{int(ri.stat().st_mtime) if ri.exists() else 'none'}:{int(dt.stat().st_mtime) if dt.exists() else 'none'}"
 
 
 def signature(q: Query, indexes: str = '') -> str:
-    return json.dumps([VERSION, indexes] + [[r.title, r.author] for r in q.readings[:C.MAX_READINGS]] + [q.narrators, q.asin, q.year, q.minutes, q.hints])
+    return json.dumps([VERSION, indexes] + [[r.title, r.author] for r in q.readings[:C.MAX_READINGS]] + [q.narrators, q.asin, q.year, q.minutes, q.hints, q.band, q.channels])
 
 
 def load_cache(name: str = 'vectors.json') -> dict:

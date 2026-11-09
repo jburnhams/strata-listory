@@ -151,10 +151,18 @@ def implied(f: K.Features, accepted: bool) -> bool | None:
 
 
 def labels(s: Session, ids: list[int], feats: dict[int, K.Features]) -> dict[int, tuple[bool, float, str]]:
-    """{listen id: (broadcast?, sample weight, source)}: a person's choice or confirmation of the kind (`user`, weight 1), else the kind an accepted Audible match implies (`audible match`, half weight)."""
+    """{listen id: (broadcast?, sample weight, source)}: a person's choice or confirmation of the kind (`user`, weight 1), a radio programme accepted as the listen's match (`radio match`: broadcast, weight 1 when a person accepted it, else half), else the kind an accepted Audible match implies (`audible match`, half weight)."""
     out: dict[int, tuple[bool, float, str]] = {}
     for k in s.scalars(select(ListenKind).where(ListenKind.listen_id.in_(ids), ListenKind.decided_by == 'user')): out[k.listen_id] = (k.kind != 'book', 1.0, 'user')
-    accepted = {lid for (lid,) in s.execute(select(ListenPart.listen_id).where(ListenPart.listen_id.in_(ids), ListenPart.role == 'match', ListenPart.state == 'accepted', ListenPart.unlinked_at.is_(None)))}
+    accepted: set[int] = set(); radio: dict[int, float] = {}
+    from app.linkage import apply as A
+    parts = list(s.scalars(select(ListenPart).where(ListenPart.listen_id.in_(ids), ListenPart.role.in_(('match', 'candidate')), ListenPart.state == 'accepted', ListenPart.unlinked_at.is_(None))))      # a person's approval of a candidate keeps its role and becomes state accepted
+    by_person = A.person_decisions(s, parts)
+    for p in parts:
+        if str((p.detail or {}).get('candidate') or '').startswith('radio:'): radio[p.listen_id] = 1.0 if p.id in by_person or p.linked_by == 'user' else IMPLICIT_WEIGHT      # accepted as a radio programme: broadcast
+        else: accepted.add(p.listen_id)
+    for lid, w in radio.items():
+        if lid not in out: out[lid] = (True, w, 'radio match')
     for lid in ids:
         if lid in out: continue
         y = implied(feats[lid], lid in accepted)
@@ -169,9 +177,10 @@ def learn(s: Session, *, audible=None, radio=None) -> tuple[K.Params, dict]:
     rows = []
     for lid, (y, w, src) in lab.items():
         sigs = K.signals(feats[lid])
-        if src != 'user': sigs = [x for x in sigs if x.name not in KM.AUDIBLE_SIGNALS]
+        if src == 'audible match': sigs = [x for x in sigs if x.name not in KM.AUDIBLE_SIGNALS]
+        elif src == 'radio match': sigs = [x for x in sigs if x.name != 'programme catalogue']      # the label came from the radio index: do not learn it back from that
         rows.append((sigs, y, w))
-    counts = {src: sum(1 for v in lab.values() if v[2] == src) for src in ('user', 'audible match')}
+    counts = {src: sum(1 for v in lab.values() if v[2] == src) for src in ('user', 'audible match', 'radio match')}
     counts.update(broadcast=sum(1 for v in lab.values() if v[0]), book=sum(1 for v in lab.values() if not v[0]))
     params = KM.fit(rows, counts); KM.save(params); return params, counts
 

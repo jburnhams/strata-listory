@@ -43,7 +43,16 @@ class Params:
     def to_json(self) -> dict: return dict(m=self.m, u=self.u, prior=self.prior, temperature=self.temperature)
 
     @classmethod
-    def from_json(cls, d: dict) -> 'Params': return cls(d['m'], d['u'], d['prior'], d['temperature'])
+    def from_json(cls, d: dict) -> 'Params':
+        """Parameters saved before a field or level existed (the radio fields, the `radio` source) get the starting values for what they lack, so an older model.json still loads (and is refitted by the next training)."""
+        base = initial(); out = {}
+        for key in ('m', 'u'):
+            got = {}
+            for f in FIELDS:
+                have = d[key].get(f, {})
+                got[f] = dict(have) if all(lvl in have for lvl in LEVELS[f]) and set(have) == set(LEVELS[f]) else _norm({lvl: have.get(lvl, getattr(base, key)[f][lvl]) for lvl in LEVELS[f]})      # a complete field is kept exactly as saved (no float drift); only a field with a missing level is filled and renormalised
+            out[key] = got
+        return cls(out['m'], out['u'], d['prior'], d['temperature'])
 
     def version(self) -> str: return 'fs-' + hashlib.sha256(json.dumps(self.to_json(), sort_keys=True).encode()).hexdigest()[:10]
 

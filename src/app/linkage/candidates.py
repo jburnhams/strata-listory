@@ -6,11 +6,12 @@ from __future__ import annotations
 import difflib, re
 from dataclasses import dataclass, field
 
-from app.identify import candidates as olc, textkeys as tk
+from app.identify import candidates as olc, radioindex, textkeys as tk
 from app.linkage.query import Query
 
 MAX_READINGS = 6
 MAX_OL = 60
+MAX_RADIO = 6
 MAX_AUDIBLE = 80
 AUTHOR_BOOKS = 1500
 
@@ -36,21 +37,36 @@ class Product:
 
 
 @dataclass
+class Programme:
+    """One radio programme record from the local index (`identify.radioindex`): BBC Programmes or Wikidata, with the cached BBC detail when there is one."""
+    source: str
+    ref: str
+    title: str
+    title_key: str
+    service: str = ''
+    first_broadcast: str = ''
+    detail: dict = field(default_factory=dict)
+
+
+@dataclass
 class Cluster:
-    """A candidate work: Open Library works (described as in `identify.candidates.describe`) and Audible products."""
+    """A candidate: Open Library works (described as in `identify.candidates.describe`), Audible products, or the radio programmes of one title. Books and programmes never join: a radio adaptation of a novel is a different candidate from the novel, and which one a listen is depends on the listen (the `form` comparison)."""
     works: list[dict] = field(default_factory=list)
     products: list[Product] = field(default_factory=list)
+    programmes: list[Programme] = field(default_factory=list)
     via: set[str] = field(default_factory=set)
 
     @property
     def key(self) -> str:
         """Stable identity: the most-edition Open Library work, else the lowest ASIN."""
         if self.works: return max(self.works, key=lambda w: (w['editions'], w['key']))['key']
+        if not self.products and self.programmes: return 'radio:' + self.programmes[0].title_key.replace(' ', '-')
         return 'asin:' + min(p.asin for p in self.products)
 
     @property
     def title(self) -> str:
         if self.works: return max(self.works, key=lambda w: w['editions'])['title']
+        if not self.products and self.programmes: return self.programmes[0].title
         return max(self.products, key=lambda p: p.ratings).title
 
     @property
@@ -60,7 +76,7 @@ class Cluster:
 
     @property
     def year(self) -> int | None:
-        years = [w['year'] for w in self.works if w.get('year')] + [p.year for p in self.products if p.year]
+        years = [w['year'] for w in self.works if w.get('year')] + [p.year for p in self.products if p.year] + [y for p in self.programmes if (y := _year(p.first_broadcast))]
         return min(years) if years else None
 
     def title_keys(self) -> dict[str, int]:
@@ -68,6 +84,7 @@ class Cluster:
         out: dict[str, int] = {}
         for w in self.works:
             for (norm, _kind), n in w['titles'].items(): out[norm] = out.get(norm, 0) + n
+        for p in self.programmes: out[p.title_key] = out.get(p.title_key, 0) + 1
         for p in self.products:
             for k in (p.title_key, tk.title_key(f'{p.title}: {p.subtitle}') if p.subtitle else ''):
                 if k: out[k] = out.get(k, 0) + 1
@@ -235,6 +252,23 @@ def clusters(oc, works: dict[str, dict], found: dict[str, Product]) -> list[Clus
     return list(out.values())
 
 
-def for_query(oc, ac, q: Query) -> list[Cluster]:
+def radio_candidates(q: Query, find=None, details=None) -> list[Cluster]:
+    """Radio programmes whose title is a title of the listen (any reading), one cluster per title key. Not proposed at all for a listen the kind classifier calls a book (`q.band == 'book'`): books must not collect radio candidates; a listen with no verdict yet, a close call or a broadcast does. `find`/`details` default to the local radio index and its detail cache (nothing without them)."""
+    if q.band == 'book': return []
+    find = find or radioindex.find; details = details or radioindex.details
+    hits = find([r.title for r in q.readings[:MAX_READINGS]]) or []
+    by: dict[str, list[Programme]] = {}
+    for h in hits:
+        k = tk.title_key(h['title'])
+        if k: by.setdefault(k, []).append(Programme(h['source'], h['ref'], h['title'], k, h.get('service') or '', h.get('first_broadcast') or ''))
+    extra = details([p.ref for ps in by.values() for p in ps if p.source == 'bbc_radio']) or {}
+    for ps in by.values():
+        for p in ps: p.detail = extra.get(p.ref, {})
+    wanted = {tk.title_key(r.title) for r in q.readings[:MAX_READINGS]}
+    order = sorted(by, key=lambda k: (k not in wanted, -len(by[k]), k))[:MAX_RADIO]
+    return [Cluster(programmes=by[k], via={'radio_title'}) for k in order]
+
+
+def for_query(oc, ac, q: Query, radio=radio_candidates) -> list[Cluster]:
     found = audible_candidates(ac, q)
-    return clusters(oc, ol_candidates(oc, q, found), found)
+    return clusters(oc, ol_candidates(oc, q, found), found) + (radio(q) if radio else [])

@@ -1,5 +1,9 @@
 # Progress log
 
+## 2026-11-09: radio programmes as an identification source
+
+The radio catalogue (BBC Programmes A-Z, Wikidata) is now a third candidate source beside Open Library and Audible: broadcast and close-call listens get radio programme candidates scored by the same model (new `channel` and `form` comparisons), shown on the Matches card with the BBC's own record, and a radio match accepted by a person is a broadcast label for the kind classifier. See [listen-kinds.md](listen-kinds.md).
+
 ## 2026-11-09: book or radio? a scored classification
 
 Listens are now classified as book, radio series, radio programme or play from many weak signals (channel names, series/episode wording, genre tags, slot-length parts, Audible content type, a local BBC/Wikidata programme index) with the reasons kept, instead of file-name rules alone; an unabridged reading by a BBC actor stays a book. A person's choice is never overwritten; close calls are flagged for review. See [listen-kinds.md](listen-kinds.md).

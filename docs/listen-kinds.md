@@ -71,10 +71,20 @@ Web: the one **Kind of listen** filter on the Matches page takes each kind (book
 * **BBC programme JSON** (`/programmes/<pid>.json`): works, gives service, genre and episode counts per programme, but needs a pid; the A-Z already provides the title list, so per-programme pages are not fetched.
 * **MusicBrainz** and **Open Library** subjects were considered: MusicBrainz is music, and the Open Library dumps are already used for books; neither identifies a broadcast.
 
-Titles collide with books ("Middlemarch", "Just William"), so a catalogue hit is moderate evidence (+1.0, +1.6 when it is on the BBC list and also a Wikidata drama or listed twice), and keys shorter than six letters are ignored.
+The index is also a **candidate source** for identification (below). Titles collide with books ("Middlemarch", "Just William"), so a catalogue hit is moderate evidence (+1.0, +1.6 when it is on the BBC list and also a Wikidata drama or listed twice), and keys shorter than six letters are ignored.
 
 ## Known limits
 
 * The embedded-tag summary stores no comment tag, so "dramatised by ..." in a comment is not seen.
 * Plays and dramatisations of novels that a publisher lists as ordinary audiobooks (Audible "Product") can only be caught by their tags and lengths.
 * Weights are hand-set and explainable rather than fitted; the review band is the safety valve.
+
+## Radio programmes as an identification source
+
+Alongside Open Library works and Audible recordings, a *radio programme* is a third kind of candidate for a listen (`linkage/candidates.py`: `Programme`, `radio_candidates`). The pipeline is the identification one, not a parallel mechanism:
+
+* **Candidates**: programmes whose title key equals a title of the listen (any reading) in the radio index, one cluster per title (the BBC record and the Wikidata item of one title are one candidate), at most six. A listen the kind classifier calls a **book** gets none: books must not collect radio candidates. A listen with no verdict yet, a close call or a broadcast does. Books and programmes never join clusters: a radio adaptation of a novel is a different candidate from the novel.
+* **Record** (the `programmes` list on the candidate and the stored match part): source (`bbc_radio`, `wikidata_radio`, `wikidata_drama`), ref (BBC pid or Wikidata item), title, service and channel, first broadcast, type (brand, series, episode), episode count, genres, short synopsis. The first four come from the index; the rest from the BBC's `/programmes/<pid>.json`, fetched once per candidate pid by `./app listens-identify-prepare` (`--no-radio-details` skips it), cached in `data/radio/detail.sqlite`, never required.
+* **Comparison** (`compare.py`): the usual title and year levels, plus `sources = radio`, `channel` (the channel words in the listen's tags and names, `query.channels_in`, against the programme's service: match or conflict) and `form` (the kind classifier's band for the listen against the candidate's type: agree, neutral, conflict; this is what keeps books from radio and radio from book candidates). The same Fellegi-Sunter model learns what each level is worth (an older model.json loads with starting values for the new fields).
+* **Result**: a `Work(kind='radio_programme')` with identifiers `work = radio:<title>`, `bbc_pid`, `wikidata`, linked as a `match` or `candidate` part exactly like a book; the Matches card shows the programme (channel, type, first broadcast, episodes, BBC and Wikidata links, the evidence words). Accept, reject and none work as for books.
+* **Kind learning**: a radio programme accepted as the match is a broadcast label (weight 1 when a person accepted it, 0.5 when the model did); the `programme catalogue` signal is left out of those rows so the label is not learned from its own evidence.

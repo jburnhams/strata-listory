@@ -103,3 +103,54 @@ def find(titles: list[str], *, path: Path | None = None) -> list[dict]:
         return [dict(source=s, ref=r, title=t, service=svc, first_broadcast=fb) for s, r, t, svc, fb in db.execute(f'SELECT source, ref, title, service, first_broadcast FROM programme WHERE title_key IN ({",".join("?" * len(keys))}) ORDER BY source, ref', sorted(keys))]
     except sqlite3.Error: return []
     finally: db.close()
+
+
+# ---- per-programme detail: fetched only for programmes that a listen's candidates name, cached, refreshable
+
+BBC_DETAIL_URL = 'https://www.bbc.co.uk/programmes/{pid}.json'
+
+
+def detail_path() -> Path: return folder() / 'detail.sqlite'
+
+
+def _detail_db(path: Path | None = None, create: bool = False) -> sqlite3.Connection | None:
+    p = Path(path or detail_path())
+    if not p.exists() and not create: return None
+    p.parent.mkdir(parents=True, exist_ok=True); db = sqlite3.connect(p)
+    try: db.execute('CREATE TABLE IF NOT EXISTS detail (ref TEXT PRIMARY KEY, body TEXT NOT NULL, fetched TEXT NOT NULL)')
+    except sqlite3.DatabaseError: db.close(); return None          # not a database: treated as no cache
+    return db
+
+
+def summarise_bbc(body: dict) -> dict:
+    """The fields a match card and the comparison use, from `/programmes/<pid>.json`: type (brand, series, episode), service, first broadcast, episode count, genres and formats, short synopsis."""
+    p = (body or {}).get('programme') or {}
+    cats = p.get('categories') or []
+    return dict(type=p.get('type') or '', service=((p.get('ownership') or {}).get('service') or {}).get('id') or '', channel=((p.get('ownership') or {}).get('service') or {}).get('title') or '', first_broadcast=(p.get('first_broadcast_date') or '')[:10],
+                episodes=p.get('aggregated_episode_count'), genres=[c['title'] for c in cats if c.get('type') == 'genre' and c.get('title')], formats=[c['title'] for c in cats if c.get('type') == 'format' and c.get('title')], synopsis=(p.get('short_synopsis') or '')[:240])
+
+
+def fetch_details(http, refs: list[str], *, refresh: bool = False, path: Path | None = None, log=print) -> int:
+    """Fetch and cache `/programmes/<pid>.json` for BBC pids not cached yet (all with `refresh`). Returns how many were stored. A pid the BBC no longer knows is skipped."""
+    from datetime import datetime, timezone
+    db = _detail_db(path, create=True); stored = 0
+    if db is None: return 0
+    try:
+        have = {r for (r,) in db.execute('SELECT ref FROM detail')}
+        for ref in dict.fromkeys(refs):
+            if ref in have and not refresh: continue
+            body = http.request(BBC_DETAIL_URL.format(pid=ref))
+            if body is None: continue
+            db.execute('INSERT OR REPLACE INTO detail VALUES (?,?,?)', (ref, json.dumps(summarise_bbc(body)), datetime.now(timezone.utc).isoformat())); db.commit(); stored += 1
+            log(f'detail {ref}')
+    finally: db.close()
+    return stored
+
+
+def details(refs: list[str], *, path: Path | None = None) -> dict[str, dict]:
+    """Cached detail for these refs (those not fetched are absent). {} without a cache."""
+    db = _detail_db(path)
+    if db is None or not refs: return {}
+    try: return {r: json.loads(b) for r, b in db.execute(f'SELECT ref, body FROM detail WHERE ref IN ({",".join("?" * len(refs))})', list(refs))}
+    except (sqlite3.Error, ValueError): return {}
+    finally: db.close()
