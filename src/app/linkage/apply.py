@@ -4,10 +4,10 @@ For each listen the model's posterior over its candidate works decides one of:
 * **accept** (best work at least `threshold`): the work is found or created (`work` with its Open Library work keys, ISBNs and Audible ASINs as identifiers, so a second listen of the same book finds the same row) and linked as a `match` listen-part in state `accepted`, linked by the model, with the probability, the runner-up, P(none), the comparison vector and the closest recording in `detail`; status `identified`.
 * **review**: the top few works are linked as `candidate` parts (ordinal = rank) and the status is `review`; a person accepts or rejects them, and those decisions become labels for the next fit.
 * **none** (very likely none of the candidates): no parts, status `review` with that reason.
-A listen with a match a person linked or decided is left alone. Rerunning replaces only the model's own parts, and only when the answer changed, so the event log records real changes."""
+A listen with a match a person linked or decided is left alone. Rerunning replaces only the model's own parts, and only when the answer changed, so the event log records real changes. A rejection stays linked with its ordinal, so the replacement parts are numbered after it."""
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.identify import textkeys as tk
@@ -75,6 +75,7 @@ def _detail(key, p, post, none, used, clusters) -> dict:
 
 def apply(s: Session, data: dict, params: M.Params, *, threshold: float = THRESHOLD, ids=None) -> dict[str, int]:
     """Decide and write every listen in `data` ({listen_id: vectors}); returns counts per outcome."""
+    _one_run_at_a_time(s)
     run = new_run(s, 'identify', {'model': params.version(), 'threshold': threshold}); ref = f'{params.version()}@{threshold}'
     counts = dict(accept=0, review=0, none=0, kept=0, unchanged=0)
     for lid, d in data.items():
@@ -99,9 +100,13 @@ def apply(s: Session, data: dict, params: M.Params, *, threshold: float = THRESH
                 if fresh != p.detail: p.detail = fresh
             counts['unchanged'] += 1; continue
         for p in parts: L.unlink(s, p, actor_kind='model', actor_ref=ref, run_id=run.id, reason='replaced by a new identification')
-        for n, (k, state) in enumerate(want, 1):
+        held = {}                               # rejections stay linked with their ordinals and the active ordinal is unique per role, so new parts are numbered after them (still in rank order)
+        for p in everything:
+            if p.state == 'rejected' and p.ordinal is not None: held[p.role] = max(held.get(p.role, 0), p.ordinal)
+        for k, state in want:
+            role = 'match' if state == 'accepted' else 'candidate'; held[role] = n = held.get(role, 0) + 1
             work = work_for(s, d['clusters'][k])
-            part = L.link(s, listen, 'match' if state == 'accepted' else 'candidate', work_id=work.id, ordinal=n, state='candidate', score=round(post[k], 4), detail=_detail(k, post[k], post, none, used, d['clusters']), actor_kind='model', actor_ref=ref, run_id=run.id,
+            part = L.link(s, listen, role, work_id=work.id, ordinal=n, state='candidate', score=round(post[k], 4), detail=_detail(k, post[k], post, none, used, d['clusters']), actor_kind='model', actor_ref=ref, run_id=run.id,
                           reason=f'P={post[k]:.3f} of being this work' + (f' (runner-up {sorted(post.values(), reverse=True)[1]:.3f})' if len(post) > 1 else ''))
             if state == 'accepted': L.set_state(s, part, 'accepted', actor_kind='auto_policy', actor_ref=ref, run_id=run.id, reason=f'P={post[k]:.3f} >= {threshold}', after=dict(score=round(post[k], 4), p_none=round(none, 4), model=params.version(), threshold=threshold))
         L.set_status(s, listen, status, actor_kind='auto_policy' if decision == 'accept' else 'model', actor_ref=ref, run_id=run.id,
@@ -111,6 +116,12 @@ def apply(s: Session, data: dict, params: M.Params, *, threshold: float = THRESH
 
 
 NOT_FOUND = 'not_found'
+
+
+def _one_run_at_a_time(s: Session) -> None:
+    """Two runs over the same listens (the CLI while the web's Learning runs, say) would each unlink and relink the same parts and collide on the ordinals or double the event log, so a run holds a transaction-scoped Postgres advisory lock until it commits; a second run is refused rather than queued. The web's own thread lock (`service`) only covers one process."""
+    if s.get_bind().dialect.name != 'postgresql': return
+    if not s.scalar(text("select pg_try_advisory_xact_lock(hashtext('listory.identify'))")): raise RuntimeError('another identification run is in progress')
 
 
 def person_decisions(s: Session, parts: list[ListenPart]) -> set[int]:
