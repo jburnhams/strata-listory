@@ -58,7 +58,21 @@ def author_text(value: str) -> str:
     return ', '.join(tk.people(value))
 
 
-def make_readings(choices: dict, tags: dict, folder: dict, file: dict | None = None) -> list[Reading]:
+def common_title(names: list[str]) -> str:
+    """The title shared by the file names of a multi-file listen ('Invented Book 01.mp3', 'Invented Book 02.mp3'...): leading track numbers, extensions and trailing part/chapter/disc numbers stripped, then the longest common prefix cut at a word boundary. '' unless at least three files share at least two words (or a long single one) that are not generic."""
+    if len(names) < 3: return ''
+    stems = [re.sub(r'^\s*\d+\s*[-._)]*\s+', '', os.path.splitext(n)[0].replace('_', ' ')) for n in names]
+    stems = [re.sub(r'\s+', ' ', re.sub(r'[\[(][^\])]*[\])]', ' ', s)).strip() for s in stems]
+    words = [s.split() for s in stems]; n = 0
+    while n < min(map(len, words)) and len({w[n].lower() for w in words}) == 1: n += 1      # whole words only, so 'Chapter 1' and 'Chapter 2' stop before the digit
+    cut = ' '.join(words[0][:n])
+    for _ in range(4): cut = re.sub(r'[\s\-._:,]*(?:\b(?:part|pt|chapter|ch|chap|disc|disk|cd|track)\b\.?\s*\d*|\b(?:book|vol|volume)\b\.?\s*\d+|\d+)$', '', cut, flags=re.I)      # trailing part/disc/track numbers, repeatedly ('Disc 1 Track'); 'Book 5' only with its number
+    cut = cut.strip(' -._:,')
+    if not cut or GENERIC.match(cut) or cut.lower() in scan.GENERIC or len(cut.split()) < 2 and len(cut) < 8: return ''
+    return cut
+
+
+def make_readings(choices: dict, tags: dict, folder: dict, file: dict | None = None, prefix: str = '') -> list[Reading]:
     """Readings in order of trust (`file`: the parsed name of a single-file listen's file, which is the title itself, not a chapter name, and is read even when tags give a different title), duplicates (same title and author key) removed. Each yields its own numbered/stripped variants via `identify.local`."""
     def tag(f, minimum=0.5):
         t = tags.get(f) or {}; v = t.get('value') if isinstance(t, dict) and (t.get('share') or 0) >= minimum else None
@@ -68,6 +82,7 @@ def make_readings(choices: dict, tags: dict, folder: dict, file: dict | None = N
     for title_field in ('album', 'title'):
         if (t := tag(title_field)) and (title_field == 'album' or (tags.get('tagged') or 0) <= 3): raw.append(Reading(t, tag('album_artist') or tag('artist'), 'tags'))
     if file and file.get('title') and file['title'].strip().lower() not in scan.GENERIC: raw.append(Reading(file['title'], file.get('author') or '', 'file'))
+    if prefix: raw.append(Reading(prefix, '', 'prefix'))
     if folder.get('title') and folder['title'].strip().lower() not in scan.GENERIC:
         raw.append(Reading(folder['title'], folder.get('author') or '', 'folder'))
         if folder.get('author'): raw.append(Reading(folder['author'], folder['title'], 'swapped'))       # 'The Secret History - Donna Tartt' parses as author 'The Secret History'
@@ -84,13 +99,13 @@ def make_readings(choices: dict, tags: dict, folder: dict, file: dict | None = N
     return out[:12]
 
 
-def from_parts(listen_id: int, kind: str, label: str, choices: dict, tags: dict, folder: dict, inputs: list[dict], band: str = '', filename: str = '') -> Query:
+def from_parts(listen_id: int, kind: str, label: str, choices: dict, tags: dict, folder: dict, inputs: list[dict], band: str = '', filename: str = '', names: list[str] | None = None) -> Query:
     """A Query from the listen's pieces (kept separate from the database read so tests can build one directly)."""
     narr = choices.get('narrator') or (tags.get('narratedby') or {}).get('value') or folder.get('narrator') or ''
     asin = tk.asin(choices.get('asin') or (tags.get('audible_asin') or {}).get('value') or folder.get('asin') or '')
     year = choices.get('year') if isinstance(choices.get('year'), int) else None
     hints = [h.strip() for t in (choices.get('title'), folder.get('folder'), (tags.get('album') or {}).get('value')) if t for h in re.findall(r'\(([^)]{3,60})\)', str(t)) if not NOISE.fullmatch(f'({h})') and not re.fullmatch(r'[\d\s-]+', h)]
-    return Query(listen_id, kind, label, make_readings(choices, tags, folder, scan.parse_name(filename) if filename else None), tk.people(narr), asin, year, [float(i['minutes']) for i in inputs if i.get('minutes')], str(choices.get('language') or ''), (inputs[0].get('path') or '') if inputs else '', list(dict.fromkeys(hints)), band,
+    return Query(listen_id, kind, label, make_readings(choices, tags, folder, scan.parse_name(filename) if filename else None, common_title(names or [])), tk.people(narr), asin, year, [float(i['minutes']) for i in inputs if i.get('minutes')], str(choices.get('language') or ''), (inputs[0].get('path') or '') if inputs else '', list(dict.fromkeys(hints)), band,
                  channels_in(label, str(choices.get('title') or ''), str(choices.get('author') or ''), str(folder.get('folder') or ''), *[str((tags.get(f) or {}).get('value') or '') for f in ('album', 'artist', 'album_artist', 'composer', 'publisher', 'genre')]))
 
 
@@ -104,12 +119,14 @@ def load(s, kinds=ALL_KINDS, ids=None) -> list[Query]:  # pragma: no cover - Pos
         (select jsonb_agg(p.detail order by p.ordinal) from listen_part p where p.listen_id = l.id and p.role = 'input' and p.unlinked_at is null) as inputs,
         (select band from listen_kind k where k.listen_id = l.id) as band,
         (select loc.path from listen_part p join part_filegroup fg on fg.id = p.filegroup_id and fg.file_count = 1 join part_filegroup_member m on m.group_id = fg.id and m.file_id is not null join part_file_location loc on loc.file_id = m.file_id and loc.gone_at is null
-          where p.listen_id = l.id and p.role = 'input' and p.unlinked_at is null order by p.ordinal limit 1) as file_path
+          where p.listen_id = l.id and p.role = 'input' and p.unlinked_at is null order by p.ordinal limit 1) as file_path,
+        (select array_agg(regexp_replace(loc.path, '^.*/', '') order by loc.path) from (select p.filegroup_id from listen_part p where p.listen_id = l.id and p.role = 'input' and p.unlinked_at is null and p.filegroup_id is not null order by p.ordinal limit 1) f
+          join part_filegroup_member m on m.group_id = f.filegroup_id and m.file_id is not null join part_file_location loc on loc.file_id = m.file_id and loc.gone_at is null) as names
         from listen l where {where} order by l.id"""), dict(kinds=list(kinds), ids=list(ids or []))).all()
     out = []
-    for lid, kind, label, choices, records, inputs, band, file_path in rows:
+    for lid, kind, label, choices, records, inputs, band, file_path, names in rows:
         records = records or {}
-        out.append(from_parts(lid, kind, label or '', choices or {}, records.get('embedded_tags') or {}, records.get('folder_name') or {}, inputs or [], band or '', os.path.basename(file_path or '')))
+        out.append(from_parts(lid, kind, label or '', choices or {}, records.get('embedded_tags') or {}, records.get('folder_name') or {}, inputs or [], band or '', os.path.basename(file_path or ''), names or []))
     return out
 
 

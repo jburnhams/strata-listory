@@ -285,3 +285,16 @@ def test_a_single_files_name_is_a_reading_even_when_the_title_came_from_the_cont
     tags = dict(tagged=1, album=dict(value='The Invented Handbook', share=1.))
     assert [r.title for r in Q.make_readings({}, tags, {}, file)].count('The Invented Handbook') == 1
     assert Q.make_readings({}, {}, {}, Q.scan.parse_name('Books.m4b')) == []           # a generic file name says nothing
+
+
+def test_common_title_of_multi_file_names():
+    ct = Q.common_title
+    assert ct([f'Invented Book {i:02d}.mp3' for i in range(1, 9)]) == 'Invented Book'
+    assert ct([f'{i:02d} - The Invented Book - Part {i}.mp3' for i in range(1, 5)]) == 'The Invented Book'
+    assert ct([f'Invented Book Disc 1 Track {i}.mp3' for i in range(1, 5)]) == 'Invented Book'
+    assert ct([f'Chapter {i}.mp3' for i in range(1, 9)]) == ''                      # no title in the names
+    assert ct(['Track 01.mp3', 'Track 02.mp3', 'Track 03.mp3']) == ''
+    assert ct(['One Thing.mp3', 'Another Thing.mp3', 'Third Thing.mp3']) == ''     # nothing shared
+    assert ct(['Invented Book 1.mp3', 'Invented Book 2.mp3']) == ''                # too few files to trust
+    rs = Q.make_readings({}, {}, {}, None, 'Invented Book')
+    assert [(r.title, r.source) for r in rs][0] == ('Invented Book', 'prefix')
