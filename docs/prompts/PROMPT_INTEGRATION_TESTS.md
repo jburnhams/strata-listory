@@ -11,7 +11,7 @@ You run without a human: nobody will answer questions, approve a plan or review 
 1. Read `AGENTS.md` and `CLAUDE.md` at the repo root. They are authoritative. The web app (`web/`) is out of scope.
 2. Read **`tests/README.md`** (shared commands, hermetic setup, ownership rules) and **`tests/integration/README.md`** (fixtures, conventions, coverage table, known issues) in full. **This task runs in parallel with the unit-test and web-test tasks on other branches, so obey the ownership table in `tests/README.md`**: you may edit `tests/integration/**`, new `tests/utils/integration_<topic>.py` files, and `tests/integration/README.md`. Don't touch `tests/unit/**`, `tests/conftest.py`, `tests/README.md`, `tests/unit/README.md`, `pyproject.toml`, the workflows or `web/`.
 3. What integration means here: a test that needs a real file layout on disk, several modules together, a real process, or the CLI/HTTP boundary. Pure logic is a *unit* test (see `docs/prompts/PROMPT_BACKEND_UNIT_TESTS.md`); put it in `tests/unit/`, where it counts toward the coverage gate.
-4. Setup: `pip install -r requirements-test.txt`. Commands from the repo root: `pytest tests/integration -n auto`, `pytest tests/integration -p randomly --randomly-seed=N`, `ruff check src tests`.
+4. Setup: `uv sync`. Commands from the repo root: `pytest tests/integration -n auto`, `pytest tests/integration -p randomly --randomly-seed=N`, `ruff check src tests`.
 5. **GitHub Actions is the source of truth.** `integration.yml` runs this suite on Linux, macOS and Windows (all blocking), plus the web component tests.
 
 ## 1. Choose the slice (data-driven, so reruns don't collide)

@@ -14,7 +14,7 @@ Replaces the rule-engine route for deciding *which written work* a local item is
 ## Commands
 
 ```sh
-python -m pip install -r requirements-model.txt         # optional; training and scoring need it
+uv sync --group model                                    # optional; training and scoring need it
 ./app identify-train      # fit from approvals + stored decisions, saves data/identify/model.ubj
 ./app identify-refresh    # score the library, cache the queue
 ./app identify-queue --limit 10

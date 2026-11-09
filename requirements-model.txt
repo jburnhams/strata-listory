@@ -1,4 +1,0 @@
-# Optional offline matching experiments; not application/server dependencies.
-scikit-learn>=1.7,<2
-xgboost-cpu>=3,<4; (sys_platform == "linux" or sys_platform == "win32") and (platform_machine == "x86_64" or platform_machine == "AMD64")
-xgboost>=3,<4; (sys_platform != "linux" and sys_platform != "win32") or (platform_machine != "x86_64" and platform_machine != "AMD64")

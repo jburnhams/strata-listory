@@ -1,70 +1,133 @@
 """The processing queue, with a person in the loop: plans are *proposed* for confirmed books, a person *approves* or *rejects* each (the Processing page or the CLI), and only approved plans are run. Nothing is processed automatically.
 
 States (catalogue.PLAN_STATES): planning -> proposed -> approved -> running -> done | failed; a proposal can also be rejected (and is then not proposed again). A plan is the exact thing that was shown: before it runs, the inbox files are compared with what was planned and a changed book fails with a request to propose it again."""
-import os, queue as _queue, threading
+
+import os
+import queue as _queue
+import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC
 
 from app import catalogue, details, fs, settings, sources
-from app.process import plan as P, probe, run as R
+from app.process import plan as P
+from app.process import probe
+from app.process import run as R
 
 
 def summary(plan: dict) -> dict:
     """What the Processing page shows for a plan (the full chapter list is shown on demand)."""
     tiers: dict[str, int] = {}
-    for c in plan['chapters']: tiers[c['tier']] = tiers.get(c['tier'], 0) + 1
-    l = plan['loudness']
+    for c in plan["chapters"]:
+        tiers[c["tier"]] = tiers.get(c["tier"], 0) + 1
+    l = plan["loudness"]
     from app.ingest.metadata import plan_sections
-    book_metadata,audiobook_metadata=plan_sections(plan)
-    return dict(hours=round(plan['duration'] / 3600, 2), files=plan['in_files'], chapters=len(plan['chapters']), chapter_source=plan['chapter_source'], tiers=tiers, in_bytes=plan['in_bytes'], est_bytes=plan['est_bytes'], out_dir=plan['out_dir'],
-                loudness_before=l['I'], loudness_after_est=round(l['I'] + l['apply_db'], 1), decision=l['decision'], reencoded=l['reencoded'], warnings=plan['warnings'], downmix=plan['downmix'],
-                metadata=plan.get('metadata', []), book_metadata=book_metadata,audiobook_metadata=audiobook_metadata,year=plan.get('year'), enhancement=plan.get('enhancement'), advisories=plan.get('advisories',[]),
-                chapter_list=[dict(file=c['file'], title=c['title'], minutes=round(c['duration'] / 60, 1), mode=c['mode'], tier=c['tier']) for c in plan['chapters']])
+
+    book_metadata, audiobook_metadata = plan_sections(plan)
+    return dict(
+        hours=round(plan["duration"] / 3600, 2),
+        files=plan["in_files"],
+        chapters=len(plan["chapters"]),
+        chapter_source=plan["chapter_source"],
+        tiers=tiers,
+        in_bytes=plan["in_bytes"],
+        est_bytes=plan["est_bytes"],
+        out_dir=plan["out_dir"],
+        loudness_before=l["I"],
+        loudness_after_est=round(l["I"] + l["apply_db"], 1),
+        decision=l["decision"],
+        reencoded=l["reencoded"],
+        warnings=plan["warnings"],
+        downmix=plan["downmix"],
+        metadata=plan.get("metadata", []),
+        book_metadata=book_metadata,
+        audiobook_metadata=audiobook_metadata,
+        year=plan.get("year"),
+        enhancement=plan.get("enhancement"),
+        advisories=plan.get("advisories", []),
+        chapter_list=[
+            dict(file=c["file"], title=c["title"], minutes=round(c["duration"] / 60, 1), mode=c["mode"], tier=c["tier"])
+            for c in plan["chapters"]
+        ],
+    )
 
 
 def _plan_one(book: dict, final_dir: str) -> dict:
     from app.ingest import pipeline, store
-    ingest=store.latest(book['id'])
+
+    ingest = store.latest(book["id"])
     if ingest:
-        inv=pipeline.stage_data(ingest,'inventory');planned=pipeline.stage_data(ingest,'planning')
-        if ingest['state'] not in ('review','eligible','processing_failed') or not planned or not planned.get('plan'):raise probe.ToolError('ingest has no completed plan')
-        if inv['primary_id']!=book['id']:raise probe.ToolError(f"this entry belongs to ingest group for book {inv['primary_id']}")
-        try:pipeline.require_approvals(ingest)
-        except ValueError as e:raise probe.ToolError(str(e)) from e
-        plan=pipeline.apply_quality_rating(planned['plan'],ingest)
-        if not _unchanged(book,plan):raise probe.ToolError('ingest inputs changed: run ingest again')
-        evaluation=pipeline.evaluate(ingest['id'],save=False)
-        return dict(plan,warnings=list(plan['warnings'])+[f"ingest: {c['metric']} {c['reason']}" for c in evaluation['checks'] if not c['passed']])
-    side = details.sidecar(book['path']) if os.path.exists(book['path']) else None
+        inv = pipeline.stage_data(ingest, "inventory")
+        planned = pipeline.stage_data(ingest, "planning")
+        if ingest["state"] not in ("review", "eligible", "processing_failed") or not planned or not planned.get("plan"):
+            raise probe.ToolError("ingest has no completed plan")
+        if inv["primary_id"] != book["id"]:
+            raise probe.ToolError(f"this entry belongs to ingest group for book {inv['primary_id']}")
+        try:
+            pipeline.require_approvals(ingest)
+        except ValueError as e:
+            raise probe.ToolError(str(e)) from e
+        plan = pipeline.apply_quality_rating(planned["plan"], ingest)
+        if not _unchanged(book, plan):
+            raise probe.ToolError("ingest inputs changed: run ingest again")
+        evaluation = pipeline.evaluate(ingest["id"], save=False)
+        return dict(
+            plan,
+            warnings=list(plan["warnings"])
+            + [f"ingest: {c['metric']} {c['reason']}" for c in evaluation["checks"] if not c["passed"]],
+        )
+    side = details.sidecar(book["path"]) if os.path.exists(book["path"]) else None
     audible = details.audible_summary(side) if side else None
-    return P.make_plan(book, final_dir, audible, None, sources.gather(book, audible))        # asks every source that can be asked (Audnexus, Audible, AudiobookDB, Open Library, Hardcover), then merges
+    return P.make_plan(
+        book, final_dir, audible, None, sources.gather(book, audible)
+    )  # asks every source that can be asked (Audnexus, Audible, AudiobookDB, Open Library, Hardcover), then merges
 
 
 def propose(limit: int = 5, jobs: int = 2, ids: list[int] | None = None) -> dict:
     """Plan up to `limit` eligible books that have no proposal yet; each becomes `proposed` (or `failed` with the reason)."""
     final = settings.final_dir()
-    books=catalogue.pending_propose(limit) if ids is None else [catalogue.get_book(i) for i in dict.fromkeys(ids) if not catalogue.get_plan(i) and (catalogue.get_processed(i) or {}).get('status')!='done'][:limit]
-    for b in books: catalogue.set_plan(b['id'], 'planning')
+    books = (
+        catalogue.pending_propose(limit)
+        if ids is None
+        else [
+            catalogue.get_book(i)
+            for i in dict.fromkeys(ids)
+            if not catalogue.get_plan(i) and (catalogue.get_processed(i) or {}).get("status") != "done"
+        ][:limit]
+    )
+    for b in books:
+        catalogue.set_plan(b["id"], "planning")
+
     def one(b):
         try:
-            if not fs.reachable(b['path']) or not os.path.exists(b['path']): raise probe.ToolError(f"its files are not available at {b['path']}")
-            catalogue.set_plan(b['id'], 'proposed', _plan_one(b, final)); return True
+            if not fs.reachable(b["path"]) or not os.path.exists(b["path"]):
+                raise probe.ToolError(f"its files are not available at {b['path']}")
+            catalogue.set_plan(b["id"], "proposed", _plan_one(b, final))
+            return True
         except (probe.ToolError, OSError) as e:
-            catalogue.set_plan(b['id'], 'failed', error=str(e)); return False
-    with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex: ok = list(ex.map(one, books))
+            catalogue.set_plan(b["id"], "failed", error=str(e))
+            return False
+
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
+        ok = list(ex.map(one, books))
     return dict(planned=sum(ok), failed=len(ok) - sum(ok), remaining=len(catalogue.pending_propose(100000)))
 
 
 def decide(ids: list[int], approve: bool) -> list[int]:
     """Approve (proposed or previously rejected plans) or reject (proposed or approved ones, not yet running); returns the ids that changed."""
-    allowed = ('proposed', 'rejected') if approve else ('proposed', 'approved'); changed = []
+    allowed = ("proposed", "rejected") if approve else ("proposed", "approved")
+    changed = []
     for i in ids:
         row = catalogue.get_plan(i)
-        if row and row['state'] in allowed and row['plan']:
-            if approve and row['plan'].get('ingest'):
-                from app.ingest import pipeline,store
-                try:pipeline.require_approvals(store.get(row['plan']['ingest']['run_id']))
-                except ValueError as e:raise catalogue.CatalogueError(str(e)) from e
-            catalogue.set_plan(i, 'approved' if approve else 'rejected', keep_plan=True); changed.append(i)
+        if row and row["state"] in allowed and row["plan"]:
+            if approve and row["plan"].get("ingest"):
+                from app.ingest import pipeline, store
+
+                try:
+                    pipeline.require_approvals(store.get(row["plan"]["ingest"]["run_id"]))
+                except ValueError as e:
+                    raise catalogue.CatalogueError(str(e)) from e
+            catalogue.set_plan(i, "approved" if approve else "rejected", keep_plan=True)
+            changed.append(i)
     return changed
 
 
@@ -73,90 +136,169 @@ def repropose(ids: list[int]) -> list[int]:
     out = []
     for i in ids:
         row = catalogue.get_plan(i)
-        if row and row['state'] in ('proposed', 'approved', 'rejected', 'failed'): catalogue.delete_plan(i); out.append(i)
+        if row and row["state"] in ("proposed", "approved", "rejected", "failed"):
+            catalogue.delete_plan(i)
+            out.append(i)
     return out
 
 
 def _unchanged(book: dict, plan: dict) -> bool:
-    if plan.get('ingest'):
+    if plan.get("ingest"):
         from app.ingest import grouping, inventory, pipeline, policy, store
-        meta=plan['ingest']
-        recorded=meta.get('inventory_manifest',[])
-        if recorded and all('probe' in f for f in recorded) and len(grouping.partition(recorded,meta['root']))>1:return False
-        if not inventory.snapshot_unchanged(dict(root=meta['root'],files=meta.get('inventory_manifest',meta['manifest']),sidecars=meta.get('sidecars',[]),**meta.get('source_scope',{}))):return False
-        if not inventory.unchanged(meta.get('evidence_manifest',[])):return False
-        for bid,sig in meta['member_signatures'].items():
-            if inventory.signature(catalogue.get_book(int(bid)))!=sig:return False
-        if meta.get('auto_policy_revision') is not None and meta['auto_policy_revision']!=policy.current()['revision']:return False
-        if 'stage_approvals' in meta:
-            run=store.get(meta['run_id'])
-            if any(not pipeline.approval_valid(run,p) or meta['stage_approvals'].get(p)!=pipeline.stage_data(run,p+'_approval') for p in pipeline.REVIEW_STAGES):return False
+
+        meta = plan["ingest"]
+        recorded = meta.get("inventory_manifest", [])
+        if recorded and all("probe" in f for f in recorded) and len(grouping.partition(recorded, meta["root"])) > 1:
+            return False
+        if not inventory.snapshot_unchanged(
+            dict(
+                root=meta["root"],
+                files=meta.get("inventory_manifest", meta["manifest"]),
+                sidecars=meta.get("sidecars", []),
+                **meta.get("source_scope", {}),
+            )
+        ):
+            return False
+        if not inventory.unchanged(meta.get("evidence_manifest", [])):
+            return False
+        for bid, sig in meta["member_signatures"].items():
+            if inventory.signature(catalogue.get_book(int(bid))) != sig:
+                return False
+        if (
+            meta.get("auto_policy_revision") is not None
+            and meta["auto_policy_revision"] != policy.current()["revision"]
+        ):
+            return False
+        if "stage_approvals" in meta:
+            run = store.get(meta["run_id"])
+            if any(
+                not pipeline.approval_valid(run, p)
+                or meta["stage_approvals"].get(p) != pipeline.stage_data(run, p + "_approval")
+                for p in pipeline.REVIEW_STAGES
+            ):
+                return False
         return True
-    files = details.audio_files(book['path'])
-    return len(files) == plan['in_files'] and sum(os.path.getsize(f) for f in files) == plan['in_bytes']
+    files = details.audio_files(book["path"])
+    return len(files) == plan["in_files"] and sum(os.path.getsize(f) for f in files) == plan["in_bytes"]
 
 
 def run_approved(jobs: int = 2, ids: list[int] | None = None) -> dict:
     """Process every approved plan; returns {done, failed}."""
-    rows = [r for r in catalogue.list_plans(('approved',)) if r['plan'] and (ids is None or r['book_id'] in ids)]
-    rows = [r for r in rows if catalogue.claim_plan(r['book_id'])]
-    def record_ingest(r,status,data=None,error='',elapsed=0):
-        if r['plan'].get('ingest'):
+    rows = [r for r in catalogue.list_plans(("approved",)) if r["plan"] and (ids is None or r["book_id"] in ids)]
+    rows = [r for r in rows if catalogue.claim_plan(r["book_id"])]
+
+    def record_ingest(r, status, data=None, error="", elapsed=0):
+        if r["plan"].get("ingest"):
             from app.ingest import store
-            rid=r['plan']['ingest']['run_id'];res=data or {}
-            store.event(rid,'processing',status,metrics={f'processing.{k}':v for k,v in res.items() if type(v) in (int,float)},data=res,error=error,elapsed=elapsed)
-            store.finish(rid,'processed' if status=='done' else 'processing_failed' if status=='failed' else 'processing')
+
+            rid = r["plan"]["ingest"]["run_id"]
+            res = data or {}
+            store.event(
+                rid,
+                "processing",
+                status,
+                metrics={f"processing.{k}": v for k, v in res.items() if type(v) in (int, float)},
+                data=res,
+                error=error,
+                elapsed=elapsed,
+            )
+            store.finish(
+                rid, "processed" if status == "done" else "processing_failed" if status == "failed" else "processing"
+            )
+
     def one(r):
         import time
-        started=time.monotonic();record_ingest(r,'running')
-        book = catalogue.get_book(r['book_id'])
+
+        started = time.monotonic()
+        record_ingest(r, "running")
+        book = catalogue.get_book(r["book_id"])
         try:
-            if not fs.reachable(book['path']) or not os.path.exists(book['path']): raise probe.ToolError(f"its files are not available at {book['path']}")
-            if not _unchanged(book, r['plan']): raise probe.ToolError('the files changed since this plan was proposed: propose it again')
-            res = R.execute(book, r['plan'], force=os.path.exists(r['plan']['out_dir']) and (catalogue.get_processed(book['id']) or {}).get('status') == 'failed')
-            catalogue.set_processed(book['id'], res); catalogue.set_plan(book['id'], 'done', keep_plan=True); record_ingest(r,'done',res,elapsed=time.monotonic()-started); return True
+            if not fs.reachable(book["path"]) or not os.path.exists(book["path"]):
+                raise probe.ToolError(f"its files are not available at {book['path']}")
+            if not _unchanged(book, r["plan"]):
+                raise probe.ToolError("the files changed since this plan was proposed: propose it again")
+            res = R.execute(
+                book,
+                r["plan"],
+                force=os.path.exists(r["plan"]["out_dir"])
+                and (catalogue.get_processed(book["id"]) or {}).get("status") == "failed",
+            )
+            catalogue.set_processed(book["id"], res)
+            catalogue.set_plan(book["id"], "done", keep_plan=True)
+            record_ingest(r, "done", res, elapsed=time.monotonic() - started)
+            return True
         except (probe.ToolError, OSError, KeyError) as e:
-            from datetime import datetime, timezone
-            catalogue.set_processed(book['id'], dict(status='failed', error=str(e), finished=datetime.now(timezone.utc).isoformat())); catalogue.set_plan(book['id'], 'failed', error=str(e), keep_plan=True); record_ingest(r,'failed',error=str(e),elapsed=time.monotonic()-started); return False
-    with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex: ok = list(ex.map(one, rows))
+            from datetime import datetime
+
+            catalogue.set_processed(
+                book["id"], dict(status="failed", error=str(e), finished=datetime.now(UTC).isoformat())
+            )
+            catalogue.set_plan(book["id"], "failed", error=str(e), keep_plan=True)
+            record_ingest(r, "failed", error=str(e), elapsed=time.monotonic() - started)
+            return False
+
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
+        ok = list(ex.map(one, rows))
     return dict(done=sum(ok), failed=len(ok) - sum(ok))
 
 
 class Worker:
     """One background thread for the server: runs proposals and approved plans one task at a time so long jobs never block a request. `inline` (tests) runs tasks on the spot."""
+
     inline = False
     jobs = None
-    domain = 'process'
+    domain = "process"
 
     def __init__(self):
-        self.q: _queue.Queue = _queue.Queue(); self.busy: str | None = None; self.active=None; self.last: dict = {}; self._thread: threading.Thread | None = None; self._lock = threading.Lock()
+        self.q: _queue.Queue = _queue.Queue()
+        self.busy: str | None = None
+        self.active = None
+        self.last: dict = {}
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
 
     def submit(self, kind: str, **kw):
-        if self.jobs is not None:return self.jobs.submit(self.domain,kind,**kw)
-        if self.inline: self._do(kind, kw); return
+        if self.jobs is not None:
+            return self.jobs.submit(self.domain, kind, **kw)
+        if self.inline:
+            self._do(kind, kw)
+            return
         self.q.put((kind, kw))
         with self._lock:
-            if not self._thread or not self._thread.is_alive(): self._thread = threading.Thread(target=self._loop, daemon=True, name='process-worker'); self._thread.start()
+            if not self._thread or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._loop, daemon=True, name="process-worker")
+                self._thread.start()
 
     def _do(self, kind: str, kw: dict):
-        from datetime import datetime, timezone
-        self.busy = kind; self.active=dict(kind=kind,options=kw,state='running',started=datetime.now(timezone.utc).isoformat())
-        try: self.last = {kind: (propose if kind == 'propose' else run_approved)(**kw)}
-        except Exception as e: self.last = {kind: dict(error=str(e))}      # a task must never kill the worker
-        finally: self.busy = None; self.active=None
+        from datetime import datetime
+
+        self.busy = kind
+        self.active = dict(kind=kind, options=kw, state="running", started=datetime.now(UTC).isoformat())
+        try:
+            self.last = {kind: (propose if kind == "propose" else run_approved)(**kw)}
+        except Exception as e:
+            self.last = {kind: dict(error=str(e))}  # a task must never kill the worker
+        finally:
+            self.busy = None
+            self.active = None
 
     def tasks(self):
-        if self.jobs is not None:return self.jobs.tasks(self.domain)
-        with self.q.mutex:pending=[dict(kind=kind,options=kw,state='queued',started='') for kind,kw in self.q.queue]
-        active=self.active
-        return ([active] if active else [])+pending
+        if self.jobs is not None:
+            return self.jobs.tasks(self.domain)
+        with self.q.mutex:
+            pending = [dict(kind=kind, options=kw, state="queued", started="") for kind, kw in self.q.queue]
+        active = self.active
+        return ([active] if active else []) + pending
 
     def _loop(self):
         while True:
-            try: kind, kw = self.q.get(timeout=30)
-            except _queue.Empty: return
+            try:
+                kind, kw = self.q.get(timeout=30)
+            except _queue.Empty:
+                return
             self._do(kind, kw)
 
     def status(self) -> dict:
-        if self.jobs is not None:return dict(self.jobs.status(self.domain),counts=catalogue.plan_counts())
+        if self.jobs is not None:
+            return dict(self.jobs.status(self.domain), counts=catalogue.plan_counts())
         return dict(busy=self.busy, queued=self.q.qsize(), last=self.last, counts=catalogue.plan_counts())

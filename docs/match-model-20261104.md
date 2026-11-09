@@ -50,7 +50,7 @@ The packages are optional research dependencies, separate from the app's runtime
 
 ```bash
 python -m venv data/match-model-env
-data/match-model-env/bin/pip install -r requirements-model.txt
+uv sync --group model   # (a separate environment: UV_PROJECT_ENVIRONMENT=data/match-model-env)
 PYTHONPATH=src data/match-model-env/bin/python -m app.ingest.match_model data/catalogue.db --out data/new-model-experiment
 ```
 

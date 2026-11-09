@@ -1,30 +1,57 @@
 """Command line: `doctor` checks the environment, `add`/`list`/`show`/`edit`/`remove` manage the audiobook catalogue, `set` changes settings, `serve` starts the web server."""
-import argparse, importlib, json, os, sys, shutil
 
-from app import __version__, backup, catalogue, db, details, enrich, fs, matcher, mirror, providers, scan, settings
+import argparse
+import importlib
+import json
+import os
+import shutil
+import sys
 
-CHECKS = (('fastapi', 'fastapi'), ('uvicorn', 'uvicorn'), ('pydantic', 'pydantic'))
+from app import __version__, backup, catalogue, db, enrich, fs, matcher, mirror, providers, scan, settings
+
+CHECKS = (("fastapi", "fastapi"), ("uvicorn", "uvicorn"), ("pydantic", "pydantic"))
 
 
 def doctor(args):
-    ok = True; print(f'app {__version__}, python {sys.version.split()[0]}')
-    checks = CHECKS + (('numpy','numpy'),('scipy','scipy')) if getattr(args,'audio',False) else CHECKS
+    ok = True
+    print(f"app {__version__}, python {sys.version.split()[0]}")
+    checks = CHECKS + (("numpy", "numpy"), ("scipy", "scipy")) if getattr(args, "audio", False) else CHECKS
     for label, mod in checks:
-        try: m = importlib.import_module(mod); print(f'  ok       {label} {getattr(m, "__version__", "")}'.rstrip())
-        except ImportError: ok = False; print(f'  MISSING  {label}: pip install -r requirements.txt')
-    if getattr(args,'audio',False):
-        for tool in ('ffmpeg','ffprobe','mp3gain','fpcalc'):
-            path=shutil.which(tool);print(f"  {'ok' if path else 'MISSING':9} {tool} {path or ''}");ok=bool(path) and ok
+        try:
+            m = importlib.import_module(mod)
+            print(f"  ok       {label} {getattr(m, '__version__', '')}".rstrip())
+        except ImportError:
+            ok = False
+            print(f"  MISSING  {label}: uv sync")
+    if getattr(args, "audio", False):
+        for tool in ("ffmpeg", "ffprobe", "mp3gain", "fpcalc"):
+            path = shutil.which(tool)
+            print(f"  {'ok' if path else 'MISSING':9} {tool} {path or ''}")
+            ok = bool(path) and ok
     return 0 if ok else 1
 
 
 def _fmt_duration(sec):
-    return '' if not sec else f'{sec // 3600}h{sec % 3600 // 60:02d}'
+    return "" if not sec else f"{sec // 3600}h{sec % 3600 // 60:02d}"
 
 
 def _line(b):
-    series = f" [{b['series']} #{b['series_position']:g}]" if b.get('series') and b.get('series_position') is not None else (f" [{b['series']}]" if b.get('series') else '')
-    flag = '' if b['review'] == 'confirmed' else f" [{b['review']}" + (f" -> {b['suggestion']['title']} / {b['suggestion']['author']}, {b['match_score']:.2f}" if b.get('suggestion') else '') + ']'
+    series = (
+        f" [{b['series']} #{b['series_position']:g}]"
+        if b.get("series") and b.get("series_position") is not None
+        else (f" [{b['series']}]" if b.get("series") else "")
+    )
+    flag = (
+        ""
+        if b["review"] == "confirmed"
+        else f" [{b['review']}"
+        + (
+            f" -> {b['suggestion']['title']} / {b['suggestion']['author']}, {b['match_score']:.2f}"
+            if b.get("suggestion")
+            else ""
+        )
+        + "]"
+    )
     return f"  #{b['id']:<4} {b['title']}{series} - {b['author'] or 'unknown author'}  {_fmt_duration(b['duration_seconds'])}  ({b['status']}){flag}".rstrip()
 
 
@@ -33,208 +60,385 @@ def _fields(args):
 
 
 def _run(fn, *a, **kw):
-    try: return fn(*a, **kw)
-    except catalogue.CatalogueError as e: sys.exit(str(e))
-    except catalogue.NotFound: sys.exit('no such book')
+    try:
+        return fn(*a, **kw)
+    except catalogue.CatalogueError as e:
+        sys.exit(str(e))
+    except catalogue.NotFound:
+        sys.exit("no such book")
 
 
 def cmd_add(args):
     b = _run(catalogue.add_book, **_fields(args))
-    print(json.dumps(b) if args.json else _line(b)); return 0
+    print(json.dumps(b) if args.json else _line(b))
+    return 0
 
 
 def cmd_list(args):
-    books = catalogue.list_books(args.query or '', args.status, args.review, args.kind)
-    if args.json: print(json.dumps(books, indent=1)); return 0
-    if not books: print('  (no books yet: ./app add "Title" --author "Name")'); return 0
-    for b in books: print(_line(b))
+    books = catalogue.list_books(args.query or "", args.status, args.review, args.kind)
+    if args.json:
+        print(json.dumps(books, indent=1))
+        return 0
+    if not books:
+        print('  (no books yet: ./app add "Title" --author "Name")')
+        return 0
+    for b in books:
+        print(_line(b))
     return 0
 
 
 def cmd_evidence_report(args):
     from app import evidence
-    try: result = evidence.report(args.ids, args.limit, args.stride, **({'fresh_openlibrary': True} if args.fresh_openlibrary else {}))
-    except (ValueError, OSError) as e: sys.exit(str(e))
-    print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False)); return 0
+
+    try:
+        result = evidence.report(
+            args.ids, args.limit, args.stride, **({"fresh_openlibrary": True} if args.fresh_openlibrary else {})
+        )
+    except (ValueError, OSError) as e:
+        sys.exit(str(e))
+    print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
+    return 0
 
 
 def cmd_show(args):
-    print(json.dumps(_run(catalogue.get_book, args.id), indent=1)); return 0
+    print(json.dumps(_run(catalogue.get_book, args.id), indent=1))
+    return 0
 
 
 def cmd_edit(args):
     b = _run(catalogue.update_book, args.id, **_fields(args))
-    print(json.dumps(b) if args.json else _line(b)); return 0
+    print(json.dumps(b) if args.json else _line(b))
+    return 0
 
 
 def cmd_remove(args):
     b = _run(catalogue.remove_book, args.id)
-    print(f"removed #{b['id']} {b['title']}"); return 0
+    print(f"removed #{b['id']} {b['title']}")
+    return 0
 
 
 def cmd_backup(args):
-    p = backup.backup('manual'); print(p or 'no database yet, nothing to back up'); return 0
+    p = backup.backup("manual")
+    print(p or "no database yet, nothing to back up")
+    return 0
 
 
 def cmd_backups(args):
     bs = backup.list_backups()
-    if not bs: print('  (no backups yet: ./app backup)'); return 0
-    for b in bs: print(f"  {b['taken']:%Y-%m-%d %H:%M:%S}  {b['reason'] or 'daily':12} {b['path']}")
+    if not bs:
+        print("  (no backups yet: ./app backup)")
+        return 0
+    for b in bs:
+        print(f"  {b['taken']:%Y-%m-%d %H:%M:%S}  {b['reason'] or 'daily':12} {b['path']}")
     return 0
 
 
 def cmd_restore(args):
-    path = args.backup or (next(iter(backup.list_backups()), None) or sys.exit('no backups to restore'))['path']
-    try: safety = backup.restore(path)
-    except ValueError as e: sys.exit(str(e))
-    print(f'restored {path}' + (f'; the previous database is kept as {safety}' if safety else '')); return 0
+    path = args.backup or (next(iter(backup.list_backups()), None) or sys.exit("no backups to restore"))["path"]
+    try:
+        safety = backup.restore(path)
+    except ValueError as e:
+        sys.exit(str(e))
+    print(f"restored {path}" + (f"; the previous database is kept as {safety}" if safety else ""))
+    return 0
 
 
 def cmd_scan(args):
-    root = args.folder or settings.library_dir() or sys.exit('no audiobook folder: ./app scan /path/to/audio, or ./app set library_dir /path/to/audio')
-    if not fs.reachable(root): sys.exit(f'{root} is on a network share that is not reachable (is the server up?)')
-    if not os.path.isdir(root): sys.exit(f'not a folder: {root}')
-    try: found = list(scan.scan(root))
-    except OSError as e: sys.exit(f'the scan was interrupted ({e.strerror or e}); nothing was changed')
-    kinds = {k: sum(f['kind'] == k for f in found) for k in catalogue.KINDS}
-    if args.dry_run: print(f"{len(found)} candidates ({kinds['book']} books, {kinds['radio']} radio); nothing stored (dry run)"); return 0
+    root = (
+        args.folder
+        or settings.library_dir()
+        or sys.exit("no audiobook folder: ./app scan /path/to/audio, or ./app set library_dir /path/to/audio")
+    )
+    if not fs.reachable(root):
+        sys.exit(f"{root} is on a network share that is not reachable (is the server up?)")
+    if not os.path.isdir(root):
+        sys.exit(f"not a folder: {root}")
+    try:
+        found = list(scan.scan(root))
+    except OSError as e:
+        sys.exit(f"the scan was interrupted ({e.strerror or e}); nothing was changed")
+    kinds = {k: sum(f["kind"] == k for f in found) for k in catalogue.KINDS}
+    if args.dry_run:
+        print(f"{len(found)} candidates ({kinds['book']} books, {kinds['radio']} radio); nothing stored (dry run)")
+        return 0
     res = catalogue.add_scanned(found)
-    print(f"{len(found)} candidates ({kinds['book']} books, {kinds['radio']} radio): {res['added']} added, {res['existing']} already known" + (f", {res['replaced']} fragments replaced" if res['replaced'] else '')); return 0
+    print(
+        f"{len(found)} candidates ({kinds['book']} books, {kinds['radio']} radio): {res['added']} added, {res['existing']} already known"
+        + (f", {res['replaced']} fragments replaced" if res["replaced"] else "")
+    )
+    return 0
 
 
 def _chosen(args):
-    try: return providers.enabled([n.strip() for n in args.providers.split(',')] if args.providers else None)
-    except KeyError as e: sys.exit(str(e.args[0]))
+    try:
+        return providers.enabled([n.strip() for n in args.providers.split(",")] if args.providers else None)
+    except KeyError as e:
+        sys.exit(str(e.args[0]))
 
 
 def cmd_match(args):
-    try: res = matcher.match_pending(args.limit, _chosen(args))
-    except matcher.MatchError as e: sys.exit(str(e))
-    print(f"tried {res['tried']}: {res['suggested']} suggestions, {res['none']} without a match; {res['remaining']} still to try (providers: {', '.join(res['providers'])})"); return 0
+    try:
+        res = matcher.match_pending(args.limit, _chosen(args))
+    except matcher.MatchError as e:
+        sys.exit(str(e))
+    print(
+        f"tried {res['tried']}: {res['suggested']} suggestions, {res['none']} without a match; {res['remaining']} still to try (providers: {', '.join(res['providers'])})"
+    )
+    return 0
 
 
 def cmd_filegroups(args):
     """Scan the library into the listory Postgres schema (files by sha256) and group it by folder. Rerunnable: only changed files are hashed, and each run adds a new grouping."""
-    root = args.folder or settings.library_dir() or sys.exit('no audiobook folder: ./app filegroups /path/to/audio, or ./app set library_dir /path/to/audio')
-    if not os.path.isdir(root): sys.exit(f'not a folder: {root}')
+    root = (
+        args.folder
+        or settings.library_dir()
+        or sys.exit("no audiobook folder: ./app filegroups /path/to/audio, or ./app set library_dir /path/to/audio")
+    )
+    if not os.path.isdir(root):
+        sys.exit(f"not a folder: {root}")
     from omarchy_db import connect
     from sqlalchemy.orm import Session
+
     from app.store import filegroups as fg
-    with Session(connect('listory')) as s:
-        run = fg.new_run(s, 'scan', {'root': root}); s.commit()
-        ids = fg.scan_files(s, root, workers=args.workers, progress=lambda d, n: print(f'  hashed {d}/{n}', end='\r', flush=True) if d % 50 == 0 else None); s.commit()
-        print(f'\n  probed {fg.probe_missing(s, ids, workers=args.workers)} new files'); s.commit()
-        top = fg.group_by_folder(s, root, ids); fg.finish_run(s, run, 'done'); s.commit()
-        print(f'{len(ids)} files, {top.group_count} folders below the root, {top.total_bytes / 1e9:,.1f} GB (grouping #{top.id})'); return 0
+
+    with Session(connect("listory")) as s:
+        run = fg.new_run(s, "scan", {"root": root})
+        s.commit()
+        ids = fg.scan_files(
+            s,
+            root,
+            workers=args.workers,
+            progress=lambda d, n: print(f"  hashed {d}/{n}", end="\r", flush=True) if d % 50 == 0 else None,
+        )
+        s.commit()
+        print(f"\n  probed {fg.probe_missing(s, ids, workers=args.workers)} new files")
+        s.commit()
+        top = fg.group_by_folder(s, root, ids)
+        fg.finish_run(s, run, "done")
+        s.commit()
+        print(
+            f"{len(ids)} files, {top.group_count} folders below the root, {top.total_bytes / 1e9:,.1f} GB (grouping #{top.id})"
+        )
+        return 0
 
 
 def cmd_filegroups_structure(args):
     """Infer books, discs and series from the newest folder grouping and store them as a new grouping run (the folder grouping is untouched)."""
     from omarchy_db import connect
-    from sqlalchemy.orm import Session
     from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
     from app.store import structure
     from app.store.models import PartFilegroup, Run
-    with Session(connect('listory')) as s:
-        src = s.scalars(select(PartFilegroup).join(Run, Run.id == PartFilegroup.run_id).where(PartFilegroup.kind == 'root', Run.kind == 'group_folders', Run.outcome == 'done').order_by(Run.started_at.desc(), PartFilegroup.id.desc())).first()
-        if src is None: sys.exit('no folder grouping yet: run ./app filegroups first')
+
+    with Session(connect("listory")) as s:
+        src = s.scalars(
+            select(PartFilegroup)
+            .join(Run, Run.id == PartFilegroup.run_id)
+            .where(PartFilegroup.kind == "root", Run.kind == "group_folders", Run.outcome == "done")
+            .order_by(Run.started_at.desc(), PartFilegroup.id.desc())
+        ).first()
+        if src is None:
+            sys.exit("no folder grouping yet: run ./app filegroups first")
         if args.check or args.update:
             import json
-            golden = os.path.join(settings.data_dir(), 'structure-golden.json')      # real file names: kept in the (untracked) data folder, never in the public repo
+
+            golden = os.path.join(
+                settings.data_dir(), "structure-golden.json"
+            )  # real file names: kept in the (untracked) data folder, never in the public repo
             now = structure.snapshot(structure.classify(structure.load_tree(s, src)))
-            if args.update: json.dump(now, open(golden, 'w'), indent=0, sort_keys=True); print(f'{len(now)} groups saved to {golden}'); return 0
-            if not os.path.exists(golden): sys.exit(f'no snapshot yet: ./app filegroups-structure --update ({golden})')
+            if args.update:
+                json.dump(now, open(golden, "w"), indent=0, sort_keys=True)
+                print(f"{len(now)} groups saved to {golden}")
+                return 0
+            if not os.path.exists(golden):
+                sys.exit(f"no snapshot yet: ./app filegroups-structure --update ({golden})")
             changes = structure.diff(json.load(open(golden)), now)
-            print('\n'.join(changes[:200]) + (f'\n... and {len(changes) - 200} more' if len(changes) > 200 else '') if changes else f'{len(now)} groups, no changes from the snapshot'); return 1 if changes else 0
-        top, totals = structure.infer(s, src); s.commit()
-        print(f'grouping #{top.id}: ' + ', '.join(f'{n} {k}' for k, n in sorted(totals.items()))); return 0
+            print(
+                "\n".join(changes[:200]) + (f"\n... and {len(changes) - 200} more" if len(changes) > 200 else "")
+                if changes
+                else f"{len(now)} groups, no changes from the snapshot"
+            )
+            return 1 if changes else 0
+        top, totals = structure.infer(s, src)
+        s.commit()
+        print(f"grouping #{top.id}: " + ", ".join(f"{n} {k}" for k, n in sorted(totals.items())))
+        return 0
 
 
 def cmd_listens_build(args):
     """Make a listen for every book and programme in the newest structure grouping (needs ./app filegroups and ./app filegroups-structure first). Rerunnable with --rebuild."""
     from omarchy_db import connect
-    from sqlalchemy.orm import Session
     from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
     from app.store import build
     from app.store.models import PartFilegroup, Run
-    with Session(connect('listory')) as s:
-        src = s.scalars(select(PartFilegroup).join(Run, Run.id == PartFilegroup.run_id).where(PartFilegroup.kind == 'root', Run.kind == 'infer_structure', Run.outcome == 'done').order_by(Run.started_at.desc(), PartFilegroup.id.desc())).first()
-        if src is None: sys.exit('no structure grouping yet: run ./app filegroups-structure first')
-        try: counts = build.build_listens(s, src, rebuild=args.rebuild)
-        except ValueError as e: sys.exit(str(e))
+
+    with Session(connect("listory")) as s:
+        src = s.scalars(
+            select(PartFilegroup)
+            .join(Run, Run.id == PartFilegroup.run_id)
+            .where(PartFilegroup.kind == "root", Run.kind == "infer_structure", Run.outcome == "done")
+            .order_by(Run.started_at.desc(), PartFilegroup.id.desc())
+        ).first()
+        if src is None:
+            sys.exit("no structure grouping yet: run ./app filegroups-structure first")
+        try:
+            counts = build.build_listens(s, src, rebuild=args.rebuild)
+        except ValueError as e:
+            sys.exit(str(e))
         from app.store import metadata
-        meta = metadata.add_metadata(s)                                    # first: copies are judged on the chosen title and author
-        kinds_ = _classify(s)                                              # before copies: only books are merged as copies
+
+        meta = metadata.add_metadata(s)  # first: copies are judged on the chosen title and author
+        kinds_ = _classify(s)  # before copies: only books are merged as copies
         extra = build.link_copies(s) if not args.no_copies else {}
-        s.commit(); print(f"{counts['book']} books and {counts['radio_series']} radio series made into listens; {counts['loose_files_skipped']} loose files left for review" + (f"; {extra['copies_merged']} copies merged into {extra['listens_with_copies']} listens" if extra else '') + f"; metadata chosen for {meta['listens']} listens ({meta['from_tags']} values from tags, {meta['from_folder']} from folder names); kinds: " + ', '.join(f'{v} {k}' for k, v in kinds_.items())); return 0
+        s.commit()
+        print(
+            f"{counts['book']} books and {counts['radio_series']} radio series made into listens; {counts['loose_files_skipped']} loose files left for review"
+            + (f"; {extra['copies_merged']} copies merged into {extra['listens_with_copies']} listens" if extra else "")
+            + f"; metadata chosen for {meta['listens']} listens ({meta['from_tags']} values from tags, {meta['from_folder']} from folder names); kinds: "
+            + ", ".join(f"{v} {k}" for k, v in kinds_.items())
+        )
+        return 0
 
 
 def _classify(s, ids=None, apply=True) -> dict[str, int]:
     """Run the book / radio / play classifier (store/kinds.py) over the live listens; returns counts per resulting kind plus how many changed and how many are for review."""
     from app.store import kinds_db
-    res = kinds_db.classify_listens(s, ids, apply=apply); out: dict[str, int] = {}
-    for r in res: out[r['kind']] = out.get(r['kind'], 0) + 1
-    out['changed'] = sum(r['changed'] for r in res); out['review'] = sum(r['band'] == 'review' for r in res); return out
+
+    res = kinds_db.classify_listens(s, ids, apply=apply)
+    out: dict[str, int] = {}
+    for r in res:
+        out[r["kind"]] = out.get(r["kind"], 0) + 1
+    out["changed"] = sum(r["changed"] for r in res)
+    out["review"] = sum(r["band"] == "review" for r in res)
+    return out
 
 
 def cmd_listens_kinds(args):
     """Classify every live listen as book, radio series, radio programme or play from its tags, names, lengths and the Audible / radio indexes, keeping the signals as the reason. A person's own choice is never changed. --report writes every verdict as JSON (it holds real titles: keep it outside the repo)."""
     import json as _json
+
     from omarchy_db import connect
     from sqlalchemy.orm import Session
+
     from app.store import kinds_db
-    with Session(connect('listory')) as s:
+
+    with Session(connect("listory")) as s:
         if args.learn:
-            params, counts = kinds_db.learn(s); print(f"learned {params.version()} from {counts['user']} of your answers and {counts['audible match']} implied by accepted Audible matches and {counts['radio match']} by accepted radio programmes ({counts['broadcast']} broadcast, {counts['book']} book); weights moved: " + (', '.join(f'{k} x{v:g}' for k, v in sorted(params.mult.items()) if abs(v - 1) > 0.02 and params.seen.get(k)) or 'none'))
+            params, counts = kinds_db.learn(s)
+            print(
+                f"learned {params.version()} from {counts['user']} of your answers and {counts['audible match']} implied by accepted Audible matches and {counts['radio match']} by accepted radio programmes ({counts['broadcast']} broadcast, {counts['book']} book); weights moved: "
+                + (
+                    ", ".join(
+                        f"{k} x{v:g}"
+                        for k, v in sorted(params.mult.items())
+                        if abs(v - 1) > 0.02 and params.seen.get(k)
+                    )
+                    or "none"
+                )
+            )
         res = kinds_db.classify_listens(s, args.ids or None, apply=not args.dry_run)
         if args.report:
-            with open(args.report, 'w') as f: _json.dump(res, f, indent=1, default=str)
-        if args.dry_run: s.rollback()
-        else: s.commit()
+            with open(args.report, "w") as f:
+                _json.dump(res, f, indent=1, default=str)
+        if args.dry_run:
+            s.rollback()
+        else:
+            s.commit()
     by: dict[str, int] = {}
-    for r in res: by[r['kind']] = by.get(r['kind'], 0) + 1
-    print(('would classify ' if args.dry_run else 'classified ') + f"{len(res)} listens: " + ', '.join(f'{n} {k}' for k, n in sorted(by.items())) + f"; {sum(r['changed'] for r in res)} changed kind, {sum(r['band'] == 'review' for r in res)} to review"); return 0
+    for r in res:
+        by[r["kind"]] = by.get(r["kind"], 0) + 1
+    print(
+        ("would classify " if args.dry_run else "classified ")
+        + f"{len(res)} listens: "
+        + ", ".join(f"{n} {k}" for k, n in sorted(by.items()))
+        + f"; {sum(r['changed'] for r in res)} changed kind, {sum(r['band'] == 'review' for r in res)} to review"
+    )
+    return 0
 
 
 def cmd_listens_identify_prepare(args):
     """Find candidate works for every book listen in the local Open Library and Audible indexes and cache their comparison vectors (data/linkage/vectors.json; unchanged listens are reused). With --old-catalogue, also carry that SQLite catalogue's approvals over as labels."""
     import json as _json
+
     from omarchy_db import connect
     from sqlalchemy.orm import Session
-    from app.identify import audibleindex, candidates as olc
+
+    from app.identify import audibleindex
+    from app.identify import candidates as olc
     from app.linkage import dataset, files, query
-    with Session(connect('listory')) as s:
-        queries = query.load(s, kinds=tuple(args.kinds.split(',')))
+
+    with Session(connect("listory")) as s:
+        queries = query.load(s, kinds=tuple(args.kinds.split(",")))
         if args.old_catalogue:
             from app.identify import dataset as old
-            fs, paths = files.listen_files(s); labels = dataset.old_labels(old.labelled_runs(args.old_catalogue), fs, paths)
-            dataset.folder().mkdir(parents=True, exist_ok=True); (dataset.folder() / 'old-labels.json').write_text(_json.dumps({str(k): v for k, v in labels.items()}), encoding='utf8')
-            print(f'{len(labels)} listens labelled from the old catalogue')
-    try: oc = olc.connect()
-    except FileNotFoundError: oc = None; print('no Open Library identification index: Audible only')
+
+            fs, paths = files.listen_files(s)
+            labels = dataset.old_labels(old.labelled_runs(args.old_catalogue), fs, paths)
+            dataset.folder().mkdir(parents=True, exist_ok=True)
+            (dataset.folder() / "old-labels.json").write_text(
+                _json.dumps({str(k): v for k, v in labels.items()}), encoding="utf8"
+            )
+            print(f"{len(labels)} listens labelled from the old catalogue")
+    try:
+        oc = olc.connect()
+    except FileNotFoundError:
+        oc = None
+        print("no Open Library identification index: Audible only")
     ac = audibleindex.connect()
-    if not args.no_radio_details:                                            # the BBC's own record of each candidate programme (type, channel, episodes, genre): fetched once, cached, never required
+    if not args.no_radio_details:  # the BBC's own record of each candidate programme (type, channel, episodes, genre): fetched once, cached, never required
         from app.identify import radioindex
         from app.linkage import candidates as lc
         from app.providers.base import Http, MatchError
-        refs = [p.ref for q in queries for c in lc.radio_candidates(q, details=lambda refs: {}) for p in c.programmes if p.source == 'bbc_radio']
-        try: print(f'{radioindex.fetch_details(Http("bbc programmes", 0.6), refs, log=lambda *_: None)} programme details fetched for {len(set(refs))} candidate programmes')
-        except MatchError as e: print(f'programme details unavailable ({e}); continuing without them')
-    data = dataset.build(oc, ac, queries, dataset.load_cache(), progress=lambda i, n: print(f'{i}/{n}', flush=True) if i % 100 == 0 else None, indexes=dataset.index_stamp(oc, ac))
-    dataset.save_cache(data); print(f'{len(data)} listens, {sum(len(d["clusters"]) for d in data.values())} candidate works'); return 0
+
+        refs = [
+            p.ref
+            for q in queries
+            for c in lc.radio_candidates(q, details=lambda refs: {})
+            for p in c.programmes
+            if p.source == "bbc_radio"
+        ]
+        try:
+            print(
+                f"{radioindex.fetch_details(Http('bbc programmes', 0.6), refs, log=lambda *_: None)} programme details fetched for {len(set(refs))} candidate programmes"
+            )
+        except MatchError as e:
+            print(f"programme details unavailable ({e}); continuing without them")
+    data = dataset.build(
+        oc,
+        ac,
+        queries,
+        dataset.load_cache(),
+        progress=lambda i, n: print(f"{i}/{n}", flush=True) if i % 100 == 0 else None,
+        indexes=dataset.index_stamp(oc, ac),
+    )
+    dataset.save_cache(data)
+    print(f"{len(data)} listens, {sum(len(d['clusters']) for d in data.values())} candidate works")
+    return 0
 
 
 def cmd_listens_identify_train(args):
     """Fit the record-linkage model on every prepared listen (labelled ones clamped: old catalogue approvals and the match queue's answers), cross-validate on the labelled ones and save data/linkage/model.json and report.json."""
     from omarchy_db import connect
     from sqlalchemy.orm import Session
+
     from app.linkage import service
-    with Session(connect('listory')) as s:
-        try: _params, report = service.train(s)
-        except ValueError as e: sys.exit(str(e))
-    cv, lab = report['cross_validation'], report['labels']
-    print(f"model {report['model']}: {lab['found']} of {lab['labelled']} labels found among the candidates ({lab['user']} from the match queue); cross-validated top-1 {cv.get('top1')}, calibration error {cv.get('ece')}")
-    for t, a in (cv.get('at') or {}).items(): print(f"  P >= {t}: accept {a['accepted']} ({a['share']:.0%}), disagreeing with the label {a['false_positives']}")
+
+    with Session(connect("listory")) as s:
+        try:
+            _params, report = service.train(s)
+        except ValueError as e:
+            sys.exit(str(e))
+    cv, lab = report["cross_validation"], report["labels"]
+    print(
+        f"model {report['model']}: {lab['found']} of {lab['labelled']} labels found among the candidates ({lab['user']} from the match queue); cross-validated top-1 {cv.get('top1')}, calibration error {cv.get('ece')}"
+    )
+    for t, a in (cv.get("at") or {}).items():
+        print(
+            f"  P >= {t}: accept {a['accepted']} ({a['share']:.0%}), disagreeing with the label {a['false_positives']}"
+        )
     return 0
 
 
@@ -242,273 +446,675 @@ def cmd_listens_identify(args):
     """Decide every prepared listen with the trained model: accept (P >= threshold), candidates for review, or none; writes match/candidate listen-parts and links listens of one work to one work row."""
     from omarchy_db import connect
     from sqlalchemy.orm import Session
+
     from app.linkage import apply, dataset, service
+
     params = service.load_params()
-    if params is None: sys.exit('no model yet: run ./app listens-identify-train first')
+    if params is None:
+        sys.exit("no model yet: run ./app listens-identify-train first")
     data = dataset.load_cache()
-    with Session(connect('listory')) as s:
-        if args.rebuild: print(f'cleared the earlier identification of {apply.clear(s, ids=set(args.ids) if args.ids else None)} listens')
+    with Session(connect("listory")) as s:
+        if args.rebuild:
+            print(
+                f"cleared the earlier identification of {apply.clear(s, ids=set(args.ids) if args.ids else None)} listens"
+            )
         counts = apply.apply(s, data, params, threshold=args.threshold, ids=set(args.ids) if args.ids else None)
         merged = apply.merge_copies(s, actor_ref=params.version()) if args.merge_copies else []
         groups = apply.same_work_groups(s)
-        if merged: print(f'{len(merged)} copies merged: ' + ', '.join(f'{b} into {a}' for a, b in merged))
-        if not args.dry_run and not args.no_kinds: from app.store import kinds_db; print('kinds: ' + ', '.join(f'{v} {k}' for k, v in kinds_db.learn_and_classify(s).items() if not isinstance(v, dict)))
-        if args.dry_run: s.rollback()
-        else: s.commit()
-    print(('would change: ' if args.dry_run else '') + ', '.join(f'{v} {k}' for k, v in counts.items()) + f'; {len(groups)} works have more than one listen ({sum(len(v) for v in groups.values())} listens)'); return 0
+        if merged:
+            print(f"{len(merged)} copies merged: " + ", ".join(f"{b} into {a}" for a, b in merged))
+        if not args.dry_run and not args.no_kinds:
+            from app.store import kinds_db
+
+            print(
+                "kinds: "
+                + ", ".join(f"{v} {k}" for k, v in kinds_db.learn_and_classify(s).items() if not isinstance(v, dict))
+            )
+        if args.dry_run:
+            s.rollback()
+        else:
+            s.commit()
+    print(
+        ("would change: " if args.dry_run else "")
+        + ", ".join(f"{v} {k}" for k, v in counts.items())
+        + f"; {len(groups)} works have more than one listen ({sum(len(v) for v in groups.values())} listens)"
+    )
+    return 0
 
 
 def cmd_use_library(args):
-    new = os.path.abspath(os.path.expanduser(args.folder)); old = os.path.abspath(os.path.expanduser(args.old)) if args.old else settings.library_dir()
-    if not old: sys.exit('no current audiobook folder: give --from')
-    if not os.path.isdir(new) or not os.listdir(new): sys.exit(f'{new} is not a folder with files in it')
-    paths = catalogue.paths_under(old); missing = [p for p in paths if not os.path.exists(new + p[len(old.rstrip(os.sep)):])]
-    print(f'{len(paths)} books live under {old}; {len(paths) - len(missing)} of them exist under {new}')
+    new = os.path.abspath(os.path.expanduser(args.folder))
+    old = os.path.abspath(os.path.expanduser(args.old)) if args.old else settings.library_dir()
+    if not old:
+        sys.exit("no current audiobook folder: give --from")
+    if not os.path.isdir(new) or not os.listdir(new):
+        sys.exit(f"{new} is not a folder with files in it")
+    paths = catalogue.paths_under(old)
+    missing = [p for p in paths if not os.path.exists(new + p[len(old.rstrip(os.sep)) :])]
+    print(f"{len(paths)} books live under {old}; {len(paths) - len(missing)} of them exist under {new}")
     if missing and not args.force:
-        for p in missing[:5]: print('  missing:', p[len(old.rstrip(os.sep)):])
-        sys.exit(f'{len(missing)} are missing in the new folder (has the copy finished? audio-sync status); use --force to switch anyway')
-    backup.backup('pre-rebase')
-    n = catalogue.rebase_paths(old, new); settings.save(dict(library_dir=new))
-    print(f'{n} book paths moved to {new}; library_dir is now {new}. Restart the app (systemctl --user restart strata-listory) and check APP_LIBRARY in its unit.'); return 0
+        for p in missing[:5]:
+            print("  missing:", p[len(old.rstrip(os.sep)) :])
+        sys.exit(
+            f"{len(missing)} are missing in the new folder (has the copy finished? audio-sync status); use --force to switch anyway"
+        )
+    backup.backup("pre-rebase")
+    n = catalogue.rebase_paths(old, new)
+    settings.save(dict(library_dir=new))
+    print(
+        f"{n} book paths moved to {new}; library_dir is now {new}. Restart the app (systemctl --user restart strata-listory) and check APP_LIBRARY in its unit."
+    )
+    return 0
 
 
-def _mb(n): return f'{n / 1e6:,.0f} MB' if n < 1e9 else f'{n / 1e9:,.2f} GB'
+def _mb(n):
+    return f"{n / 1e6:,.0f} MB" if n < 1e9 else f"{n / 1e9:,.2f} GB"
 
 
 def _plan_line(p):
     tiers = {}
-    for c in p['chapters']: tiers[c['tier']] = tiers.get(c['tier'], 0) + 1
-    t = ' '.join(f'{k}x{v}' for k, v in sorted(tiers.items()))
-    return f"#{p['book_id']:<5} {p['title'][:38]:38} {p['duration'] / 3600:5.1f} h  {len(p['chapters']):3} ch ({p['chapter_source']})  {t:14} {p['loudness']['I']:6.1f} -> {p['loudness']['I'] + p['loudness']['apply_db']:6.1f} LUFS  {_mb(p['in_bytes'])} -> ~{_mb(p['est_bytes'])}" + (f"  !! {'; '.join(p['warnings'])}" if p['warnings'] else '')
+    for c in p["chapters"]:
+        tiers[c["tier"]] = tiers.get(c["tier"], 0) + 1
+    t = " ".join(f"{k}x{v}" for k, v in sorted(tiers.items()))
+    return (
+        f"#{p['book_id']:<5} {p['title'][:38]:38} {p['duration'] / 3600:5.1f} h  {len(p['chapters']):3} ch ({p['chapter_source']})  {t:14} {p['loudness']['I']:6.1f} -> {p['loudness']['I'] + p['loudness']['apply_db']:6.1f} LUFS  {_mb(p['in_bytes'])} -> ~{_mb(p['est_bytes'])}"
+        + (f"  !! {'; '.join(p['warnings'])}" if p["warnings"] else "")
+    )
 
 
 def _books_for(args):
     if args.ids:
         books = [_run(catalogue.get_book, i) for i in args.ids]
         for b in books:
-            if b['review'] != 'confirmed': print(f"note: #{b['id']} {b['title']} is not confirmed ({b['review']}); processing it because you named it")
+            if b["review"] != "confirmed":
+                print(
+                    f"note: #{b['id']} {b['title']} is not confirmed ({b['review']}); processing it because you named it"
+                )
         return books
     return []
 
 
 def _one_plan(b, final):
-    from app.process import plan as P
     from app.process import queue as pq
+
     return pq._plan_one(b, final)
 
 
 def cmd_process(args):
-    from app.process import probe, run as R
+    from app.process import probe
+    from app.process import run as R
+
     final = os.path.abspath(os.path.expanduser(args.out)) if args.out else settings.final_dir()
     books = _books_for(args)
-    if not books: print('nothing named: propose plans with `./app process-propose`, approve them in the app or with `./app process-approve`, then `./app process-run`. (`./app process ID...` processes named books directly; --plan only shows plans.)'); return 0
+    if not books:
+        print(
+            "nothing named: propose plans with `./app process-propose`, approve them in the app or with `./app process-approve`, then `./app process-run`. (`./app process ID...` processes named books directly; --plan only shows plans.)"
+        )
+        return 0
     for b in books:
-        if not b['path'] or not os.path.exists(b['path']) or not fs.reachable(b['path']): sys.exit(f"#{b['id']} {b['title']}: its files are not available at {b['path'] or '(no path)'}")
+        if not b["path"] or not os.path.exists(b["path"]) or not fs.reachable(b["path"]):
+            sys.exit(f"#{b['id']} {b['title']}: its files are not available at {b['path'] or '(no path)'}")
     plans, failed = {}, 0
+
     def plan_one(b):
-        try: return b['id'], _one_plan(b, final)
-        except (probe.ToolError, OSError) as e: return b['id'], str(e)
+        try:
+            return b["id"], _one_plan(b, final)
+        except (probe.ToolError, OSError) as e:
+            return b["id"], str(e)
+
     from concurrent.futures import ThreadPoolExecutor
+
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
         for bid, p in ex.map(plan_one, books):
-            if isinstance(p, str): failed += 1; print(f'#{bid}: cannot plan: {p}')
-            else: plans[bid] = p; print(_plan_line(p)) if not args.json else None
-    if args.json: print(json.dumps(plans, indent=1)); return 1 if failed else 0
-    tot_i = sum(p['in_bytes'] for p in plans.values()); tot_o = sum(p['est_bytes'] for p in plans.values())
-    print(f"{len(plans)} books, {_mb(tot_i)} -> about {_mb(tot_o)} ({tot_o / tot_i:.0%})" if tot_i else 'nothing planned')
-    if args.plan: return 1 if failed else 0
+            if isinstance(p, str):
+                failed += 1
+                print(f"#{bid}: cannot plan: {p}")
+            else:
+                plans[bid] = p
+                print(_plan_line(p)) if not args.json else None
+    if args.json:
+        print(json.dumps(plans, indent=1))
+        return 1 if failed else 0
+    tot_i = sum(p["in_bytes"] for p in plans.values())
+    tot_o = sum(p["est_bytes"] for p in plans.values())
+    print(
+        f"{len(plans)} books, {_mb(tot_i)} -> about {_mb(tot_o)} ({tot_o / tot_i:.0%})" if tot_i else "nothing planned"
+    )
+    if args.plan:
+        return 1 if failed else 0
+
     def go(b):
         try:
-            res = R.execute(b, plans[b['id']], args.force); catalogue.set_processed(b['id'], res)
-            return b['id'], res, None
+            res = R.execute(b, plans[b["id"]], args.force)
+            catalogue.set_processed(b["id"], res)
+            return b["id"], res, None
         except (probe.ToolError, OSError) as e:
-            catalogue.set_processed(b['id'], dict(status='failed', error=str(e), finished=__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat())); return b['id'], None, str(e)
+            catalogue.set_processed(
+                b["id"],
+                dict(
+                    status="failed",
+                    error=str(e),
+                    finished=__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+                ),
+            )
+            return b["id"], None, str(e)
+
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
-        for bid, res, err in ex.map(go, [b for b in books if b['id'] in plans]):
-            if err: failed += 1; print(f'#{bid}: FAILED: {err}')
-            else: print(f"#{bid}: done in {res['seconds']:.0f}s: {_mb(res['in_bytes'])} -> {_mb(res['out_bytes'])}, loudness {res['loudness_before']:.1f} -> {res['loudness_after']:.1f} LUFS, {res['out_dir']}" + (f"  !! {'; '.join(res['warnings'])}" if res['warnings'] else ''))
+        for bid, res, err in ex.map(go, [b for b in books if b["id"] in plans]):
+            if err:
+                failed += 1
+                print(f"#{bid}: FAILED: {err}")
+            else:
+                print(
+                    f"#{bid}: done in {res['seconds']:.0f}s: {_mb(res['in_bytes'])} -> {_mb(res['out_bytes'])}, loudness {res['loudness_before']:.1f} -> {res['loudness_after']:.1f} LUFS, {res['out_dir']}"
+                    + (f"  !! {'; '.join(res['warnings'])}" if res["warnings"] else "")
+                )
     return 1 if failed else 0
 
 
 def cmd_process_propose(args):
     from app.process import queue as pq
-    res = pq.propose(args.limit, args.jobs); print(f"proposed {res['planned']} plans, {res['failed']} could not be planned; {res['remaining']} more confirmed books could be proposed. Review with `./app process-queue`, approve in the app (Processing page) or with `./app process-approve ID...`"); return 0
+
+    res = pq.propose(args.limit, args.jobs)
+    print(
+        f"proposed {res['planned']} plans, {res['failed']} could not be planned; {res['remaining']} more confirmed books could be proposed. Review with `./app process-queue`, approve in the app (Processing page) or with `./app process-approve ID...`"
+    )
+    return 0
 
 
 def cmd_process_queue(args):
     from app.process import queue as pq
+
     rows = catalogue.list_plans([args.state] if args.state else None)
-    if not rows: print('  (the queue is empty: ./app process-propose)'); return 0
+    if not rows:
+        print("  (the queue is empty: ./app process-propose)")
+        return 0
     for r in rows:
-        if not r['plan']: print(f"  #{r['book_id']:<5} {r['state']:9} {r['title'][:40]}" + (f"  {r['error']}" if r['error'] else '')); continue
-        sm = pq.summary(r['plan']); t = ' '.join(f'{k}x{v}' for k, v in sorted(sm['tiers'].items()))
-        print(f"  #{r['book_id']:<5} {r['state']:9} {r['title'][:36]:36} {sm['hours']:5.1f} h {sm['chapters']:3} ch {t:12} {sm['loudness_before']:6.1f} -> {sm['loudness_after_est']:6.1f} LUFS  {_mb(sm['in_bytes'])} -> ~{_mb(sm['est_bytes'])}" + (f"  !! {'; '.join(sm['warnings'])}" if sm['warnings'] else '') + (f"  {r['error']}" if r['error'] else ''))
+        if not r["plan"]:
+            print(f"  #{r['book_id']:<5} {r['state']:9} {r['title'][:40]}" + (f"  {r['error']}" if r["error"] else ""))
+            continue
+        sm = pq.summary(r["plan"])
+        t = " ".join(f"{k}x{v}" for k, v in sorted(sm["tiers"].items()))
+        print(
+            f"  #{r['book_id']:<5} {r['state']:9} {r['title'][:36]:36} {sm['hours']:5.1f} h {sm['chapters']:3} ch {t:12} {sm['loudness_before']:6.1f} -> {sm['loudness_after_est']:6.1f} LUFS  {_mb(sm['in_bytes'])} -> ~{_mb(sm['est_bytes'])}"
+            + (f"  !! {'; '.join(sm['warnings'])}" if sm["warnings"] else "")
+            + (f"  {r['error']}" if r["error"] else "")
+        )
     return 0
 
 
 def cmd_process_decide(args):
     from app.process import queue as pq
-    changed = pq.decide(args.ids, args.approve); print(f"{'approved' if args.approve else 'rejected'}: {', '.join('#%d' % i for i in changed) or 'none'}" + (f" (not changed: {', '.join('#%d' % i for i in args.ids if i not in changed)}; only proposed plans can be decided)" if len(changed) < len(args.ids) else '')); return 0
+
+    changed = pq.decide(args.ids, args.approve)
+    print(
+        f"{'approved' if args.approve else 'rejected'}: {', '.join('#%d' % i for i in changed) or 'none'}"
+        + (
+            f" (not changed: {', '.join('#%d' % i for i in args.ids if i not in changed)}; only proposed plans can be decided)"
+            if len(changed) < len(args.ids)
+            else ""
+        )
+    )
+    return 0
 
 
 def cmd_process_run(args):
     from app.process import queue as pq
-    if not catalogue.list_plans(('approved',)): print('nothing is approved yet: `./app process-queue`, then `./app process-approve ID...`'); return 0
-    res = pq.run_approved(args.jobs); print(f"processed {res['done']}, failed {res['failed']}; see `./app process-queue`"); return 1 if res['failed'] else 0
+
+    if not catalogue.list_plans(("approved",)):
+        print("nothing is approved yet: `./app process-queue`, then `./app process-approve ID...`")
+        return 0
+    res = pq.run_approved(args.jobs)
+    print(f"processed {res['done']}, failed {res['failed']}; see `./app process-queue`")
+    return 1 if res["failed"] else 0
 
 
 def cmd_process_status(args):
     s = catalogue.processed_summary()
-    print(f"{s['done']} books processed ({s['seconds'] / 3600:.0f} h of audio): {_mb(s['in_bytes'])} -> {_mb(s['out_bytes'])}" + (f" ({s['out_bytes'] / s['in_bytes']:.0%})" if s['in_bytes'] else '') + f"; {s['failed']} failed; {len(catalogue.pending_process(100000))} confirmed books still to do; final library {settings.final_dir()}"); return 0
+    print(
+        f"{s['done']} books processed ({s['seconds'] / 3600:.0f} h of audio): {_mb(s['in_bytes'])} -> {_mb(s['out_bytes'])}"
+        + (f" ({s['out_bytes'] / s['in_bytes']:.0%})" if s["in_bytes"] else "")
+        + f"; {s['failed']} failed; {len(catalogue.pending_process(100000))} confirmed books still to do; final library {settings.final_dir()}"
+    )
+    return 0
 
 
 def cmd_mirror(args):
-    books = catalogue.list_books(review='confirmed') if not args.all else catalogue.list_books()
+    books = catalogue.list_books(review="confirmed") if not args.all else catalogue.list_books()
     n = mirror.write_all(books)
-    print(f'wrote metadata.json for {n} of {len(books)} books under {mirror.root()}'); return 0
+    print(f"wrote metadata.json for {n} of {len(books)} books under {mirror.root()}")
+    return 0
 
 
 def cmd_enrich(args):
     try:
         if args.id is not None:
             data = enrich.enrich_book(_run(catalogue.get_book, args.id))
-            print(f"#{args.id}: " + (f"Hardcover {data['rating'] or 0:.2f} from {data['ratings_count']} ratings, {data['reviews_count']} reviews, {len(data['reviews'])} stored" if data else 'not found on Hardcover')); return 0
+            print(
+                f"#{args.id}: "
+                + (
+                    f"Hardcover {data['rating'] or 0:.2f} from {data['ratings_count']} ratings, {data['reviews_count']} reviews, {len(data['reviews'])} stored"
+                    if data
+                    else "not found on Hardcover"
+                )
+            )
+            return 0
         res = enrich.enrich_pending(args.limit)
-    except matcher.MatchError as e: sys.exit(str(e))
-    print(f"tried {res['tried']}: {res['enriched']} enriched, {res['not_found']} not found on Hardcover; {res['remaining']} confirmed books still to do"); return 0
+    except matcher.MatchError as e:
+        sys.exit(str(e))
+    print(
+        f"tried {res['tried']}: {res['enriched']} enriched, {res['not_found']} not found on Hardcover; {res['remaining']} confirmed books still to do"
+    )
+    return 0
 
 
 def cmd_providers(args):
     for p in providers.status():
-        print(f"  {p['name']:12} {p['label']:18} {'selected #' + str(p['order']) if p['selected'] else 'not selected':14} {'ready' if p['available'] else 'UNAVAILABLE: ' + p['reason']}  (1 request per {p['min_interval']:g}s, cache {p['cache_days']:g} days)")
+        print(
+            f"  {p['name']:12} {p['label']:18} {'selected #' + str(p['order']) if p['selected'] else 'not selected':14} {'ready' if p['available'] else 'UNAVAILABLE: ' + p['reason']}  (1 request per {p['min_interval']:g}s, cache {p['cache_days']:g} days)"
+        )
     return 0
 
 
 def cmd_match_test(args):
     plist = _chosen(args)
-    books = [b for b in catalogue.list_books(kind='book') if b['review'] == 'new'][::max(1, args.stride)][:args.limit]
-    if not books: print('no scanned books to test: ./app scan first'); return 0
-    try: rows = matcher.evaluate(books, plist)
-    except matcher.MatchError as e: sys.exit(str(e))
-    print(f'{len(books)} scanned books; nothing is recorded')
-    for name, r in rows.items(): print(f"  {name:12} good (>= {matcher.GOOD_SCORE:.2f}) {r['good']:>4} ({r['good'] / len(books):4.0%})   any (>= {matcher.MIN_SCORE:.2f}) {r['some']:>4} ({r['some'] / len(books):4.0%})   errors {r['errors']}")
+    books = [b for b in catalogue.list_books(kind="book") if b["review"] == "new"][:: max(1, args.stride)][: args.limit]
+    if not books:
+        print("no scanned books to test: ./app scan first")
+        return 0
+    try:
+        rows = matcher.evaluate(books, plist)
+    except matcher.MatchError as e:
+        sys.exit(str(e))
+    print(f"{len(books)} scanned books; nothing is recorded")
+    for name, r in rows.items():
+        print(
+            f"  {name:12} good (>= {matcher.GOOD_SCORE:.2f}) {r['good']:>4} ({r['good'] / len(books):4.0%})   any (>= {matcher.MIN_SCORE:.2f}) {r['some']:>4} ({r['some'] / len(books):4.0%})   errors {r['errors']}"
+        )
     return 0
 
 
 def cmd_confirm(args):
-    print(_line(_run(catalogue.confirm, args.id))); return 0
+    print(_line(_run(catalogue.confirm, args.id)))
+    return 0
 
 
 def cmd_ignore(args):
-    print(_line(_run(catalogue.ignore, args.id))); return 0
+    print(_line(_run(catalogue.ignore, args.id)))
+    return 0
 
 
 def cmd_set(args):
-    if args.value is None: print(f'{args.key} = {settings.all_settings().get(args.key)}'); return 0
-    try: settings.save({args.key: None if args.value == 'default' else args.value})
-    except KeyError as e: sys.exit(str(e))
-    print(f'{args.key} = {settings.all_settings()[args.key]}'); return 0
+    if args.value is None:
+        print(f"{args.key} = {settings.all_settings().get(args.key)}")
+        return 0
+    try:
+        settings.save({args.key: None if args.value == "default" else args.value})
+    except KeyError as e:
+        sys.exit(str(e))
+    print(f"{args.key} = {settings.all_settings()[args.key]}")
+    return 0
 
 
 def cmd_ingest(args):
     from app.ingest import pipeline, policy, store
+
     try:
-        if args.cmd=='ingest-run':result=[r['id'] for r in pipeline.run(args.ids or None,args.limit,not args.offline)]
-        elif args.cmd=='ingest-resume':result=[pipeline.continue_review(args.run_id)['id']]
-        elif args.cmd=='ingest-refresh':result=pipeline.refresh_metadata(args.run_id)['id']
-        elif args.cmd=='ingest-approve':
-            result=pipeline.approve_review(args.run_id,args.phase)
-            if result['changed']:result=dict(result,state=pipeline.continue_review(args.run_id)['state'])
-        elif args.cmd=='ingest-show':result=store.get(args.run_id)
-        elif args.cmd=='ingest-evaluate':result=pipeline.evaluate(args.run_id,policy.validate(json.load(open(args.policy))) if args.policy else None)
-        elif args.cmd=='ingest-enqueue':result=pipeline.enqueue(args.run_id)
-        elif args.cmd=='ingest-policy':result=policy.save(json.load(open(args.file))) if args.file else policy.current()
-        else:result=pipeline.dashboard()
-    except (ValueError,OSError) as e:sys.exit(str(e))
-    print(json.dumps(result,indent=2,allow_nan=False));return 0
+        if args.cmd == "ingest-run":
+            result = [r["id"] for r in pipeline.run(args.ids or None, args.limit, not args.offline)]
+        elif args.cmd == "ingest-resume":
+            result = [pipeline.continue_review(args.run_id)["id"]]
+        elif args.cmd == "ingest-refresh":
+            result = pipeline.refresh_metadata(args.run_id)["id"]
+        elif args.cmd == "ingest-approve":
+            result = pipeline.approve_review(args.run_id, args.phase)
+            if result["changed"]:
+                result = dict(result, state=pipeline.continue_review(args.run_id)["state"])
+        elif args.cmd == "ingest-show":
+            result = store.get(args.run_id)
+        elif args.cmd == "ingest-evaluate":
+            result = pipeline.evaluate(
+                args.run_id, policy.validate(json.load(open(args.policy))) if args.policy else None
+            )
+        elif args.cmd == "ingest-enqueue":
+            result = pipeline.enqueue(args.run_id)
+        elif args.cmd == "ingest-policy":
+            result = policy.save(json.load(open(args.file))) if args.file else policy.current()
+        else:
+            result = pipeline.dashboard()
+    except (ValueError, OSError) as e:
+        sys.exit(str(e))
+    print(json.dumps(result, indent=2, allow_nan=False))
+    return 0
 
 
 def cmd_openlibrary(args):
     from app.providers import openlibrary_local
+
     try:
-        result=openlibrary_local.status()
-    except (ValueError,OSError) as error:sys.exit(str(error))
-    print(json.dumps(result,indent=2));return 0
+        result = openlibrary_local.status()
+    except (ValueError, OSError) as error:
+        sys.exit(str(error))
+    print(json.dumps(result, indent=2))
+    return 0
 
 
 def cmd_identify(args):
     from app import settings
     from app.identify import queue, service
-    db = os.path.join(settings.data_dir(), 'catalogue.db')
+
+    db = os.path.join(settings.data_dir(), "catalogue.db")
     try:
-        if args.cmd == 'identify-train': result = service.train(db)
-        elif args.cmd == 'identify-refresh': result = service.refresh(db)
-        elif args.cmd == 'identify-queue': result = service.page(args.limit)
+        if args.cmd == "identify-train":
+            result = service.train(db)
+        elif args.cmd == "identify-refresh":
+            result = service.refresh(db)
+        elif args.cmd == "identify-queue":
+            result = service.page(args.limit)
         else:
-            item = next((s for s in service.page(50)['items'] if s['group'] == args.group), None)
-            if item is None: sys.exit('no such queued group (refresh the queue?)')
-            queue.decide(item['item'], args.decision, args.work or item['work'], item['files'], item['title'], ', '.join(item['authors'])); result = dict(recorded=args.decision, group=args.group)
-    except (ValueError, OSError, FileNotFoundError, ImportError) as e: sys.exit(str(e))
-    print(json.dumps(result, indent=2, default=str)); return 0
+            item = next((s for s in service.page(50)["items"] if s["group"] == args.group), None)
+            if item is None:
+                sys.exit("no such queued group (refresh the queue?)")
+            queue.decide(
+                item["item"],
+                args.decision,
+                args.work or item["work"],
+                item["files"],
+                item["title"],
+                ", ".join(item["authors"]),
+            )
+            result = dict(recorded=args.decision, group=args.group)
+    except (ValueError, OSError, FileNotFoundError, ImportError) as e:
+        sys.exit(str(e))
+    print(json.dumps(result, indent=2, default=str))
+    return 0
 
 
 def cmd_serve(args):
     from app.server import app as server_app
-    server_app.main(['--host', args.host, '--port', str(args.port)]); return 0
+
+    server_app.main(["--host", args.host, "--port", str(args.port)])
+    return 0
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog='app'); sub = p.add_subparsers(dest='cmd', required=True)
-    sub.add_parser('openlibrary-status',help='show the offline Open Library stores (identify index and detail store)').set_defaults(fn=cmd_openlibrary)
-    ir=sub.add_parser('ingest-run',help='run staged ingest and persist metrics/evidence (automation follows policy; off by default)');ir.add_argument('ids',nargs='*',type=int);ir.add_argument('--limit',type=int,default=5);ir.add_argument('--offline',action='store_true');ir.set_defaults(fn=cmd_ingest)
-    for command in ('ingest-show','ingest-resume','ingest-refresh','ingest-enqueue','ingest-evaluate'):
-        ip=sub.add_parser(command);ip.add_argument('run_id');ip.set_defaults(fn=cmd_ingest)
-        if command=='ingest-evaluate':ip.add_argument('--policy',help='evaluate a policy JSON file against saved metrics')
-    ip=sub.add_parser('ingest-policy',help='show or save versioned thresholds');ip.add_argument('file',nargs='?');ip.set_defaults(fn=cmd_ingest)
-    ip=sub.add_parser('ingest-approve',help='approve metadata or quality and advance to the next review');ip.add_argument('run_id');ip.add_argument('phase',choices=('metadata','audiobook','quality'));ip.set_defaults(fn=cmd_ingest)
-    sub.add_parser('ingest-status',help='stage metrics, runs and current thresholds').set_defaults(fn=cmd_ingest)
-    sub.add_parser('identify-train', help='train the identification model from approvals and stored review decisions (needs requirements-model.txt)').set_defaults(fn=cmd_identify)
-    sub.add_parser('identify-refresh', help='score the library and cache the review queue').set_defaults(fn=cmd_identify)
-    iq = sub.add_parser('identify-queue', help='next uncertain books by impact'); iq.add_argument('--limit', type=int, default=10); iq.set_defaults(fn=cmd_identify)
-    idc = sub.add_parser('identify-decide', help='confirm or reject the suggested work for a queued group'); idc.add_argument('group'); idc.add_argument('decision', choices=('approve', 'reject')); idc.add_argument('--work', help='OpenLibrary work key (default: the suggestion)'); idc.set_defaults(fn=cmd_identify)
-    check=sub.add_parser('doctor', help='check the environment');check.add_argument('--audio',action='store_true',help='also check NumPy, SciPy and native audio tools');check.set_defaults(fn=doctor)
+    p = argparse.ArgumentParser(prog="app")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser(
+        "openlibrary-status", help="show the offline Open Library stores (identify index and detail store)"
+    ).set_defaults(fn=cmd_openlibrary)
+    ir = sub.add_parser(
+        "ingest-run", help="run staged ingest and persist metrics/evidence (automation follows policy; off by default)"
+    )
+    ir.add_argument("ids", nargs="*", type=int)
+    ir.add_argument("--limit", type=int, default=5)
+    ir.add_argument("--offline", action="store_true")
+    ir.set_defaults(fn=cmd_ingest)
+    for command in ("ingest-show", "ingest-resume", "ingest-refresh", "ingest-enqueue", "ingest-evaluate"):
+        ip = sub.add_parser(command)
+        ip.add_argument("run_id")
+        ip.set_defaults(fn=cmd_ingest)
+        if command == "ingest-evaluate":
+            ip.add_argument("--policy", help="evaluate a policy JSON file against saved metrics")
+    ip = sub.add_parser("ingest-policy", help="show or save versioned thresholds")
+    ip.add_argument("file", nargs="?")
+    ip.set_defaults(fn=cmd_ingest)
+    ip = sub.add_parser("ingest-approve", help="approve metadata or quality and advance to the next review")
+    ip.add_argument("run_id")
+    ip.add_argument("phase", choices=("metadata", "audiobook", "quality"))
+    ip.set_defaults(fn=cmd_ingest)
+    sub.add_parser("ingest-status", help="stage metrics, runs and current thresholds").set_defaults(fn=cmd_ingest)
+    sub.add_parser(
+        "identify-train",
+        help="train the identification model from approvals and stored review decisions (needs `uv sync --group model`)",
+    ).set_defaults(fn=cmd_identify)
+    sub.add_parser("identify-refresh", help="score the library and cache the review queue").set_defaults(
+        fn=cmd_identify
+    )
+    iq = sub.add_parser("identify-queue", help="next uncertain books by impact")
+    iq.add_argument("--limit", type=int, default=10)
+    iq.set_defaults(fn=cmd_identify)
+    idc = sub.add_parser("identify-decide", help="confirm or reject the suggested work for a queued group")
+    idc.add_argument("group")
+    idc.add_argument("decision", choices=("approve", "reject"))
+    idc.add_argument("--work", help="OpenLibrary work key (default: the suggestion)")
+    idc.set_defaults(fn=cmd_identify)
+    check = sub.add_parser("doctor", help="check the environment")
+    check.add_argument("--audio", action="store_true", help="also check NumPy, SciPy and native audio tools")
+    check.set_defaults(fn=doctor)
+
     def book_fields(sp, edit=False):
-        sp.add_argument('--title' if edit else 'title', **(dict(help='new title') if edit else {})); sp.add_argument('--author'); sp.add_argument('--narrator'); sp.add_argument('--series'); sp.add_argument('--series-position', dest='series_position', type=float)
-        sp.add_argument('--duration-seconds', dest='duration_seconds', type=int); sp.add_argument('--year', type=int, help='the year of this audiobook release (used in the final library folder name)'); sp.add_argument('--path', help='where the audio files live'); sp.add_argument('--status', choices=catalogue.STATUSES); sp.add_argument('--json', action='store_true')
-    ad = sub.add_parser('add', help='add a book to the catalogue'); book_fields(ad); ad.set_defaults(fn=cmd_add)
-    ls = sub.add_parser('list', help='list the catalogue'); ls.add_argument('query', nargs='?', help='match title, author, narrator or series'); ls.add_argument('--status', choices=catalogue.STATUSES); ls.add_argument('--review', choices=catalogue.REVIEWS); ls.add_argument('--kind', choices=catalogue.KINDS); ls.add_argument('--json', action='store_true'); ls.set_defaults(fn=cmd_list)
-    er = sub.add_parser('evidence-report', help='read-only JSON identity report using stored metadata and every audio file; never approves processing'); er.add_argument('ids', nargs='*', type=int); er.add_argument('--limit', type=int, default=20); er.add_argument('--stride', type=int, default=1); er.add_argument('--fresh-openlibrary', action='store_true', help='fetch and archive fresh Open Library search, work details and ratings; catalogue stays read-only'); er.set_defaults(fn=cmd_evidence_report)
-    sh = sub.add_parser('show', help='show one book as JSON'); sh.add_argument('id', type=int); sh.set_defaults(fn=cmd_show)
-    ed = sub.add_parser('edit', help='change fields of a book'); ed.add_argument('id', type=int); book_fields(ed, edit=True); ed.set_defaults(fn=cmd_edit)
-    rm = sub.add_parser('remove', help='remove a book from the catalogue (audio files are never touched)'); rm.add_argument('id', type=int); rm.set_defaults(fn=cmd_remove)
-    sc = sub.add_parser('scan', help='find audiobooks in a folder (default: the library_dir setting) and add them as new, unreviewed books; never writes to the folder'); sc.add_argument('folder', nargs='?'); sc.add_argument('--dry-run', action='store_true'); sc.set_defaults(fn=cmd_scan)
-    fgp = sub.add_parser('filegroups', help='scan the library folder into the listory Postgres schema (sha256 per file) and group it by folder; rerunnable, hashes only changed files'); fgp.add_argument('folder', nargs='?'); fgp.add_argument('--workers', type=int, default=4); fgp.set_defaults(fn=cmd_filegroups)
-    fgs = sub.add_parser('filegroups-structure', help='infer books, discs and series from the newest folder grouping into a new grouping run'); fgs.add_argument('--check', action='store_true', help='classify without writing and show what differs from data/structure-golden.json (exit 1 if anything)'); fgs.add_argument('--update', action='store_true', help='save the current classification as the golden snapshot'); fgs.set_defaults(fn=cmd_filegroups_structure)
-    lb = sub.add_parser('listens-build', help='make a listen for every book and programme in the newest structure grouping'); lb.add_argument('--rebuild', action='store_true', help='clear existing listens first (they are derived data)'); lb.add_argument('--no-copies', action='store_true', help='do not link copies of one recording into one listen'); lb.set_defaults(fn=cmd_listens_build)
-    lk = sub.add_parser('listens-kinds', help='classify listens as book / radio series / radio programme / play with the reasons (a person\'s own choice is kept)'); lk.add_argument('ids', nargs='*', type=int); lk.add_argument('--dry-run', action='store_true'); lk.add_argument('--learn', action='store_true', help='first fit the weights on the labels (your kind choices, accepted Audible matches)'); lk.add_argument('--report', help='write every verdict as JSON to this file'); lk.set_defaults(fn=cmd_listens_kinds)
-    lip = sub.add_parser('listens-identify-prepare', help='find candidate works for listens (local Open Library, Audible and radio programme indexes) and cache comparison vectors'); lip.add_argument('--no-radio-details', action='store_true', help='do not fetch the BBC programme record of each candidate radio programme'); lip.add_argument('--old-catalogue', help='also take labels from the approvals in this old SQLite catalogue (data/catalogue.db)'); lip.add_argument('--kinds', default='book,radio_series,radio_show,play,other', help='listen kinds, comma separated (default: all: radio programmes are a candidate source too)'); lip.set_defaults(fn=cmd_listens_identify_prepare)
-    sub.add_parser('listens-identify-train', help='fit the identification model, cross-validate it on the labelled listens, save data/linkage/model.json').set_defaults(fn=cmd_listens_identify_train)
-    lid = sub.add_parser('listens-identify', help='accept, queue for review or reject the candidate works of each listen with the trained model'); lid.add_argument('ids', nargs='*', type=int, help='only these listens'); lid.add_argument('--threshold', type=float, default=.95, help='accept when P(work) is at least this (default 0.95)'); lid.add_argument('--dry-run', action='store_true', help='count what would change, write nothing'); lid.add_argument('--merge-copies', action='store_true', help='merge listens identified as the same work whose runtimes agree within 2%% (copies of one recording)'); lid.add_argument('--rebuild', action='store_true', help="clear the model's earlier answers and works first (a person's decisions are kept)"); lid.set_defaults(fn=cmd_listens_identify); lid.add_argument('--no-kinds', action='store_true', help='skip re-classifying book / radio / play after identifying (Audible recordings matched now add evidence)')
-    mt = sub.add_parser('match', help='look scanned books up with the metadata providers and record suggestions'); mt.add_argument('--limit', type=int, default=25); mt.add_argument('--providers', help='comma separated, in order (default: the match_providers setting)'); mt.set_defaults(fn=cmd_match)
-    ul = sub.add_parser('use-library', help='switch the audiobook folder (for example to the local copy), moving every book path with it'); ul.add_argument('folder'); ul.add_argument('--from', dest='old', help='the folder the paths currently live under (default: library_dir)'); ul.add_argument('--force', action='store_true', help='switch even if some books are missing in the new folder'); ul.set_defaults(fn=cmd_use_library)
-    pr = sub.add_parser('process', help='turn books into the final library: mono mp3 chapters, normalised loudness (--plan shows what would happen)'); pr.add_argument('ids', nargs='*', type=int, help='book ids (default: confirmed books not yet processed)'); pr.add_argument('--plan', action='store_true', help='measure and print the plan, change nothing'); pr.add_argument('--json', action='store_true'); pr.add_argument('--limit', type=int, default=5); pr.add_argument('--jobs', type=int, default=3); pr.add_argument('--force', action='store_true', help='replace an existing output folder'); pr.add_argument('--out', help='final library folder (default: the final_dir setting, ~/audiobooks)'); pr.set_defaults(fn=cmd_process)
-    pp = sub.add_parser('process-propose', help='plan eligible confirmed books and put the plans in the approval queue (nothing is processed)'); pp.add_argument('--limit', type=int, default=5); pp.add_argument('--jobs', type=int, default=2); pp.set_defaults(fn=cmd_process_propose)
-    pq_ = sub.add_parser('process-queue', help='show the approval queue'); pq_.add_argument('--state'); pq_.set_defaults(fn=cmd_process_queue)
-    pa = sub.add_parser('process-approve', help='approve proposed plans'); pa.add_argument('ids', nargs='+', type=int); pa.set_defaults(fn=cmd_process_decide, approve=True)
-    pj = sub.add_parser('process-reject', help='reject proposed plans (they are not proposed again)'); pj.add_argument('ids', nargs='+', type=int); pj.set_defaults(fn=cmd_process_decide, approve=False)
-    prn = sub.add_parser('process-run', help='process the approved plans'); prn.add_argument('--jobs', type=int, default=2); prn.set_defaults(fn=cmd_process_run)
-    sub.add_parser('process-status', help='how much of the library is processed').set_defaults(fn=cmd_process_status)
-    mr = sub.add_parser('mirror', help='rewrite metadata.json in the data mirror (<data_dir>/library) for confirmed books'); mr.add_argument('--all', action='store_true', help='every book, not only confirmed ones'); mr.set_defaults(fn=cmd_mirror)
-    en = sub.add_parser('enrich', help='fetch Hardcover ratings, reviews and other community data for confirmed books'); en.add_argument('id', nargs='?', type=int, help='one book (refetched even if recent); default: confirmed books without recent data'); en.add_argument('--limit', type=int, default=25); en.set_defaults(fn=cmd_enrich)
-    sub.add_parser('providers', help='list the metadata providers and whether each can run').set_defaults(fn=cmd_providers)
-    mx = sub.add_parser('match-test', help='compare the providers on a sample of scanned books without recording anything'); mx.add_argument('--limit', type=int, default=50); mx.add_argument('--stride', type=int, default=1, help='take every Nth book, to spread the sample'); mx.add_argument('--providers'); mx.set_defaults(fn=cmd_match_test)
-    cf = sub.add_parser('confirm', help='accept a book, applying its suggestion if it has one'); cf.add_argument('id', type=int); cf.set_defaults(fn=cmd_confirm)
-    ig = sub.add_parser('ignore', help='mark a scanned item as not wanted'); ig.add_argument('id', type=int); ig.set_defaults(fn=cmd_ignore)
-    sub.add_parser('backup', help='back up the catalogue database now').set_defaults(fn=cmd_backup)
-    sub.add_parser('backups', help='list the automatic backups').set_defaults(fn=cmd_backups)
-    rs = sub.add_parser('restore', help='replace the catalogue with a backup (default: the newest); the current one is kept'); rs.add_argument('backup', nargs='?', help='path from `backups`'); rs.set_defaults(fn=cmd_restore)
-    s = sub.add_parser('set', help='show or change a setting (data_dir, library_dir, backup_dir, match_providers, audible_region, final_dir); value "default" resets it'); s.add_argument('key'); s.add_argument('value', nargs='?'); s.set_defaults(fn=cmd_set)
-    v = sub.add_parser('serve', help='start the web server'); v.add_argument('--host', default='127.0.0.1'); v.add_argument('--port', type=int, default=8360); v.set_defaults(fn=cmd_serve)
+        sp.add_argument("--title" if edit else "title", **(dict(help="new title") if edit else {}))
+        sp.add_argument("--author")
+        sp.add_argument("--narrator")
+        sp.add_argument("--series")
+        sp.add_argument("--series-position", dest="series_position", type=float)
+        sp.add_argument("--duration-seconds", dest="duration_seconds", type=int)
+        sp.add_argument(
+            "--year", type=int, help="the year of this audiobook release (used in the final library folder name)"
+        )
+        sp.add_argument("--path", help="where the audio files live")
+        sp.add_argument("--status", choices=catalogue.STATUSES)
+        sp.add_argument("--json", action="store_true")
+
+    ad = sub.add_parser("add", help="add a book to the catalogue")
+    book_fields(ad)
+    ad.set_defaults(fn=cmd_add)
+    ls = sub.add_parser("list", help="list the catalogue")
+    ls.add_argument("query", nargs="?", help="match title, author, narrator or series")
+    ls.add_argument("--status", choices=catalogue.STATUSES)
+    ls.add_argument("--review", choices=catalogue.REVIEWS)
+    ls.add_argument("--kind", choices=catalogue.KINDS)
+    ls.add_argument("--json", action="store_true")
+    ls.set_defaults(fn=cmd_list)
+    er = sub.add_parser(
+        "evidence-report",
+        help="read-only JSON identity report using stored metadata and every audio file; never approves processing",
+    )
+    er.add_argument("ids", nargs="*", type=int)
+    er.add_argument("--limit", type=int, default=20)
+    er.add_argument("--stride", type=int, default=1)
+    er.add_argument(
+        "--fresh-openlibrary",
+        action="store_true",
+        help="fetch and archive fresh Open Library search, work details and ratings; catalogue stays read-only",
+    )
+    er.set_defaults(fn=cmd_evidence_report)
+    sh = sub.add_parser("show", help="show one book as JSON")
+    sh.add_argument("id", type=int)
+    sh.set_defaults(fn=cmd_show)
+    ed = sub.add_parser("edit", help="change fields of a book")
+    ed.add_argument("id", type=int)
+    book_fields(ed, edit=True)
+    ed.set_defaults(fn=cmd_edit)
+    rm = sub.add_parser("remove", help="remove a book from the catalogue (audio files are never touched)")
+    rm.add_argument("id", type=int)
+    rm.set_defaults(fn=cmd_remove)
+    sc = sub.add_parser(
+        "scan",
+        help="find audiobooks in a folder (default: the library_dir setting) and add them as new, unreviewed books; never writes to the folder",
+    )
+    sc.add_argument("folder", nargs="?")
+    sc.add_argument("--dry-run", action="store_true")
+    sc.set_defaults(fn=cmd_scan)
+    fgp = sub.add_parser(
+        "filegroups",
+        help="scan the library folder into the listory Postgres schema (sha256 per file) and group it by folder; rerunnable, hashes only changed files",
+    )
+    fgp.add_argument("folder", nargs="?")
+    fgp.add_argument("--workers", type=int, default=4)
+    fgp.set_defaults(fn=cmd_filegroups)
+    fgs = sub.add_parser(
+        "filegroups-structure",
+        help="infer books, discs and series from the newest folder grouping into a new grouping run",
+    )
+    fgs.add_argument(
+        "--check",
+        action="store_true",
+        help="classify without writing and show what differs from data/structure-golden.json (exit 1 if anything)",
+    )
+    fgs.add_argument("--update", action="store_true", help="save the current classification as the golden snapshot")
+    fgs.set_defaults(fn=cmd_filegroups_structure)
+    lb = sub.add_parser(
+        "listens-build", help="make a listen for every book and programme in the newest structure grouping"
+    )
+    lb.add_argument("--rebuild", action="store_true", help="clear existing listens first (they are derived data)")
+    lb.add_argument("--no-copies", action="store_true", help="do not link copies of one recording into one listen")
+    lb.set_defaults(fn=cmd_listens_build)
+    lk = sub.add_parser(
+        "listens-kinds",
+        help="classify listens as book / radio series / radio programme / play with the reasons (a person's own choice is kept)",
+    )
+    lk.add_argument("ids", nargs="*", type=int)
+    lk.add_argument("--dry-run", action="store_true")
+    lk.add_argument(
+        "--learn",
+        action="store_true",
+        help="first fit the weights on the labels (your kind choices, accepted Audible matches)",
+    )
+    lk.add_argument("--report", help="write every verdict as JSON to this file")
+    lk.set_defaults(fn=cmd_listens_kinds)
+    lip = sub.add_parser(
+        "listens-identify-prepare",
+        help="find candidate works for listens (local Open Library, Audible and radio programme indexes) and cache comparison vectors",
+    )
+    lip.add_argument(
+        "--no-radio-details",
+        action="store_true",
+        help="do not fetch the BBC programme record of each candidate radio programme",
+    )
+    lip.add_argument(
+        "--old-catalogue", help="also take labels from the approvals in this old SQLite catalogue (data/catalogue.db)"
+    )
+    lip.add_argument(
+        "--kinds",
+        default="book,radio_series,radio_show,play,other",
+        help="listen kinds, comma separated (default: all: radio programmes are a candidate source too)",
+    )
+    lip.set_defaults(fn=cmd_listens_identify_prepare)
+    sub.add_parser(
+        "listens-identify-train",
+        help="fit the identification model, cross-validate it on the labelled listens, save data/linkage/model.json",
+    ).set_defaults(fn=cmd_listens_identify_train)
+    lid = sub.add_parser(
+        "listens-identify",
+        help="accept, queue for review or reject the candidate works of each listen with the trained model",
+    )
+    lid.add_argument("ids", nargs="*", type=int, help="only these listens")
+    lid.add_argument(
+        "--threshold", type=float, default=0.95, help="accept when P(work) is at least this (default 0.95)"
+    )
+    lid.add_argument("--dry-run", action="store_true", help="count what would change, write nothing")
+    lid.add_argument(
+        "--merge-copies",
+        action="store_true",
+        help="merge listens identified as the same work whose runtimes agree within 2%% (copies of one recording)",
+    )
+    lid.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="clear the model's earlier answers and works first (a person's decisions are kept)",
+    )
+    lid.set_defaults(fn=cmd_listens_identify)
+    lid.add_argument(
+        "--no-kinds",
+        action="store_true",
+        help="skip re-classifying book / radio / play after identifying (Audible recordings matched now add evidence)",
+    )
+    mt = sub.add_parser("match", help="look scanned books up with the metadata providers and record suggestions")
+    mt.add_argument("--limit", type=int, default=25)
+    mt.add_argument("--providers", help="comma separated, in order (default: the match_providers setting)")
+    mt.set_defaults(fn=cmd_match)
+    ul = sub.add_parser(
+        "use-library",
+        help="switch the audiobook folder (for example to the local copy), moving every book path with it",
+    )
+    ul.add_argument("folder")
+    ul.add_argument("--from", dest="old", help="the folder the paths currently live under (default: library_dir)")
+    ul.add_argument("--force", action="store_true", help="switch even if some books are missing in the new folder")
+    ul.set_defaults(fn=cmd_use_library)
+    pr = sub.add_parser(
+        "process",
+        help="turn books into the final library: mono mp3 chapters, normalised loudness (--plan shows what would happen)",
+    )
+    pr.add_argument("ids", nargs="*", type=int, help="book ids (default: confirmed books not yet processed)")
+    pr.add_argument("--plan", action="store_true", help="measure and print the plan, change nothing")
+    pr.add_argument("--json", action="store_true")
+    pr.add_argument("--limit", type=int, default=5)
+    pr.add_argument("--jobs", type=int, default=3)
+    pr.add_argument("--force", action="store_true", help="replace an existing output folder")
+    pr.add_argument("--out", help="final library folder (default: the final_dir setting, ~/audiobooks)")
+    pr.set_defaults(fn=cmd_process)
+    pp = sub.add_parser(
+        "process-propose",
+        help="plan eligible confirmed books and put the plans in the approval queue (nothing is processed)",
+    )
+    pp.add_argument("--limit", type=int, default=5)
+    pp.add_argument("--jobs", type=int, default=2)
+    pp.set_defaults(fn=cmd_process_propose)
+    pq_ = sub.add_parser("process-queue", help="show the approval queue")
+    pq_.add_argument("--state")
+    pq_.set_defaults(fn=cmd_process_queue)
+    pa = sub.add_parser("process-approve", help="approve proposed plans")
+    pa.add_argument("ids", nargs="+", type=int)
+    pa.set_defaults(fn=cmd_process_decide, approve=True)
+    pj = sub.add_parser("process-reject", help="reject proposed plans (they are not proposed again)")
+    pj.add_argument("ids", nargs="+", type=int)
+    pj.set_defaults(fn=cmd_process_decide, approve=False)
+    prn = sub.add_parser("process-run", help="process the approved plans")
+    prn.add_argument("--jobs", type=int, default=2)
+    prn.set_defaults(fn=cmd_process_run)
+    sub.add_parser("process-status", help="how much of the library is processed").set_defaults(fn=cmd_process_status)
+    mr = sub.add_parser(
+        "mirror", help="rewrite metadata.json in the data mirror (<data_dir>/library) for confirmed books"
+    )
+    mr.add_argument("--all", action="store_true", help="every book, not only confirmed ones")
+    mr.set_defaults(fn=cmd_mirror)
+    en = sub.add_parser("enrich", help="fetch Hardcover ratings, reviews and other community data for confirmed books")
+    en.add_argument(
+        "id",
+        nargs="?",
+        type=int,
+        help="one book (refetched even if recent); default: confirmed books without recent data",
+    )
+    en.add_argument("--limit", type=int, default=25)
+    en.set_defaults(fn=cmd_enrich)
+    sub.add_parser("providers", help="list the metadata providers and whether each can run").set_defaults(
+        fn=cmd_providers
+    )
+    mx = sub.add_parser(
+        "match-test", help="compare the providers on a sample of scanned books without recording anything"
+    )
+    mx.add_argument("--limit", type=int, default=50)
+    mx.add_argument("--stride", type=int, default=1, help="take every Nth book, to spread the sample")
+    mx.add_argument("--providers")
+    mx.set_defaults(fn=cmd_match_test)
+    cf = sub.add_parser("confirm", help="accept a book, applying its suggestion if it has one")
+    cf.add_argument("id", type=int)
+    cf.set_defaults(fn=cmd_confirm)
+    ig = sub.add_parser("ignore", help="mark a scanned item as not wanted")
+    ig.add_argument("id", type=int)
+    ig.set_defaults(fn=cmd_ignore)
+    sub.add_parser("backup", help="back up the catalogue database now").set_defaults(fn=cmd_backup)
+    sub.add_parser("backups", help="list the automatic backups").set_defaults(fn=cmd_backups)
+    rs = sub.add_parser(
+        "restore", help="replace the catalogue with a backup (default: the newest); the current one is kept"
+    )
+    rs.add_argument("backup", nargs="?", help="path from `backups`")
+    rs.set_defaults(fn=cmd_restore)
+    s = sub.add_parser(
+        "set",
+        help='show or change a setting (data_dir, library_dir, backup_dir, match_providers, audible_region, final_dir); value "default" resets it',
+    )
+    s.add_argument("key")
+    s.add_argument("value", nargs="?")
+    s.set_defaults(fn=cmd_set)
+    v = sub.add_parser("serve", help="start the web server")
+    v.add_argument("--host", default="127.0.0.1")
+    v.add_argument("--port", type=int, default=8360)
+    v.set_defaults(fn=cmd_serve)
     a = p.parse_args(argv)
-    try: return a.fn(a)
-    except db.CorruptDatabase as e: sys.exit(str(e))
+    try:
+        return a.fn(a)
+    except db.CorruptDatabase as e:
+        sys.exit(str(e))

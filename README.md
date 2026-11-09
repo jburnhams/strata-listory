@@ -75,10 +75,10 @@ There was no feature list, so these are guesses to be corrected:
 ## Tests
 
 ```bash
-pip install -r requirements-test.txt
+uv sync                                 # .venv from uv.lock, with the test tooling
 pytest tests/unit --cov                 # unit tests + coverage (CI gates on fail_under in pyproject.toml)
 pytest tests/integration -n auto        # CLI and HTTP API end-to-end
-ruff check src tests
+scripts/check                           # the one gate: lockfile, ruff, ruff format, pyright, ty, then the unit tests with coverage (--fast: no tests; --fix: apply ruff)
 cd web && npm run test:coverage:gate    # web unit + jsdom integration tests against coverage-floor.json
 ```
 
