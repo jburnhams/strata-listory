@@ -66,3 +66,13 @@ def test_without_an_index_every_lookup_is_empty(tmp_path, monkeypatch):
 
 def test_a_broken_index_file_answers_nothing(tmp_path):
     bad = tmp_path / 'index.sqlite'; bad.write_text('not a database'); assert R.find(['Harbour Lights'], path=bad) == []
+
+
+def test_a_programme_titled_with_a_channel_name_is_never_a_hit(tmp_path):
+    raw = tmp_path / 'raw'; raw.mkdir()
+    names = ['Radio 4', 'BBC Radio 4', 'BBC Radio 4 Extra', 'Radio Scotland', 'BBC World Service', 'BBC Radio 6 Music', '6 Music', 'Radio 5 Live', 'R4', 'The BBC Asian Network']
+    (raw / 'bbc-r-1.json').write_text(json.dumps(bbc_page([(n, f'b{i}', 'radio', 'bbc_radio_four') for i, n in enumerate(names)] + [('Radio Garden Hours', 'b99', 'radio', 'bbc_radio_four'), ('Harbour Lights', 'b98', 'radio', 'bbc_radio_four')], 12)))
+    out = tmp_path / 'index.sqlite'; R.build(raw, out)
+    assert R.find(names + ['Radio Garden Hours', 'Harbour Lights'], path=out) and [h['title'] for h in R.find(names + ['Radio Garden Hours', 'Harbour Lights'], path=out)] == ['Harbour Lights', 'Radio Garden Hours']
+    for n in names: assert R.CHANNEL_NAME.match(n), n
+    assert not R.CHANNEL_NAME.match('Radio Garden Hours') and not R.CHANNEL_NAME.match('Drama on 3')
