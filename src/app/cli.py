@@ -224,6 +224,16 @@ def cmd_listens_identify_prepare(args):
     dataset.save_cache(data); print(f'{len(data)} listens, {sum(len(d["clusters"]) for d in data.values())} candidate works'); return 0
 
 
+def cmd_listens_metadata_redo(args):
+    """Read the metadata of these listens again (after a rule change in `store/metadata.py`); their old record parts are unlinked with events, fields a person chose are kept."""
+    from omarchy_db import connect
+    from sqlalchemy.orm import Session
+    from app.store import metadata
+    with Session(connect('listory')) as s:
+        n = metadata.add_metadata(s, actor_ref='metadata-v2', redo=args.ids); s.commit()
+    print(n); return 0
+
+
 def cmd_listens_identify_train(args):
     """Fit the record-linkage model on every prepared listen (labelled ones clamped: old catalogue approvals and the match queue's answers), cross-validate on the labelled ones and save data/linkage/model.json and report.json."""
     from omarchy_db import connect
@@ -482,6 +492,7 @@ def main(argv=None):
     ed = sub.add_parser('edit', help='change fields of a book'); ed.add_argument('id', type=int); book_fields(ed, edit=True); ed.set_defaults(fn=cmd_edit)
     rm = sub.add_parser('remove', help='remove a book from the catalogue (audio files are never touched)'); rm.add_argument('id', type=int); rm.set_defaults(fn=cmd_remove)
     sc = sub.add_parser('scan', help='find audiobooks in a folder (default: the library_dir setting) and add them as new, unreviewed books; never writes to the folder'); sc.add_argument('folder', nargs='?'); sc.add_argument('--dry-run', action='store_true'); sc.set_defaults(fn=cmd_scan)
+    mr = sub.add_parser('listens-metadata-redo', help='read the metadata of these listens again after a rule change (record parts are unlinked with events; fields a person chose are kept)'); mr.add_argument('ids', nargs='+', type=int); mr.set_defaults(fn=cmd_listens_metadata_redo)
     fgp = sub.add_parser('filegroups', help='scan the library folder into the listory Postgres schema (sha256 per file) and group it by folder; rerunnable, hashes only changed files'); fgp.add_argument('folder', nargs='?'); fgp.add_argument('--workers', type=int, default=4); fgp.set_defaults(fn=cmd_filegroups)
     fgs = sub.add_parser('filegroups-structure', help='infer books, discs and series from the newest folder grouping into a new grouping run'); fgs.add_argument('--check', action='store_true', help='classify without writing and show what differs from data/structure-golden.json (exit 1 if anything)'); fgs.add_argument('--update', action='store_true', help='save the current classification as the golden snapshot'); fgs.set_defaults(fn=cmd_filegroups_structure)
     lb = sub.add_parser('listens-build', help='make a listen for every book and programme in the newest structure grouping'); lb.add_argument('--rebuild', action='store_true', help='clear existing listens first (they are derived data)'); lb.add_argument('--no-copies', action='store_true', help='do not link copies of one recording into one listen'); lb.set_defaults(fn=cmd_listens_build)
