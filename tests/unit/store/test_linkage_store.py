@@ -268,3 +268,22 @@ def test_a_radio_programme_accepted_as_the_match_is_a_broadcast_label_for_kind_l
     part = s.scalars(select(ListenPart).where(ListenPart.listen_id == salt.id, ListenPart.role == "match")).one()
     apply.decide(s, salt, part, "approve")
     assert kinds_db.labels(s, [salt.id], feats)[salt.id] == (True, 1.0, "radio match")                         # a person's acceptance counts in full
+
+
+def test_a_persons_approved_radio_candidate_is_a_label_and_radio_listens_are_never_merged_as_copies(s, listens):
+    from app.store import kinds_db
+    a = next(l for k, l in listens.items() if "Salt" in k); b = next(l for k, l in listens.items() if k.endswith("Glass Orchard"))
+    radio = dict(title="exact_rare", sources="radio", channel="match", form="agree", _alias="harbour lights")
+    data = {str(l.id): dict(clusters={HARBOUR["key"]: HARBOUR, GLASS["key"]: GLASS}, vectors={HARBOUR["key"]: [radio], GLASS["key"]: [dict(title="weak", author="conflict", sources="both", form="conflict")]}) for l in (a, b)}
+    apply.apply(s, data, params())
+    part = next(c for c in s.scalars(select(ListenPart).where(ListenPart.listen_id == a.id, ListenPart.role.in_(("match", "candidate")), ListenPart.unlinked_at.is_(None))) if c.detail["candidate"] == "radio:harbour-lights")
+    part.role = "candidate"; part.state = "candidate"; s.flush()                                   # as the queue shows it before a person answers
+    apply.decide(s, a, part, "approve")
+    assert part.role == "candidate" and part.state == "accepted"                                  # a person's approval keeps the role: the label query must look at both
+    feats = kinds_db.gather(s, [a.id], audible=lambda x: {}, radio=lambda t: [])
+    assert kinds_db.labels(s, [a.id], feats)[a.id] == (True, 1.0, "radio match")
+    for l in (a, b):                                                                           # two accepted radio matches of one programme with the same length: still two broadcasts
+        for p in s.scalars(select(ListenPart).where(ListenPart.listen_id == l.id, ListenPart.role.in_(("match", "candidate")), ListenPart.unlinked_at.is_(None))):
+            if (p.detail or {}).get("candidate") == "radio:harbour-lights": p.role = "match"; p.state = "accepted"
+    s.flush()
+    assert apply.same_work_groups(s) and apply.merge_copies(s) == [] and a.merged_into_id is None and b.merged_into_id is None

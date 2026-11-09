@@ -156,7 +156,7 @@ def labels(s: Session, ids: list[int], feats: dict[int, K.Features]) -> dict[int
     for k in s.scalars(select(ListenKind).where(ListenKind.listen_id.in_(ids), ListenKind.decided_by == 'user')): out[k.listen_id] = (k.kind != 'book', 1.0, 'user')
     accepted: set[int] = set(); radio: dict[int, float] = {}
     from app.linkage import apply as A
-    parts = list(s.scalars(select(ListenPart).where(ListenPart.listen_id.in_(ids), ListenPart.role == 'match', ListenPart.state == 'accepted', ListenPart.unlinked_at.is_(None))))
+    parts = list(s.scalars(select(ListenPart).where(ListenPart.listen_id.in_(ids), ListenPart.role.in_(('match', 'candidate')), ListenPart.state == 'accepted', ListenPart.unlinked_at.is_(None))))      # a person's approval of a candidate keeps its role and becomes state accepted
     by_person = A.person_decisions(s, parts)
     for p in parts:
         if str((p.detail or {}).get('candidate') or '').startswith('radio:'): radio[p.listen_id] = 1.0 if p.id in by_person or p.linked_by == 'user' else IMPLICIT_WEIGHT      # accepted as a radio programme: broadcast

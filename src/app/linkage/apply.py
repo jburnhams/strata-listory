@@ -166,7 +166,9 @@ def merge_copies(s: Session, *, tolerance: float = .02, actor_ref: str = '') -> 
     from app.store.build import preference
     from app.store.models import ListenChoice
     run = new_run(s, 'merge_copies', {'tolerance': tolerance}); out = []
+    radio = {w for (w,) in s.execute(select(Work.id).where(Work.kind == 'radio_programme'))}
     for work_id, ids in same_work_groups(s).items():
+        if work_id in radio: continue          # different episodes and series of one programme are different broadcasts, never copies of one recording (as `build.link_copies` leaves radio series alone)
         info = {}
         for lid in ids:
             part = s.scalars(select(ListenPart).where(ListenPart.listen_id == lid, ListenPart.role == 'input', ListenPart.unlinked_at.is_(None)).order_by(ListenPart.ordinal)).first()
