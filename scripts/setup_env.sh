@@ -1,17 +1,14 @@
 #!/bin/bash
 # Build the project environment from scratch (macOS or Linux, Python 3.11+).
 #   scripts/setup_env.sh
-# Environment variables: VENV (default .venv), PYTHON (default python3)
+# Needs uv (https://docs.astral.sh/uv/). Environment variables: VENV (default .venv), PYTHON (default 3.13)
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VENV="${VENV:-$ROOT/.venv}"; PYTHON="${PYTHON:-python3}"
+VENV="${VENV:-$ROOT/.venv}"; PYTHON="${PYTHON:-3.13}"
 say() { printf '\n==> %s\n' "$*"; }
-"$PYTHON" -c 'import sys; assert sys.version_info[:2] >= (3, 11), "Python 3.11+ required (tested on 3.13)"'
-say "virtual environment: $VENV"
-"$PYTHON" -m venv "$VENV"
-"$VENV/bin/pip" install --upgrade pip >/dev/null
-say "requirements"
-"$VENV/bin/pip" install -r "$ROOT/requirements.txt"
+command -v uv >/dev/null || { echo "uv not found: https://docs.astral.sh/uv/getting-started/installation/"; exit 1; }
+say "dependencies from uv.lock into $VENV (the runtime and the database layer, no test tooling; add --group audio for the signal-analysis tools)"
+UV_PROJECT_ENVIRONMENT="$VENV" uv sync --locked --no-dev --group db --python "$PYTHON" --project "$ROOT"
 say "checking"
 APP_PYTHON="$VENV/bin/python" "$ROOT/app" doctor
 

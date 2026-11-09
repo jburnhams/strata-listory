@@ -1,15 +1,19 @@
 """What every metadata provider shares: the candidate shape, a polite HTTP client (throttle, retries, 429 handling), and the response cache.
 
 A *candidate* is a dict: source (provider name), id, asin, title, subtitle, author, authors, narrators, series, series_position, runtime_minutes, cover_url, language, release_date. Providers fill what they know and leave the rest empty (rating, ratings_count, genres, pages and url only come from community sites)."""
+
 import errno
+import json
+import time
+import urllib.error
+import urllib.request
+from datetime import UTC, datetime, timedelta
 from http.client import IncompleteRead
-import json, time, urllib.error, urllib.request
-from datetime import datetime, timedelta, timezone
 
 from app import db
 from app.ingest.observe import emit, observer
 
-USER_AGENT = 'strata-listory/0.1 (personal audiobook catalogue)'
+USER_AGENT = "strata-listory/0.1 (personal audiobook catalogue)"
 
 
 class MatchError(RuntimeError):
@@ -17,62 +21,162 @@ class MatchError(RuntimeError):
 
 
 def candidate(source: str, **f) -> dict:
-    out = dict(source=source, id='', asin='', title='', subtitle='', author='', authors=[], narrators=[], series='', series_position=None, runtime_minutes=None, cover_url='', language='', release_date='', rating=None, ratings_count=None, genres=[], pages=None, url='', original_year=None, publisher='', isbns=[], description='', abridged=None, reviews=[], rating_details={})
+    out = dict(
+        source=source,
+        id="",
+        asin="",
+        title="",
+        subtitle="",
+        author="",
+        authors=[],
+        narrators=[],
+        series="",
+        series_position=None,
+        runtime_minutes=None,
+        cover_url="",
+        language="",
+        release_date="",
+        rating=None,
+        ratings_count=None,
+        genres=[],
+        pages=None,
+        url="",
+        original_year=None,
+        publisher="",
+        isbns=[],
+        description="",
+        abridged=None,
+        reviews=[],
+        rating_details={},
+    )
     out.update({k: v for k, v in f.items() if k in out})
-    out['author'] = out['author'] or ', '.join(out['authors'])
+    out["author"] = out["author"] or ", ".join(out["authors"])
     return out
 
 
 class Http:
     """A throttled JSON client for one provider. `request` returns the parsed body, None for a 404, and raises MatchError otherwise."""
+
     def __init__(self, label: str, min_interval: float = 0.1, headers: dict | None = None):
         self.label, self.min_interval, self.headers, self._last = label, min_interval, headers or {}, 0.0
 
     def request(self, url: str, body: dict | None = None, headers: dict | None = None, *, text: bool = False):
-        for attempt in (1, 2, 3):       # a 429 is retried once after Retry-After, a 502/503/504 twice (these services are betas and go down now and then)
-            time.sleep(max(0, self._last + self.min_interval - time.monotonic())); self._last = time.monotonic()
-            req = urllib.request.Request(url, json.dumps(body).encode() if body is not None else None, {'User-Agent': USER_AGENT, 'Content-Type': 'application/json', **self.headers, **(headers or {})})
+        for attempt in (
+            1,
+            2,
+            3,
+        ):  # a 429 is retried once after Retry-After, a 502/503/504 twice (these services are betas and go down now and then)
+            time.sleep(max(0, self._last + self.min_interval - time.monotonic()))
+            self._last = time.monotonic()
+            req = urllib.request.Request(
+                url,
+                json.dumps(body).encode() if body is not None else None,
+                {"User-Agent": USER_AGENT, "Content-Type": "application/json", **self.headers, **(headers or {})},
+            )
             try:
-                with urllib.request.urlopen(req, timeout=30) as r: result = r.read().decode('utf8') if text else json.load(r)
-                emit(source=self.label, url=url, query=body, fetched=datetime.now(timezone.utc).isoformat(), attempt=attempt, raw=result)
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    result = r.read().decode("utf8") if text else json.load(r)
+                emit(
+                    source=self.label,
+                    url=url,
+                    query=body,
+                    fetched=datetime.now(UTC).isoformat(),
+                    attempt=attempt,
+                    raw=result,
+                )
                 return result
             except urllib.error.HTTPError as e:
-                emit(source=self.label, url=url, query=body, fetched=datetime.now(timezone.utc).isoformat(), attempt=attempt, error=str(e), status=e.code, raw=e.read().decode('utf8', errors='replace') if observer.get() else None)
-                if e.code == 404: return None
-                if e.code == 429 and attempt == 1: time.sleep(min(30, int(e.headers.get('Retry-After') or 5))); continue
-                if e.code in (502, 503, 504) and attempt < 3: time.sleep(3 * attempt); continue
-                raise MatchError(f'{self.label} answered {e.code}')
+                emit(
+                    source=self.label,
+                    url=url,
+                    query=body,
+                    fetched=datetime.now(UTC).isoformat(),
+                    attempt=attempt,
+                    error=str(e),
+                    status=e.code,
+                    raw=e.read().decode("utf8", errors="replace") if observer.get() else None,
+                )
+                if e.code == 404:
+                    return None
+                if e.code == 429 and attempt == 1:
+                    time.sleep(min(30, int(e.headers.get("Retry-After") or 5)))
+                    continue
+                if e.code in (502, 503, 504) and attempt < 3:
+                    time.sleep(3 * attempt)
+                    continue
+                raise MatchError(f"{self.label} answered {e.code}")
             except (urllib.error.URLError, OSError, ValueError, IncompleteRead) as e:
-                emit(source=self.label, url=url, query=body, fetched=datetime.now(timezone.utc).isoformat(), attempt=attempt, error=str(e))
-                reason=e.reason if isinstance(e,urllib.error.URLError) else e
-                transient=isinstance(reason,(ConnectionError,TimeoutError,IncompleteRead)) or isinstance(reason,OSError) and reason.errno in (errno.ECONNRESET,errno.ECONNABORTED,errno.ECONNREFUSED,errno.ETIMEDOUT,errno.EHOSTUNREACH,errno.ENETUNREACH)
+                emit(
+                    source=self.label,
+                    url=url,
+                    query=body,
+                    fetched=datetime.now(UTC).isoformat(),
+                    attempt=attempt,
+                    error=str(e),
+                )
+                reason = e.reason if isinstance(e, urllib.error.URLError) else e
+                transient = isinstance(reason, (ConnectionError, TimeoutError, IncompleteRead)) or (
+                    isinstance(reason, OSError)
+                    and reason.errno
+                    in (
+                        errno.ECONNRESET,
+                        errno.ECONNABORTED,
+                        errno.ECONNREFUSED,
+                        errno.ETIMEDOUT,
+                        errno.EHOSTUNREACH,
+                        errno.ENETUNREACH,
+                    )
+                )
                 # Retry read requests only; a reset must not accidentally replay a mutation.
-                if body is None and transient and attempt<3:time.sleep(attempt);continue
-                raise MatchError(f'{self.label} unreachable: {e}')
+                if body is None and transient and attempt < 3:
+                    time.sleep(attempt)
+                    continue
+                raise MatchError(f"{self.label} unreachable: {e}")
 
 
 def cached(key: str, fetch, days: float = 7):
     """`fetch()` once per `days` for this key (None results are cached too: a book that is not there stays not there for that long)."""
     c = db.connect()
     try:
-        r = c.execute('SELECT fetched, body FROM match_cache WHERE key=?', (key,)).fetchone()
-        if r and datetime.now(timezone.utc) - datetime.fromisoformat(r['fetched']) < timedelta(days=days):
-            result = json.loads(r['body']); emit(source=key, fetched=r['fetched'], cached=True, raw=result); return result
+        r = c.execute("SELECT fetched, body FROM match_cache WHERE key=?", (key,)).fetchone()
+        if r and datetime.now(UTC) - datetime.fromisoformat(r["fetched"]) < timedelta(days=days):
+            result = json.loads(r["body"])
+            emit(source=key, fetched=r["fetched"], cached=True, raw=result)
+            return result
         body = fetch()
-        with c: c.execute('INSERT OR REPLACE INTO match_cache (key, fetched, body) VALUES (?, ?, ?)', (key, datetime.now(timezone.utc).isoformat(), json.dumps(body)))
+        with c:
+            c.execute(
+                "INSERT OR REPLACE INTO match_cache (key, fetched, body) VALUES (?, ?, ?)",
+                (key, datetime.now(UTC).isoformat(), json.dumps(body)),
+            )
         return body
-    finally: c.close()
+    finally:
+        c.close()
 
 
 class Provider:
     """A source of book metadata. Override `search` and/or `by_asin`; `unavailable` explains why it cannot run (for example no API key)."""
-    name = ''; label = ''; site = ''
-    matching = True          # takes part in title matching by default; False for sources used only to enrich a book you already have
-    min_interval = 0.2       # seconds between requests to this service (its rate limit, with margin)
-    cache_days = 7           # how long its responses are reused; terms ask for cached data to be kept only as long as needed and refreshed
 
-    def unavailable(self) -> str | None: return None
-    def by_asin(self, asin: str) -> dict | None: return None
-    def search(self, title: str, author: str = '') -> list[dict]: return []
-    def cover_url(self, book_id: str) -> str: return ''
-    def cache(self, key: str, fetch): return cached(f'{self.name}:{key}', fetch, self.cache_days)
+    name = ""
+    label = ""
+    site = ""
+    matching = (
+        True  # takes part in title matching by default; False for sources used only to enrich a book you already have
+    )
+    min_interval = 0.2  # seconds between requests to this service (its rate limit, with margin)
+    cache_days = 7  # how long its responses are reused; terms ask for cached data to be kept only as long as needed and refreshed
+
+    def unavailable(self) -> str | None:
+        return None
+
+    def by_asin(self, asin: str) -> dict | None:
+        return None
+
+    def search(self, title: str, author: str = "") -> list[dict]:
+        return []
+
+    def cover_url(self, book_id: str) -> str:
+        return ""
+
+    def cache(self, key: str, fetch):
+        return cached(f"{self.name}:{key}", fetch, self.cache_days)

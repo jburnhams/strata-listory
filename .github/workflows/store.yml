@@ -12,6 +12,6 @@ jobs:
     # dbtool check and tests/unit/store on a throwaway Postgres 18, through the shared workflow in jburnhams/database
     uses: jburnhams/database/.github/workflows/app-db.yml@main
     with:
-      install: pip install -r requirements-test.txt
+      install: uv pip install -e . --group dev --group db
       tests: tests/unit/store
       pytest-args: "-o addopts= -p no:randomly"

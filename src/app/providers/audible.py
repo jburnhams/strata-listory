@@ -1,41 +1,91 @@
 """Audible's public catalogue search (`api.audible.<region>/1.0/catalog/products`): title and author search that returns ASIN, authors, narrators, series, runtime and cover. No key needed. It is an undocumented endpoint (the one Audnexus and the Audible apps use), so it can change without notice; failures are handled per provider."""
-import re, urllib.parse
 
-from app.providers.base import Http, Provider, candidate
+import re
+import urllib.parse
+
 from app import settings
+from app.providers.base import Http, Provider, candidate
 
-HOSTS = dict(uk='api.audible.co.uk', us='api.audible.com', de='api.audible.de', fr='api.audible.fr', ca='api.audible.ca', au='api.audible.com.au')
-GROUPS = 'contributors,series,media,product_attrs,rating,product_desc,product_extended_attrs,reviews,review_attrs'
+HOSTS = dict(
+    uk="api.audible.co.uk",
+    us="api.audible.com",
+    de="api.audible.de",
+    fr="api.audible.fr",
+    ca="api.audible.ca",
+    au="api.audible.com.au",
+)
+GROUPS = "contributors,series,media,product_attrs,rating,product_desc,product_extended_attrs,reviews,review_attrs"
 
 
 def to_candidate(p: dict) -> dict:
-    s = (p.get('series') or [{}])[0]
-    try: pos = float(s['sequence']) if s.get('sequence') else None
-    except ValueError: pos = None
-    imgs = p.get('product_images') or {}
-    return candidate('audible', id=p.get('asin', ''), asin=p.get('asin', ''), title=p.get('title', ''), subtitle=p.get('subtitle') or '', authors=[a['name'] for a in p.get('authors') or []], narrators=[n['name'] for n in p.get('narrators') or []],
-                     rating=(p.get('rating') or {}).get('overall_distribution', {}).get('average_rating'), ratings_count=(p.get('rating') or {}).get('overall_distribution', {}).get('num_ratings'), rating_details=p.get('rating') or {}, reviews=p.get('customer_reviews') or [], abridged={'abridged': True, 'unabridged': False}.get(p.get('format_type')), series=s.get('title', ''), series_position=pos, runtime_minutes=p.get('runtime_length_min'), cover_url=imgs.get('500') or next(iter(imgs.values()), ''), language=p.get('language', ''), release_date=p.get('release_date', ''), publisher=p.get('publisher_name') or '', description=re.sub(r'<[^>]+>', ' ', p.get('publisher_summary') or p.get('merchandising_summary') or '').strip())
+    s = (p.get("series") or [{}])[0]
+    try:
+        pos = float(s["sequence"]) if s.get("sequence") else None
+    except ValueError:
+        pos = None
+    imgs = p.get("product_images") or {}
+    return candidate(
+        "audible",
+        id=p.get("asin", ""),
+        asin=p.get("asin", ""),
+        title=p.get("title", ""),
+        subtitle=p.get("subtitle") or "",
+        authors=[a["name"] for a in p.get("authors") or []],
+        narrators=[n["name"] for n in p.get("narrators") or []],
+        rating=(p.get("rating") or {}).get("overall_distribution", {}).get("average_rating"),
+        ratings_count=(p.get("rating") or {}).get("overall_distribution", {}).get("num_ratings"),
+        rating_details=p.get("rating") or {},
+        reviews=p.get("customer_reviews") or [],
+        abridged={"abridged": True, "unabridged": False}.get(p.get("format_type")),
+        series=s.get("title", ""),
+        series_position=pos,
+        runtime_minutes=p.get("runtime_length_min"),
+        cover_url=imgs.get("500") or next(iter(imgs.values()), ""),
+        language=p.get("language", ""),
+        release_date=p.get("release_date", ""),
+        publisher=p.get("publisher_name") or "",
+        description=re.sub(r"<[^>]+>", " ", p.get("publisher_summary") or p.get("merchandising_summary") or "").strip(),
+    )
 
 
 class AudibleSearch(Provider):
-    name = 'audible'; label = 'Audible catalogue'; site = 'https://www.audible.co.uk'
-    min_interval = 0.3; cache_days = 14          # an unofficial endpoint: be gentle with it; book data changes rarely
+    name = "audible"
+    label = "Audible catalogue"
+    site = "https://www.audible.co.uk"
+    min_interval = 0.3
+    cache_days = 14  # an unofficial endpoint: be gentle with it; book data changes rarely
 
-    def __init__(self): self.http = Http('Audible', self.min_interval)
+    def __init__(self):
+        self.http = Http("Audible", self.min_interval)
 
     def _url(self, path: str, **q) -> str:
-        return f"https://{HOSTS.get(settings.audible_region(), HOSTS['uk'])}/1.0/catalog/{path}?" + urllib.parse.urlencode(dict(q, response_groups=GROUPS))
+        return (
+            f"https://{HOSTS.get(settings.audible_region(), HOSTS['uk'])}/1.0/catalog/{path}?"
+            + urllib.parse.urlencode(dict(q, response_groups=GROUPS))
+        )
 
-    def search(self, title: str, author: str = '') -> list[dict]:
+    def search(self, title: str, author: str = "") -> list[dict]:
         t = title.strip()[:100]
-        if len(t) < 2: return []
-        q = dict(title=t, num_results=8, products_sort_by='Relevance', **({'author': author.strip()[:60]} if author.strip() else {}))
-        raw = self.cache(f'{settings.audible_region()}:search:{t.lower()}:{author.strip().lower()}', lambda: self.http.request(self._url('products', **q)))
-        return [to_candidate(p) for p in (raw or {}).get('products', [])]
+        if len(t) < 2:
+            return []
+        q = dict(
+            title=t,
+            num_results=8,
+            products_sort_by="Relevance",
+            **({"author": author.strip()[:60]} if author.strip() else {}),
+        )
+        raw = self.cache(
+            f"{settings.audible_region()}:search:{t.lower()}:{author.strip().lower()}",
+            lambda: self.http.request(self._url("products", **q)),
+        )
+        return [to_candidate(p) for p in (raw or {}).get("products", [])]
 
     def by_asin(self, asin: str) -> dict | None:
-        for region in dict.fromkeys([settings.audible_region(),'us']):
-            url=f"https://{HOSTS.get(region,HOSTS['uk'])}/1.0/catalog/products/{asin}?"+urllib.parse.urlencode(dict(response_groups=GROUPS))
-            raw = self.cache(f'{region}:asin:{asin}', lambda: self.http.request(url))
-            if raw and (raw.get('product') or {}).get('title'):return to_candidate(raw['product'])
+        for region in dict.fromkeys([settings.audible_region(), "us"]):
+            url = f"https://{HOSTS.get(region, HOSTS['uk'])}/1.0/catalog/products/{asin}?" + urllib.parse.urlencode(
+                dict(response_groups=GROUPS)
+            )
+            raw = self.cache(f"{region}:asin:{asin}", lambda: self.http.request(url))
+            if raw and (raw.get("product") or {}).get("title"):
+                return to_candidate(raw["product"])
         return None

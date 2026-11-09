@@ -1,14 +1,13 @@
 # Build the project environment from scratch on Windows (Python 3.13).
 #   scripts\setup_env.ps1
-# Prerequisites: winget install Python.Python.3.13 OpenJS.NodeJS
+# Prerequisites: winget install astral-sh.uv OpenJS.NodeJS (uv installs Python 3.13 itself)
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot; $Venv = Join-Path $Root '.venv'; $Py = Join-Path $Venv 'Scripts\python.exe'
 function Say($m) { Write-Host "`n==> $m" }
 Say "virtual environment: $Venv"
-py -3.13 -m venv $Venv
-& $Py -m pip install --upgrade pip | Out-Null
-Say 'requirements'
-& $Py -m pip install -r (Join-Path $Root 'requirements.txt')
+Say 'dependencies from uv.lock (the runtime and the database layer, no test tooling)'
+$env:UV_PROJECT_ENVIRONMENT = $Venv
+uv sync --locked --no-dev --group db --python 3.13 --project $Root
 $env:PYTHONPATH = Join-Path $Root 'src'
 Say 'checking'
 & $Py -m app doctor

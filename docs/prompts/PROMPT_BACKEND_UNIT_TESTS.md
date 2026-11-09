@@ -16,10 +16,10 @@ You run without a human: nobody will answer questions, approve a plan or review 
 1. Read `AGENTS.md` and `CLAUDE.md` at the repo root. They are authoritative. Web code (`web/`) is out of scope for this task.
 2. Read **`tests/README.md`** (shared commands, hermetic setup, file-ownership rules) and **`tests/unit/README.md`** (unit conventions and the "Where things are tested" table, which is the ledger) in full. **This task runs in parallel with the integration-test and web-test tasks on other branches, so obey the ownership table in `tests/README.md`**: you may edit `tests/unit/**`, `tests/conftest.py`, `tests/unit/conftest.py`, `tests/utils/<topic>.py` (not `integration_*.py`), `tests/unit/README.md` and the `fail_under` line in `pyproject.toml`. Don't touch `tests/integration/**`, `tests/README.md`, `web/`, `requirements-test.txt` (unless a new test dependency is unavoidable, and say so in the PR) or the workflows.
 3. Layout: application code is in `src/app/`. Unit tests are in `tests/unit/`, fast and hermetic (no external services, no network, no real home folder: enforced by the autouse fixtures in `tests/conftest.py`). Integration tests (`tests/integration/`) are out of scope except to avoid breaking them.
-4. Setup and commands, from the repo root: `pip install -r requirements-test.txt`, then
+4. Setup and commands, from the repo root: `uv sync`, then
    - `pytest tests/unit --cov --cov-report=term-missing --cov-report=xml` (coverage gate: `fail_under` in `pyproject.toml`)
    - `pytest tests/unit -n auto` (parallel), `pytest tests/unit -p randomly --randomly-seed=N` (reproduce an order)
-   - `ruff check src tests`
+   - `scripts/check`
    - `diff-cover coverage.xml --compare-branch origin/main` (coverage of just your changed lines)
 5. **GitHub Actions is the source of truth.** `unit.yml` runs the unit suite with coverage and ruff on Python 3.11-3.13 on Linux plus macOS and Windows (all blocking), and the web checks. The PR is done only when CI is green on the head commit. Code must be cross-platform: build paths with `os.path`/`pathlib`, don't assume symlinks or POSIX permissions (skip with a reason), and put OS differences only in `oslib.py`.
 
