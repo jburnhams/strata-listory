@@ -312,10 +312,3 @@ def test_changing_a_kind_identifies_that_listen_again(monkeypatch, tmp_path):
     assert service.reidentify_listen(lambda: nullcontext(S()), 7) == {"accept": 1}
     assert calls == [("clear", {7}), ("apply", ["7"], "params", {7}), "commit"] and dataset.load_cache() == {"7": {"sig": "x"}}
 
-
-def test_start_reidentify_runs_in_the_background_and_swallows_failures(monkeypatch):
-    from app.linkage import service
-    ran = []; monkeypatch.setattr(service, "reidentify_listen", lambda factory, lid: ran.append(lid) or (_ for _ in ()).throw(RuntimeError("no indexes")))
-    assert service.start_reidentify(lambda: None, 3) is True
-    import threading; [t.join(5) for t in threading.enumerate() if t.name == "reidentify-3"]
-    assert ran == [3]

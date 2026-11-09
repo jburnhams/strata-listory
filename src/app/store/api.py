@@ -143,8 +143,9 @@ def set_listen_kind(listen_id: int, body: KindChoice, s: Session = Depends(get_s
     except ValueError as e: raise HTTPException(400, str(e))
     s.commit(); retraining = kinds_db.start_learning(lambda: Session(_engine()))      # every answer is a label: refit the weights in the background
     from app.linkage import service as linkage_service
-    reidentifying = linkage_service.start_reidentify(lambda: Session(_engine()), listen_id)      # the kind decides which sources supply candidates, so the match is worked out again
-    return dict(ok=True, retraining=retraining, reidentifying=reidentifying, kind_info=kinds_db.kind_infos(s, [listen_id]).get(listen_id))
+    try: reidentified = linkage_service.reidentify_listen(lambda: Session(_engine()), listen_id) is not None      # the kind decides which sources supply candidates, so the match is worked out again before the page refetches (one listen: fast)
+    except Exception: reidentified = False      # the kind is saved either way; `listens-identify` fixes the match in bulk
+    return dict(ok=True, retraining=retraining, reidentified=reidentified, kind_info=kinds_db.kind_infos(s, [listen_id]).get(listen_id))
 
 
 @listens_router.get('/{listen_id}')

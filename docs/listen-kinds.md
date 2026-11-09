@@ -49,7 +49,7 @@ BBC Audio files readings under Audible's "Radio/TV Program" too, which is why th
 
 Kinds: `book`; `radio_series` (series/episode numbers, or several broadcast-sized parts); `radio_show` (one programme: documentary, stand-up, one-off); `play` (a drama or dramatisation). The listen's `kind` is set to the verdict (`listen.kind`, event `reclassify` with the reason); the full verdict is in `listen_kind` (kind, `guess`, `p_broadcast`, `band`, `signals`, `decided_by`).
 
-A person's choice (`decided_by = user`, from the dropdown, the "Why?" buttons or `POST /api/listens/{id}/kind`) is never recomputed over. Saving a kind also identifies that one listen again in the background (`linkage.service.reidentify_listen`), because the kind decides which sources supply candidates; anything a person already decided about its match is kept.
+A person's choice (`decided_by = user`, from the dropdown, the "Why?" buttons or `POST /api/listens/{id}/kind`) is never recomputed over. Saving a kind also identifies that one listen again before answering (`linkage.service.reidentify_listen`), because the kind decides which sources supply candidates; anything a person already decided about its match is kept.
 
 ## Using it
 
