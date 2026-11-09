@@ -91,11 +91,13 @@ def name_parts(path: str, label: str, group: PartFilegroup | None) -> tuple[str,
     return os.path.basename(path) or label, os.path.basename(os.path.dirname(path)), os.path.basename(path)
 
 
-def add_metadata(s: Session, *, actor_ref: str = 'metadata-v1') -> dict[str, int]:
-    """Records and choices for every live listen that has none yet (so a rerun after more listens appear only does the new ones). Returns counts."""
+def add_metadata(s: Session, *, actor_ref: str = 'metadata-v1', redo: list[int] | None = None) -> dict[str, int]:
+    """Records and choices for every live listen that has none yet (so a rerun after more listens appear only does the new ones). Returns counts. `redo`: listen ids whose metadata is read again after a rule change (their record parts are unlinked and new ones linked; fields a person chose are kept)."""
+    for part in s.scalars(select(ListenPart).where(ListenPart.listen_id.in_(redo or []), ListenPart.role == 'record', ListenPart.unlinked_at.is_(None))): L.unlink(s, part, actor_kind='rule', actor_ref=actor_ref, reason='metadata read again after a rule change')
+    s.flush()
     done = {r for (r,) in s.execute(select(ListenPart.listen_id).where(ListenPart.role == 'record', ListenPart.unlinked_at.is_(None)))}
     n = {'listens': 0, 'choices': 0, 'from_tags': 0, 'from_folder': 0}
-    for l in s.scalars(select(Listen).where(Listen.merged_into_id.is_(None)).order_by(Listen.id)):
+    for l in s.scalars(select(Listen).where(Listen.merged_into_id.is_(None), *([Listen.id.in_(redo)] if redo else [])).order_by(Listen.id)):
         if l.id in done: continue
         inputs = list(s.scalars(select(ListenPart).where(ListenPart.listen_id == l.id, ListenPart.role == 'input', ListenPart.unlinked_at.is_(None)).order_by(ListenPart.ordinal)))
         probes = [p for ip in inputs if ip.filegroup_id for (p,) in s.execute(FILES_BELOW, {'gid': ip.filegroup_id})]
@@ -107,7 +109,9 @@ def add_metadata(s: Session, *, actor_ref: str = 'metadata-v1') -> dict[str, int
         name = {k: v for k, v in name.items() if v not in ('', None)}
         tp = L.link(s, l, 'record', record_id=_record(s, 'embedded_tags', 'tag_summary', tags).id, ordinal=1, actor_kind='rule', actor_ref=actor_ref, reason='what the embedded tags of the files agree on')
         fp = L.link(s, l, 'record', record_id=_record(s, 'folder_name', 'parsed_name', {**name, 'folder': folder}).id, ordinal=2, actor_kind='rule', actor_ref=actor_ref, reason='what the folder name reads as')
+        by_person = {c.field for c in s.scalars(select(ListenChoice).where(ListenChoice.listen_id == l.id, ListenChoice.unchosen_at.is_(None), ListenChoice.chosen_by == 'user'))}
         for field, (value, src) in choose_fields(tags, name).items():
+            if field in by_person: continue
             L.choose(s, l, field, value, part=tp if src == 'tags' else fp, actor_kind='rule', actor_ref=actor_ref, reason=f'from {src.replace("_", " ")}'); n['choices'] += 1; n['from_tags' if src == 'tags' else 'from_folder'] += 1
             if field == 'title': l.label = str(value)
         n['listens'] += 1
