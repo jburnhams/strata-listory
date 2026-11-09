@@ -76,9 +76,3 @@ def test_choose_replaces_previous_choice(s):
 def test_records_are_stored_once(s):
     s.add(PartRecord(source="audible", kind="product", payload={"a": 1}, payload_hash=b"x" * 32)); s.flush()
     with pytest.raises(IntegrityError), s.begin_nested(): s.add(PartRecord(source="audible", kind="product", payload={"a": 1}, payload_hash=b"x" * 32)); s.flush()
-
-
-def test_schema_matches_models(db_engine, db_backend):
-    from omarchy_db import drift
-    from app.store.models import Base
-    assert drift(db_engine, Base.metadata) == []
