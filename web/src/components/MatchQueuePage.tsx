@@ -39,10 +39,11 @@ const counted = (label: string, n: number | undefined) => n == null ? label : `$
 /** The order and the filters, written to the URL as they change (the search box after a short pause). */
 function QueueControls({ filters, facets, set, clear }: { filters: QueueFilters; facets: QueueFacets | undefined; set: (key: keyof QueueFilters, value: string) => void; clear: (() => void) | null }) {
   const [typed, setTyped] = useState(filters.q)
+  const latestSet = useRef(set); latestSet.current = set      // the pause can span another choice: write the search through the newest URL, not the one it started from
   useEffect(() => { setTyped(filters.q) }, [filters.q])
   useEffect(() => {
     if (typed.trim() === filters.q) return
-    const t = setTimeout(() => set('q', typed.trim()), 250)
+    const t = setTimeout(() => latestSet.current('q', typed.trim()), 250)
     return () => clearTimeout(t)
   }, [typed]) // eslint-disable-line react-hooks/exhaustive-deps
   const options = (facet: keyof QueueFacets, labels: (v: string) => string, current: string) => {

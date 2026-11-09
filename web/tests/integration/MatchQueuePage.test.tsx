@@ -152,6 +152,15 @@ describe('MatchQueuePage', () => {
     await waitFor(() => expect(cards()).toHaveLength(4))
   })
 
+  it('keeps a choice made while a search is still pausing', async () => {
+    const { user } = setup(<MatchQueuePage />)
+    await screen.findByRole('list', { name: 'Matches to check' })
+    await user.type(screen.getByRole('searchbox', { name: 'Search matches' }), 'mara')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Accepted by the model' }), 'skip')      // before the search reaches the URL
+    await waitFor(() => expect(cards().map(c => c.getAttribute('aria-label'))).toEqual(['Salt Roads', 'Lune']))
+    expect(screen.getByRole('combobox', { name: 'Accepted by the model' })).toHaveValue('skip')
+  })
+
   it('keeps a filter value from the URL choosable when no card has it now', async () => {
     setup(<MatchQueuePage />, { route: '/?kind=radio_show&status=held&sort=nonsense' })
     expect(await screen.findByText('No matches fit these filters')).toBeInTheDocument()

@@ -5,7 +5,7 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import TIMESTAMP, cast, func, select
 from sqlalchemy.orm import Session
 
 from app.linkage import apply, service
@@ -47,10 +47,12 @@ def queue_items(s: Session) -> list[dict]:
         if any(p.state == 'accepted' and (p.id in decided or p.linked_by == 'user') for p in ps): continue
         cands = sorted((_candidate(p) for p in ps), key=lambda c: -c['p'])
         items.append(dict(listen_id=lid, p=cands[0]['p'], candidates=cands))
-    facts = {lid: (kind, status, created) for lid, kind, status, created in s.execute(select(Listen.id, Listen.kind, Listen.status, Listen.created_at).where(Listen.id.in_(list(by))))} if by else {}
+    # created_at is a naive timestamp the database wrote with now() in its own session zone, so the database turns it into epoch seconds (read back in that zone), never the API host's zone
+    added = func.extract('epoch', cast(Listen.created_at, TIMESTAMP(timezone=True)))
+    facts = {lid: (kind, status, created) for lid, kind, status, created in s.execute(select(Listen.id, Listen.kind, Listen.status, added).where(Listen.id.in_(list(by))))} if by else {}
     for it in items:
         kind, status, created = facts.get(it['listen_id'], (None, None, None))
-        it.update(kind=kind, status=status, added=created.timestamp() if created else None)
+        it.update(kind=kind, status=status, added=float(created) if created is not None else None)
     return sorted(items, key=lambda it: (-it['p'], it['listen_id']))
 
 

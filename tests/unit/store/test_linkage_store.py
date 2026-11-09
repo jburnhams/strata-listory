@@ -152,6 +152,7 @@ def test_match_queue_api_filters_sorts_and_pages_within_the_filter(s, listens):
     whole = c.get("/api/matches").json()
     assert whole["total"] == 4 and whole["facets"]["kind"] == {"book": 3, "radio_series": 1} and sum(whole["facets"]["certainty"].values()) == 4
     assert all(it["kind"] and it["status"] and it["added"] for it in whole["items"]) and "text" not in whole["items"][0]
+    assert abs(whole["items"][0]["added"] - float(s.scalar(select(func.extract("epoch", func.now()))))) < 3600        # the instant the database added it, whatever zone the API host runs in
     ps = [it["p"] for it in c.get("/api/matches", params=dict(sort="uncertain")).json()["items"]]
     assert ps == sorted(ps)
     recent = [it["listen_id"] for it in c.get("/api/matches", params=dict(sort="recent")).json()["items"]]
