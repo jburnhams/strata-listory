@@ -204,3 +204,28 @@ def test_match_queue_carries_each_listens_kind_verdict_and_filters_by_it(s, list
     review = c.get("/api/matches?check=review").json(); assert [it["listen_id"] for it in review["items"]] == [glass.id] and review["facets"]["check"] == {"review": 1, "broadcast": 1}
     assert [it["listen_id"] for it in c.get("/api/matches?check=broadcast").json()["items"]] == [salt.id]
     assert c.get("/api/matches?check=bogus").status_code == 400
+
+def test_rerun_after_a_rejected_first_candidate_numbers_the_new_candidates_past_it(s, listens):
+    """A person rejects the top review candidate; the rejection stays linked (it is the record of the decision) and keeps its ordinal, so the next run's candidates must not reuse it (`listen_part_active_ordinal`)."""
+    p = params(); apply.apply(s, data_for(listens, sure=False), p)
+    salt = listens["Books/Ben Ash - Salt Roads"]
+    active = lambda: s.scalars(select(ListenPart).where(ListenPart.listen_id == salt.id, ListenPart.role == "candidate", ListenPart.unlinked_at.is_(None)).order_by(ListenPart.ordinal)).all()      # noqa: E731
+    first = active()[0]; assert first.ordinal == 1 and salt.status == "review"
+    apply.decide(s, salt, first, "reject")
+    data = data_for(listens, sure=False); data[str(salt.id)]["vectors"][GLASS["key"]] = [dict(title="weak", author="conflict", sources="both")]      # still not sure about the work that is left
+    data[str(salt.id)]["clusters"]["/works/OL3W"] = dict(GLASS, key="/works/OL3W", title="Salt Road", ol=["/works/OL3W"]); data[str(salt.id)]["vectors"]["/works/OL3W"] = [dict(title="weak", author="conflict", sources="both")]
+    apply.apply(s, data, p); s.flush()
+    parts = active(); ordinals = [x.ordinal for x in parts]
+    assert len(ordinals) == len(set(ordinals)) and parts[0].id == first.id and first.state == "rejected"
+    fresh = [x for x in parts if x.state == "candidate"]
+    assert fresh and min(x.ordinal for x in fresh) > first.ordinal and [x.ordinal for x in sorted(fresh, key=lambda x: -x.score)] == sorted(x.ordinal for x in fresh)      # still ranked
+    assert apply.apply(s, data, p)["unchanged"] >= 1                                     # and a rerun with the same answer changes nothing
+
+
+def test_a_second_identification_run_is_refused_while_one_holds_the_lock(s, listens, db_engine):
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session
+    with Session(db_engine) as other:
+        other.execute(text("select pg_advisory_xact_lock(hashtext('listory.identify'))"))      # a run in another process, not yet committed
+        with pytest.raises(RuntimeError, match="in progress"): apply.apply(s, data_for(listens), params())
+    assert apply.apply(s, data_for(listens), params())["accept"] == 4                        # the lock goes with the other run's transaction
