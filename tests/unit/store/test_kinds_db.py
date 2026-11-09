@@ -108,7 +108,9 @@ def test_gather_reads_tags_folder_choices_and_the_structure_prior(s):
     assert (f.label, f.author, f.narrator, f.publisher, f.folder, f.structure_kind, f.structure_reason) == ("Greenhouse", "Hana Vell", "Ada Penn", "A Press", "Greenhouse S01", "programme", "made for the test")
 
 
-def test_the_listens_api_filters_by_kind_and_saves_a_choice(s):
+def test_the_listens_api_filters_by_kind_and_saves_a_choice(s, monkeypatch):
+    from app.linkage import service as linkage_service
+    again = []; monkeypatch.setattr(linkage_service, "start_reidentify", lambda factory, lid: again.append(lid) or True)
     radio = make(s, "Greenhouse Series 1", tags=dict(artist="BBC Radio 4"), part_minutes=(28, 28, 28, 28))
     close = make(s, "One Voice", tags=dict(genre="Comedy"), part_minutes=(60,))
     plain = make(s, "Plain Novel", part_minutes=(400,))
@@ -119,6 +121,7 @@ def test_the_listens_api_filters_by_kind_and_saves_a_choice(s):
     assert [r["id"] for r in c.get("/api/listens?kind=not-book").json()["rows"]] == [radio.id]
     info = next(r for r in c.get("/api/listens").json()["rows"] if r["id"] == plain.id)["kind_info"]; assert info["band"] == "book" and info["signals"][0]["weight"] != 0
     ok = c.post(f"/api/listens/{radio.id}/kind", json={"kind": "book"}); assert ok.status_code == 200 and ok.json()["kind_info"]["decided_by"] == "user" and kind_of(s, radio) == "book"
+    assert ok.json()["reidentifying"] and again == [radio.id]      # a new kind may change which sources supply candidates, so the match is worked out again
     assert c.post(f"/api/listens/{radio.id}/kind", json={"kind": "nonsense"}).status_code == 400 and c.post("/api/listens/999999/kind", json={"kind": "book"}).status_code == 404
 
 

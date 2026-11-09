@@ -142,7 +142,9 @@ def set_listen_kind(listen_id: int, body: KindChoice, s: Session = Depends(get_s
     except LookupError: raise HTTPException(404, 'no such listen')
     except ValueError as e: raise HTTPException(400, str(e))
     s.commit(); retraining = kinds_db.start_learning(lambda: Session(_engine()))      # every answer is a label: refit the weights in the background
-    return dict(ok=True, retraining=retraining, kind_info=kinds_db.kind_infos(s, [listen_id]).get(listen_id))
+    from app.linkage import service as linkage_service
+    reidentifying = linkage_service.start_reidentify(lambda: Session(_engine()), listen_id)      # the kind decides which sources supply candidates, so the match is worked out again
+    return dict(ok=True, retraining=retraining, reidentifying=reidentifying, kind_info=kinds_db.kind_infos(s, [listen_id]).get(listen_id))
 
 
 @listens_router.get('/{listen_id}')

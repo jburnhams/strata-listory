@@ -15,7 +15,7 @@ describe('kindCertainty', () => {
 describe('KindInfo', () => {
   it('shows the kind, why the classifier chose it, and what else it could be', async () => {
     const { user } = setup(<KindInfo listenId={9} kind="book" info={kindInfos.close} />)
-    expect(screen.getByText('Book')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Change kind' })).toHaveValue('book')
     expect(screen.getByText('Could be: Play')).toBeInTheDocument()
     expect(screen.queryByRole('list', { name: 'Reasons for the kind' })).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Why?' }))
@@ -33,6 +33,15 @@ describe('KindInfo', () => {
     expect(screen.queryByRole('button', { name: 'It is a book' })).toBeNull()      // it already is one
     await user.click(screen.getByRole('button', { name: 'It is a play' }))
     await waitFor(() => expect(kindChoices).toEqual([{ id: 9, kind: 'play' }]))
+  })
+
+  it('changes the kind straight from a dropdown, without opening the reasons', async () => {
+    kindChoices.length = 0
+    const { user } = setup(<KindInfo listenId={9} kind="book" info={null} />)
+    const pick = screen.getByRole('combobox', { name: 'Change kind' })
+    expect(pick).toHaveValue('book')
+    await user.selectOptions(pick, 'radio_show')
+    await waitFor(() => expect(kindChoices).toEqual([{ id: 9, kind: 'radio_show' }]))
   })
 
   it('shows which weights were learned from your answers and which are still the prior', async () => {

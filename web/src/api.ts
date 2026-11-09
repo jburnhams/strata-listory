@@ -184,7 +184,7 @@ export interface ListenRow { id: number; label: string; kind: 'book' | 'radio_se
 export interface ListenList { total: number; kinds: Record<string, number>; review: number; not_book: number; rows: ListenRow[] }
 export const listenApi = {
   list: (q = '', kind = '', status = '', limit = 500) => req<ListenList>(`/api/listens?${new URLSearchParams({ q, kind, status, limit: String(limit) })}`),
-  setKind: (id: number, kind: string) => req<{ ok: boolean; retraining: boolean; kind_info: KindInfoData | null }>(`/api/listens/${id}/kind`, send('POST', { kind })),
+  setKind: (id: number, kind: string) => req<{ ok: boolean; retraining: boolean; reidentifying?: boolean; kind_info: KindInfoData | null }>(`/api/listens/${id}/kind`, send('POST', { kind })),
 }
 
 // The match queue (src/app/linkage/api.py): book listens with the model's candidate works, easiest first; answers become labels for the next fit.

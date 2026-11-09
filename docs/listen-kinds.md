@@ -13,7 +13,7 @@ So each piece of evidence is a *signal* with a weight in log-odds, added to a pr
 The weights below are the **prior**. They are learned from labels the way identification learns (`kinds_model.py`, saved as `data/kinds/model.json`): the signals are the features, the model is logistic, `P(broadcast) = sigmoid(b + sum m_s * w_s)` with one multiplier `m_s` per signal (start 1) and a bias `b` (start at the prior), and the fit is regularised toward the hand-set values (4 pseudo-labels of agreement per parameter). With no labels it is exactly the hand-set classifier; with a few, only the signals those labels show move, a little; each label moves them more. Multipliers stay in [0, 3], so learning rescales evidence and never flips it. The "Why?" list marks each weight `prior` or `learned, was +3`.
 
 Labels:
-* **Your answers** (weight 1, `decided_by = user`): the "It is a ..." buttons and **Kind is right** (a confirmation is the same answer as the current kind) on the Matches card and the Listens table, or `POST /api/listens/{id}/kind`.
+* **Your answers** (weight 1, `decided_by = user`): the **Change kind** dropdown (always on the Matches card and the Listens table, separate from approve / not this), the "It is a ..." buttons and **Kind is right** (a confirmation is the same answer as the current kind) on the Matches card and the Listens table, or `POST /api/listens/{id}/kind`.
 * **Accepted Audible matches** (weight 0.5, only the safe cases): a listen accepted as a recording of the same length (2%, P 0.9 or more) that Audible calls an ordinary audiobook (`Product`) from a non-BBC publisher is a book; one Audible keywords as a dramatisation and files as a Radio/TV Program or Show is broadcast. BBC Audio files readings as Radio/TV Program too, so that alone labels nothing. The Audible signals are left out of the features of these listens, so a label is never learned from the evidence that made it.
 
 Retraining: after every answer in the web app (in the background), when identification's **Learning** runs (`linkage.service.retrain_and_apply`), after `listens-identify`, and with `./app listens-kinds --learn`. A retrain re-judges every listen a person has not decided.
@@ -49,7 +49,7 @@ BBC Audio files readings under Audible's "Radio/TV Program" too, which is why th
 
 Kinds: `book`; `radio_series` (series/episode numbers, or several broadcast-sized parts); `radio_show` (one programme: documentary, stand-up, one-off); `play` (a drama or dramatisation). The listen's `kind` is set to the verdict (`listen.kind`, event `reclassify` with the reason); the full verdict is in `listen_kind` (kind, `guess`, `p_broadcast`, `band`, `signals`, `decided_by`).
 
-A person's choice (`decided_by = user`, from the "Why?" buttons or `POST /api/listens/{id}/kind`) is never recomputed over.
+A person's choice (`decided_by = user`, from the dropdown, the "Why?" buttons or `POST /api/listens/{id}/kind`) is never recomputed over. Saving a kind also identifies that one listen again in the background (`linkage.service.reidentify_listen`), because the kind decides which sources supply candidates; anything a person already decided about its match is kept.
 
 ## Using it
 

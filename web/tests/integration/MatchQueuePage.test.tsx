@@ -113,7 +113,7 @@ describe('MatchQueuePage', () => {
     expect(screen.getByRole('combobox', { name: 'Order' })).toHaveValue('uncertain')
     expect(screen.getByRole('combobox', { name: 'Accepted by the model' })).toHaveValue('skip')
     await waitFor(() => expect(cards().map(c => c.getAttribute('aria-label'))).toEqual(['Untagged folder', 'Lune', 'Salt Roads']))      // the auto-accepted Glass Orchard is left out
-    expect(within(cards()[0]).getByText('Radio series')).toBeInTheDocument()
+    expect(within(cards()[0]).getByRole('combobox', { name: 'Change kind' })).toHaveValue('radio_series')
     await user.keyboard('a')                                                                     // the first card of the filtered list
     expect(screen.getByText('Approved the match.')).toBeInTheDocument()
     await waitFor(() => expect(cards().map(c => c.getAttribute('aria-label'))).toEqual(['Lune', 'Salt Roads']))
