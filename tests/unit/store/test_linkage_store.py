@@ -231,3 +231,40 @@ def test_a_second_identification_run_is_refused_while_one_holds_the_lock(s, list
         other.execute(text("select pg_advisory_xact_lock(hashtext('listory.identify'))"))      # a run in another process, not yet committed
         with pytest.raises(RuntimeError, match="in progress"): apply.apply(s, data_for(listens), params())
     assert apply.apply(s, data_for(listens), params())["accept"] == 4                        # the lock goes with the other run's transaction
+
+
+HARBOUR = dict(key="radio:harbour-lights", title="Harbour Lights", authors=[], year=2012, ol=[], asins=[], isbns=[],
+               programmes=[dict(source="bbc_radio", ref="b0test01", title="Harbour Lights", service="bbc_radio_four", channel="BBC Radio 4", first_broadcast="2012-05-01", type="series", episodes=12, genres=["Comedy"], synopsis=""),
+                           dict(source="wikidata_drama", ref="Q99", title="Harbour Lights", service="", channel="", first_broadcast="", type="", episodes=None, genres=[], synopsis="")])
+
+
+def test_a_radio_programme_is_a_work_with_pid_and_wikidata_ids_and_a_card_that_shows_it(s, listens):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.linkage import api as A
+    salt = next(l for k, l in listens.items() if "Salt" in k)
+    radio = dict(title="exact_rare", sources="radio", channel="match", form="agree", _alias="harbour lights", _reading="folder")
+    apply.apply(s, {str(salt.id): dict(clusters={HARBOUR["key"]: HARBOUR, GLASS["key"]: GLASS}, vectors={HARBOUR["key"]: [radio], GLASS["key"]: [dict(title="weak", author="conflict", sources="both", form="conflict")]})}, params())
+    w = s.scalars(select(Work).where(Work.kind == "radio_programme")).one()
+    assert w.title == "Harbour Lights" and {(i.scheme, i.value) for i in s.scalars(select(WorkIdentifier).where(WorkIdentifier.work_id == w.id))} >= {("work", "radio:harbour-lights"), ("bbc_pid", "b0test01"), ("wikidata", "Q99")}
+    part = s.scalars(select(ListenPart).where(ListenPart.listen_id == salt.id, ListenPart.role.in_(("match", "candidate")), ListenPart.unlinked_at.is_(None))).first()
+    assert part.work_id == w.id and part.detail["candidate"] == "radio:harbour-lights" and part.detail["programmes"][0]["channel"] == "BBC Radio 4"
+    apply.apply(s, {str(salt.id): dict(clusters={HARBOUR["key"]: HARBOUR}, vectors={HARBOUR["key"]: [radio]})}, params())      # a second listen of the same programme finds the same work row
+    assert len(s.scalars(select(Work).where(Work.kind == "radio_programme")).all()) == 1
+    app = FastAPI(); app.include_router(A.router); app.dependency_overrides[A.get_session] = lambda: s; c = TestClient(app)
+    card = next(it for it in c.get("/api/matches").json()["items"] if it["listen_id"] == salt.id)["candidates"][0]
+    assert card["key"] == "radio:harbour-lights" and card["programmes"][0]["ref"] == "b0test01" and card["recordings"] == []
+
+
+def test_a_radio_programme_accepted_as_the_match_is_a_broadcast_label_for_kind_learning(s, listens):
+    from app.store import kinds_db
+    salt = next(l for k, l in listens.items() if "Salt" in k); glass = next(l for k, l in listens.items() if k.endswith("Glass Orchard"))
+    radio = dict(title="exact_rare", sources="radio", channel="match", form="agree", _alias="harbour lights")
+    data = {str(salt.id): dict(clusters={HARBOUR["key"]: HARBOUR}, vectors={HARBOUR["key"]: [radio]}), str(glass.id): dict(clusters={GLASS["key"]: GLASS}, vectors={GLASS["key"]: [dict(title="exact_rare", author="all", sources="both")]})}
+    apply.apply(s, data, params())
+    feats = kinds_db.gather(s, [salt.id, glass.id], audible=lambda a: {}, radio=lambda t: [])
+    lab = kinds_db.labels(s, [salt.id, glass.id], feats)
+    assert lab[salt.id] == (True, kinds_db.IMPLICIT_WEIGHT, "radio match") and glass.id not in lab           # an automatic acceptance counts half; a book match implies nothing without an Audible recording
+    part = s.scalars(select(ListenPart).where(ListenPart.listen_id == salt.id, ListenPart.role == "match")).one()
+    apply.decide(s, salt, part, "approve")
+    assert kinds_db.labels(s, [salt.id], feats)[salt.id] == (True, 1.0, "radio match")                         # a person's acceptance counts in full

@@ -89,7 +89,9 @@ const EVIDENCE: Record<string, Record<string, [Tone, string]>> = {
   asin: { match: ['success', 'ASIN matches'], other: ['danger', 'ASIN differs'] },
   year: { same: ['success', 'same year'], close: ['info', 'year within 5'], later: ['neutral', 'recorded later'], earlier: ['danger', 'year before the book'] },
   numbers: { agree: ['success', 'numbers agree'], local_only: ['warning', 'number only in your title'], other_only: ['warning', 'number only in theirs'], differ: ['danger', 'numbers differ'] },
-  sources: { both: ['success', 'Open Library and Audible'], openlibrary: ['neutral', 'Open Library only'], audible: ['neutral', 'Audible only'] },
+  sources: { both: ['success', 'Open Library and Audible'], openlibrary: ['neutral', 'Open Library only'], audible: ['neutral', 'Audible only'], radio: ['info', 'radio programme catalogue'] },
+  channel: { match: ['success', 'channel matches'], conflict: ['danger', 'channel differs'] },
+  form: { agree: ['success', 'kind fits'], neutral: ['neutral', 'kind is a close call'], conflict: ['warning', 'kind does not fit'] },
 }
 
 /** The comparison levels the model used, as words with a tone; missing fields are left out (they were no evidence either way). */
@@ -165,7 +167,30 @@ function Cover({ isbn, title }: { isbn?: string; title: string }) {
   return <img src={`https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false`} alt={`Cover of ${title}`} loading="lazy" className="h-28 w-auto shrink-0 rounded-control border border-border object-contain" onError={e => { e.currentTarget.style.display = 'none' }} />
 }
 
+const bbcUrl = (ref: string) => `https://www.bbc.co.uk/programmes/${ref}`
+const wikidataUrl = (ref: string) => `https://www.wikidata.org/wiki/${ref}`
+
+/** A proposed radio programme: its title, channel, first broadcast and the catalogue records behind it. */
+function Programme({ c }: { c: QueueCandidate }) {
+  const ps = c.programmes ?? [], bbc = ps.find(p => p.source === 'bbc_radio'), wiki = ps.find(p => p.source !== 'bbc_radio')
+  const info = bbc ?? ps[0]
+  return (
+    <section aria-label="The proposed programme" className="min-w-0 flex-1 basis-72 space-y-2">
+      <p className="type-caption text-muted-foreground">Proposed radio programme</p>
+      <p className="type-heading break-words">{c.title ?? info?.title}</p>
+      <p className="type-caption text-muted-foreground tabular-nums">
+        {[info?.channel || info?.service?.replaceAll('_', ' '), info?.type, info?.first_broadcast ? `first broadcast ${info.first_broadcast}` : null, info?.episodes ? format.count(info.episodes, 'episode') : null, info?.genres?.length ? info.genres.join(', ') : null].filter(Boolean).join(' · ')}
+        {bbc && <> · <a className="underline" href={bbcUrl(bbc.ref)} target="_blank" rel="noreferrer">BBC Programmes</a></>}
+        {wiki && <> · <a className="underline" href={wikidataUrl(wiki.ref)} target="_blank" rel="noreferrer">Wikidata</a></>}
+      </p>
+      {info?.synopsis && <p className="type-body-sm text-muted-foreground">{info.synopsis}</p>}
+      <div className="flex flex-wrap gap-1" aria-label="Evidence">{evidence(c.evidence).map(e => <Status key={e.key} tone={e.tone}>{e.word}</Status>)}</div>
+    </section>
+  )
+}
+
 function Work({ c, minutes }: { c: QueueCandidate; minutes: number | null | undefined }) {
+  if (c.programmes?.length) return <Programme c={c} />
   const title = displayTitle(c), asin = c.recording || c.recordings[0]?.asin
   return (
     <section aria-label="The proposed work" className="min-w-0 flex-1 basis-72 space-y-2">

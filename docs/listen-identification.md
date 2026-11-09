@@ -5,7 +5,7 @@ Which written work is each listen, and which recording of it? Code: `src/app/lin
 ## Pipeline
 
 1. **Readings** (`query.py`). A listen's evidence is read from its records (embedded-tag summary, parsed folder name), its chosen fields, its runtime per copy, narrator and ASIN. Names are ambiguous, so it becomes several readings (title, author): chosen, album tags, folder, folder with title and author **swapped** (`The Title - The Author` parses the wrong way round), the whole folder name split at a dash, each with disc/part numbers stripped and brackets dropped. Bracketed words (`Title (Narrator Name)`) are kept as narrator hints.
-2. **Candidates** (`candidates.py`, recall only). Audible: ASIN, any title key of any reading, the credited authors' books with a similar title, full-text words as a fallback, from `data/audible/index.sqlite` (now both UK and US stores, English and unlabelled only: 1.2M recordings). Open Library: `identify.candidates.find` per reading over `identify.sqlite`, plus the works holding the ISBN or Amazon id of a found recording.
+2. **Candidates** (`candidates.py`, recall only). A third source, radio programmes, is described in [listen-kinds.md](listen-kinds.md#radio-programmes-as-an-identification-source). Audible: ASIN, any title key of any reading, the credited authors' books with a similar title, full-text words as a fallback, from `data/audible/index.sqlite` (now both UK and US stores, English and unlabelled only: 1.2M recordings). Open Library: `identify.candidates.find` per reading over `identify.sqlite`, plus the works holding the ISBN or Amazon id of a found recording.
 3. **Work clusters.** Open Library works and Audible recordings that are one book are joined: by ISBN, by an edition's Amazon id, or by a shared title key (or main title before a subtitle, brackets removed first) with a shared author (initials, `Jr.` and reordered names tolerated; records without a real author join only each other). Duplicate Open Library works, abridged and unabridged recordings and different narrators of one book are then one candidate, so they never compete.
 4. **Comparison vectors** (`compare.py`). Per reading and cluster, one coarse level per field, or none when it cannot be compared (a missing author is no evidence; a different author is):
 
@@ -67,5 +67,5 @@ Whole library (780 book listens after merging): 538 identified automatically, 24
 
 * Search for listens with no right candidate (`not_found`, and the ~17 with no candidates at all, which the queue does not show).
 * Recall: misspelt titles or authors find nothing (no fuzzy full-text fallback in Open Library); collections and omnibus editions are weakly handled.
-* Radio (`radio_series`, `radio_show`, `play`) is not identified yet; which listens are radio is decided by [listen-kinds.md](listen-kinds.md).
+* Radio listens are identified against the BBC/Wikidata programme catalogue (title, channel, year), not individual episodes; which listens are radio is decided by [listen-kinds.md](listen-kinds.md).
 * Recording identity: the closest Audible recording is recorded in `detail.recording`, not yet as its own `audiobook` work.

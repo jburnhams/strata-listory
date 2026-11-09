@@ -8,6 +8,7 @@ from app import scan
 from app.identify import local, textkeys as tk
 
 NOISE = re.compile(r'\((?:un)?abridged[^)]*\)|[_\s]+(?:un)?abridged\b|\b(?:\d+(?:st|nd|rd|th)\s+)?anniversary(?:\s+edition)?\b|\((?:mp3|m4b|aac|audiobook|audio\s*book|retail)\)|\b(?:mp3|m4b)\b|\bunabridged\b', re.I)
+ALL_KINDS = ('book', 'radio_series', 'radio_show', 'play', 'other')
 GENERIC = re.compile(r'^\s*(track\s*\d*|unknown\b.*|audiobook|disc\s*\d*|chapter\s*\d*|\d+)\s*$', re.I)
 
 
@@ -31,6 +32,20 @@ class Query:
     language: str = ''
     path: str = ''
     hints: list[str] = field(default_factory=list)          # bracketed words in names, often a narrator: 'Great Expectations (Stephen Fry)'
+    band: str = ''                                          # the kind classifier's call: broadcast | review | book, '' when it has not run (`store/kinds.py`)
+    channels: list[str] = field(default_factory=list)       # BBC services the listen's tags and names point to (`channels_in`), e.g. bbc_radio_four
+
+
+CHANNELS = (  # (pattern, service id prefix in the BBC programme list)
+    (r'radio[\s._-]*4[\s._-]*extra|\br4x\b', 'bbc_radio_four_extra'), (r'radio[\s._-]*4\b|\br4\b|radio four', 'bbc_radio_four'), (r'radio[\s._-]*3\b|\br3\b', 'bbc_radio_three'), (r'radio[\s._-]*2\b|\br2\b', 'bbc_radio_two'), (r'radio[\s._-]*1\b|\br1\b', 'bbc_radio_one'),
+    (r'radio[\s._-]*5[\s._-]*live|\br5l\b', 'bbc_radio_five_live'), (r'6[\s._-]*music', 'bbc_6music'), (r'world service', 'bbc_world_service'), (r'radio scotland', 'bbc_radio_scotland'), (r'radio wales|radio cymru', 'bbc_radio_wales'),
+)
+
+
+def channels_in(*texts: str) -> list[str]:
+    """The BBC services named in these texts (Radio 4, R3, World Service...), as the ids the programme list uses; a more specific name (Radio 4 Extra) hides the plainer one it contains."""
+    t = ' '.join(x for x in texts if x).lower(); found = [svc for pat, svc in CHANNELS if re.search(pat, t)]
+    return [svc for svc in found if not any(o != svc and o.startswith(svc + '_') for o in found)]
 
 
 def clean_title(title: str) -> str:
@@ -68,28 +83,30 @@ def make_readings(choices: dict, tags: dict, folder: dict) -> list[Reading]:
     return out[:12]
 
 
-def from_parts(listen_id: int, kind: str, label: str, choices: dict, tags: dict, folder: dict, inputs: list[dict]) -> Query:
+def from_parts(listen_id: int, kind: str, label: str, choices: dict, tags: dict, folder: dict, inputs: list[dict], band: str = '') -> Query:
     """A Query from the listen's pieces (kept separate from the database read so tests can build one directly)."""
     narr = choices.get('narrator') or (tags.get('narratedby') or {}).get('value') or folder.get('narrator') or ''
     asin = tk.asin(choices.get('asin') or (tags.get('audible_asin') or {}).get('value') or folder.get('asin') or '')
     year = choices.get('year') if isinstance(choices.get('year'), int) else None
     hints = [h.strip() for t in (choices.get('title'), folder.get('folder'), (tags.get('album') or {}).get('value')) if t for h in re.findall(r'\(([^)]{3,60})\)', str(t)) if not NOISE.fullmatch(f'({h})') and not re.fullmatch(r'[\d\s-]+', h)]
-    return Query(listen_id, kind, label, make_readings(choices, tags, folder), tk.people(narr), asin, year, [float(i['minutes']) for i in inputs if i.get('minutes')], str(choices.get('language') or ''), (inputs[0].get('path') or '') if inputs else '', list(dict.fromkeys(hints)))
+    return Query(listen_id, kind, label, make_readings(choices, tags, folder), tk.people(narr), asin, year, [float(i['minutes']) for i in inputs if i.get('minutes')], str(choices.get('language') or ''), (inputs[0].get('path') or '') if inputs else '', list(dict.fromkeys(hints)), band,
+                 channels_in(label, str(choices.get('title') or ''), str(choices.get('author') or ''), str(folder.get('folder') or ''), *[str((tags.get(f) or {}).get('value') or '') for f in ('album', 'artist', 'album_artist', 'composer', 'publisher', 'genre')]))
 
 
-def load(s, kinds=('book',), ids=None) -> list[Query]:  # pragma: no cover - Postgres: tests/unit/store/test_linkage_store.py
-    """Queries for every live listen of these kinds (or the given ids)."""
+def load(s, kinds=ALL_KINDS, ids=None) -> list[Query]:  # pragma: no cover - Postgres: tests/unit/store/test_linkage_store.py
+    """Queries for every live listen of these kinds (all of them by default: a radio programme is a candidate source too), or the given ids."""
     from sqlalchemy import text
     where = 'l.merged_into_id is null and l.retired_at is null and l.kind = any(:kinds)' + (' and l.id = any(:ids)' if ids else '')
     rows = s.execute(text(f"""select l.id, l.kind, l.label,
         (select jsonb_object_agg(c.field, c.value) from listen_choice c where c.listen_id = l.id and c.unchosen_at is null) as choices,
         (select jsonb_object_agg(r.source, r.payload) from listen_part p join part_record r on r.id = p.record_id where p.listen_id = l.id and p.role = 'record' and p.unlinked_at is null) as records,
-        (select jsonb_agg(p.detail order by p.ordinal) from listen_part p where p.listen_id = l.id and p.role = 'input' and p.unlinked_at is null) as inputs
+        (select jsonb_agg(p.detail order by p.ordinal) from listen_part p where p.listen_id = l.id and p.role = 'input' and p.unlinked_at is null) as inputs,
+        (select band from listen_kind k where k.listen_id = l.id) as band
         from listen l where {where} order by l.id"""), dict(kinds=list(kinds), ids=list(ids or []))).all()
     out = []
-    for lid, kind, label, choices, records, inputs in rows:
+    for lid, kind, label, choices, records, inputs, band in rows:
         records = records or {}
-        out.append(from_parts(lid, kind, label or '', choices or {}, records.get('embedded_tags') or {}, records.get('folder_name') or {}, inputs or []))
+        out.append(from_parts(lid, kind, label or '', choices or {}, records.get('embedded_tags') or {}, records.get('folder_name') or {}, inputs or [], band or ''))
     return out
 
 

@@ -25,18 +25,20 @@ def identifiers(summary: dict) -> list[tuple[str, str]]:
     """`work` (the cluster's key: its most-published Open Library work, or `asin:...` for an Audible-only work) is what identifies the row; the other Open Library works of the cluster (duplicate records), its ASINs and ISBNs are kept as further identifiers but never used to find the row, because neighbouring clusters can share a stray record."""
     ids = [('work', summary['key'])] + [('ol_work', k) for k in summary.get('ol') or []]
     ids += [('asin', a) for a in summary.get('asins') or []] + [('isbn', i) for i in summary.get('isbns') or []]
+    ids += [('bbc_pid' if p['source'] == 'bbc_radio' else 'wikidata', p['ref']) for p in summary.get('programmes') or []]      # a radio programme: its BBC pid and Wikidata item
     return list(dict.fromkeys(ids))
 
 
 def work_for(s: Session, summary: dict) -> Work:
     """The `work` row for a candidate cluster: the existing one with the same key, else a new one with its identifiers and authors. Identifiers learned later are added to the existing row."""
-    w = s.scalars(select(Work).join(WorkIdentifier, WorkIdentifier.work_id == Work.id).where(WorkIdentifier.scheme == 'work', WorkIdentifier.value == summary['key'], Work.kind == 'written')).first()
+    kind = 'radio_programme' if summary['key'].startswith('radio:') else 'written'
+    w = s.scalars(select(Work).join(WorkIdentifier, WorkIdentifier.work_id == Work.id).where(WorkIdentifier.scheme == 'work', WorkIdentifier.value == summary['key'], Work.kind == kind)).first()
     if w:
         have = {(i.scheme, i.value) for i in s.scalars(select(WorkIdentifier).where(WorkIdentifier.work_id == w.id))}
         for sc, v in identifiers(summary):
             if (sc, v) not in have: s.add(WorkIdentifier(work_id=w.id, scheme=sc, value=v))
         s.flush(); return w
-    w = Work(kind='written', title=summary['title'], year=summary.get('year')); s.add(w); s.flush()
+    w = Work(kind=kind, title=summary['title'], year=summary.get('year')); s.add(w); s.flush()
     for sc, v in identifiers(summary): s.add(WorkIdentifier(work_id=w.id, scheme=sc, value=v))
     for pos, name in enumerate(dict.fromkeys(summary.get('authors') or [])):
         key = tk.person_key(name)
@@ -60,7 +62,7 @@ def clear(s: Session, ids: set[int] | None = None) -> int:
     s.execute(delete(ListenEvent).where(ListenEvent.action == 'status_change', ListenEvent.actor_kind.in_(('model', 'auto_policy')), ListenEvent.listen_id.in_(touched)))
     s.execute(update(Listen).where(Listen.id.in_(touched)).values(status='grouped'))
     used = select(ListenPart.work_id).where(ListenPart.work_id.is_not(None))
-    orphans = [w for (w,) in s.execute(select(Work.id).where(Work.kind == 'written', Work.id.not_in(used)))]
+    orphans = [w for (w,) in s.execute(select(Work.id).where(Work.kind.in_(('written', 'radio_programme')), Work.id.not_in(used)))]
     if orphans:
         s.execute(delete(WorkCredit).where(WorkCredit.work_id.in_(orphans))); s.execute(delete(WorkIdentifier).where(WorkIdentifier.work_id.in_(orphans))); s.execute(delete(Work).where(Work.id.in_(orphans)))
     s.flush(); return len(touched)
@@ -70,7 +72,7 @@ def _detail(key, p, post, none, used, clusters) -> dict:
     second = sorted(post.values(), reverse=True)[1] if len(post) > 1 else 0.
     v = used.get(key) or {}; c = clusters.get(key) or {}
     return dict(candidate=key, p=round(p, 4), second=round(second, 4), p_none=round(none, 4), vector={k: x for k, x in v.items() if not k.startswith('_')}, alias=v.get('_alias'), reading=v.get('_reading'), recording=v.get('_asin'), title=c.get('title'), authors=c.get('authors'), year=c.get('year'),
-                editions=c.get('editions'), ol=(c.get('ol') or [])[:5], isbns=(c.get('isbns') or [])[:5], recordings=(c.get('recordings') or [])[:6])      # what the review card shows, so it needs no index
+                editions=c.get('editions'), ol=(c.get('ol') or [])[:5], isbns=(c.get('isbns') or [])[:5], recordings=(c.get('recordings') or [])[:6], programmes=(c.get('programmes') or [])[:4])      # what the review card shows, so it needs no index
 
 
 def apply(s: Session, data: dict, params: M.Params, *, threshold: float = THRESHOLD, ids=None) -> dict[str, int]:

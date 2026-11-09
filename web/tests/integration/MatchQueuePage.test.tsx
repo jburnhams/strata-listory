@@ -230,4 +230,27 @@ describe('match helpers', () => {
     expect(screen.getByRole('option', { name: 'Kind least sure first' })).toBeInTheDocument()
     await waitFor(() => expect(within(screen.getByRole('list', { name: 'Matches to check' })).getAllByRole('article')[0]).toHaveAccessibleName('Untagged folder'))      // the one with a verdict, 97% sure, before the unclassified (read as sure books)
   })
+
+  it('shows a proposed radio programme with its channel, first broadcast, catalogue links and evidence', async () => {
+    const [first] = matchState.queue
+    const radio = { ...first.candidates[0], title: 'Harbour Lights', authors: [], recordings: [], recording: null, isbns: [], ol: [], key: 'radio:harbour-lights', p: 0.9, auto: false, state: 'candidate',
+      evidence: { title: 'exact_rare', sources: 'radio', channel: 'match', form: 'agree' },
+      programmes: [{ source: 'bbc_radio', ref: 'b0test01', title: 'Harbour Lights', service: 'bbc_radio_four', channel: 'BBC Radio 4', first_broadcast: '2012-05-01', type: 'series', episodes: 12, genres: ['Comedy'], synopsis: 'A harbour, a lamp and a rota.' },
+        { source: 'wikidata_drama', ref: 'Q99', title: 'Harbour Lights', service: '', channel: '', first_broadcast: '', type: '', episodes: null, genres: [], synopsis: '' }] }
+    matchState.queue = [{ ...first, candidates: [radio] }]
+    setup(<MatchQueuePage />)
+    const card = await screen.findByRole('region', { name: 'The proposed programme' })
+    expect(within(card).getByText('Harbour Lights')).toBeInTheDocument()
+    expect(within(card).getByText(/BBC Radio 4 · series · first broadcast 2012-05-01 · 12 episodes · Comedy/)).toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'BBC Programmes' })).toHaveAttribute('href', 'https://www.bbc.co.uk/programmes/b0test01')
+    expect(within(card).getByRole('link', { name: 'Wikidata' })).toHaveAttribute('href', 'https://www.wikidata.org/wiki/Q99')
+    expect(within(card).getByText('A harbour, a lamp and a rota.')).toBeInTheDocument()
+    for (const word of ['radio programme catalogue', 'channel matches', 'kind fits']) expect(within(card).getByText(word)).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'The proposed work' })).toBeNull()
+  })
+
+  it('still shows the book card and the unknown-channel words for ordinary candidates', () => {
+    expect(evidence({ form: 'conflict', channel: 'conflict' }).map(e => e.word)).toEqual(['channel differs', 'kind does not fit'])
+    expect(evidence({ form: 'neutral' })[0].word).toBe('kind is a close call')
+  })
 })

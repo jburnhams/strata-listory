@@ -128,7 +128,7 @@ def test_author_narrator_runtime_year_and_numbers():
 def test_compare_vector_and_popularity():
     q = Q.Query(1, 'book', narrators=['Tom Vale'], minutes=[600.], asin='B0AAAAAAA1')
     v = K.compare(q, Q.Reading('The Glass Orchard', 'Mara Quill', 'tags'), cluster(), 1)
-    assert {k: v[k] for k in K.FIELDS} == dict(title='exact_rare', author='all', narrator='match', runtime='1pct', asin='match', year=None, numbers=None, sources='both', popularity='medium')
+    assert {k: v[k] for k in K.FIELDS} == dict(title='exact_rare', author='all', narrator='match', runtime='1pct', asin='match', year=None, numbers=None, sources='both', popularity='medium', channel=None, form=None)      # the radio fields are empty for a book candidate without a kind verdict
     assert v['_asin'] == 'B0AAAAAAA1' and v['_reading'] == 'tags'
     assert K.compare(Q.Query(1, 'book', asin='B0ZZZZZZZZ'), Q.Reading('x'), cluster(), 1)['asin'] == 'other'
     assert K.popularity_level(cluster(editions=30)) == 'high' and K.popularity_level(cluster(editions=1, runtime=None)) == 'low' and K.popularity_level(C.Cluster()) == 'none'
@@ -270,5 +270,5 @@ def test_cache_signature_follows_the_indexes(monkeypatch, tmp_path):
     first = D.build(None, None, [q], indexes='ol:1|audible:1')
     D.build(None, None, [q], cache=first, indexes='ol:1|audible:1'); assert calls == [4]
     D.build(None, None, [q], cache=first, indexes='ol:1|audible:2'); assert calls == [4, 4]          # a rebuilt index recomputes
-    assert D.index_stamp(None, None) == 'ol:none|audible:none'
+    assert D.index_stamp(None, None) == 'ol:none|audible:none|radio:none:none'
     ac = audible(tmp_path); assert D.index_stamp(None, ac).startswith('ol:none|audible:20')
