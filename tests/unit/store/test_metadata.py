@@ -140,3 +140,119 @@ def test_metadata_is_added_once_with_records_choices_and_events(s, tmp_path):
         "Red Dragon"
     ]  # the author is searchable
     assert [r["label"] for r in c.get("/api/listens?q=jane doe").json()["rows"]] == ["Some Book"]
+
+
+def test_a_stand_alone_file_is_named_by_the_file_not_its_container_folder():
+    from app.store.models import PartFilegroup
+
+    stand_alone = PartFilegroup(
+        run_id="r",
+        kind="book",
+        label="The Example Handbook",
+        path="/lib/Books",
+        file_count=1,
+        detail={"reason": "whole-book file", "from_group": -1},
+    )
+    assert md.name_parts("/lib/Books", "Books", stand_alone) == (
+        "The Example Handbook",
+        "Books",
+        "The Example Handbook",
+    )
+    folder = PartFilegroup(
+        run_id="r",
+        kind="book",
+        label="Red Dragon",
+        path="/lib/Thomas Harris/Red Dragon",
+        file_count=12,
+        detail={"reason": "chapter files of one work", "from_group": 7},
+    )
+    assert md.name_parts("/lib/Thomas Harris/Red Dragon", "Red Dragon", folder) == (
+        "Red Dragon",
+        "Thomas Harris",
+        "Red Dragon",
+    )
+    assert md.name_parts("", "Label", None) == ("Label", "", "")
+
+
+def test_a_book_file_in_a_generic_or_author_folder_gets_its_own_title(s, tmp_path):
+    for rel in (
+        "Books/The Example Handbook.m4b",
+        "Pat Author/Another Invented Title.m4b",
+        "Pat Author/Third Invented Title.m4b",
+        "Books/Chapters Invented Book/01 One.mp3",
+        "Books/Chapters Invented Book/02 Two.mp3",
+        "Books/Chapters Invented Book/03 Three.mp3",
+    ):
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(rel.encode())
+    ids = fg.scan_files(s, str(tmp_path))
+    for fid in ids.values():
+        s.get(PartFile, fid).probe = {
+            "format": {"duration": "36000", "tags": {}},
+            "streams": [{"codec_type": "audio", "tags": {}}],
+        }
+    s.flush()
+    folders = fg.group_by_folder(s, str(tmp_path), ids)
+    top, _ = st.infer(s, folders)
+    build.build_listens(s, top)
+    md.add_metadata(s)
+    got = {
+        l.label: {
+            c.field: c.value
+            for c in s.scalars(
+                select(ListenChoice).where(ListenChoice.listen_id == l.id, ListenChoice.unchosen_at.is_(None))
+            )
+        }
+        for l in s.scalars(select(Listen))
+    }
+    assert (
+        "Books" not in got and "Pat Author" not in got
+    )  # the files lie next to a sub-folder, so they are judged as stand-alone files
+    assert got["The Example Handbook"] == {
+        "title": "The Example Handbook"
+    }  # "Books" is a container with no author in it
+    assert got["Another Invented Title"] == {"title": "Another Invented Title", "author": "Pat Author"}
+
+
+def test_redo_reads_a_listens_metadata_again_and_keeps_a_persons_choice(s, tmp_path):
+    from app.store import listens as Ls
+
+    for rel in (
+        "Pat Author/Another Invented Title.m4b",
+        "Pat Author/Third Invented Title.m4b",
+        "Pat Author/Chapters Invented Book/01 One.mp3",
+        "Pat Author/Chapters Invented Book/02 Two.mp3",
+        "Pat Author/Chapters Invented Book/03 Three.mp3",
+    ):
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(rel.encode())
+    ids = fg.scan_files(s, str(tmp_path))
+    s.flush()
+    folders = fg.group_by_folder(s, str(tmp_path), ids)
+    top, _ = st.infer(s, folders)
+    build.build_listens(s, top)
+    md.add_metadata(s)
+    one = s.scalars(select(Listen).where(Listen.label == "Another Invented Title")).one()
+    Ls.choose(s, one, "author", "Chosen Person", actor_kind="user")
+    two = s.scalars(select(Listen).where(Listen.label == "Third Invented Title")).one()
+    assert md.add_metadata(s) == {"listens": 0, "choices": 0, "from_tags": 0, "from_folder": 0}
+    n = md.add_metadata(s, redo=[one.id, two.id])
+    assert n["listens"] == 2
+    live = lambda l: [
+        (r.source)
+        for r in s.scalars(
+            select(PartRecord)
+            .join(ListenPart, ListenPart.record_id == PartRecord.id)
+            .where(ListenPart.listen_id == l.id, ListenPart.unlinked_at.is_(None))
+            .order_by(ListenPart.ordinal)
+        )
+    ]
+    assert live(one) == ["embedded_tags", "folder_name"] and live(two) == ["embedded_tags", "folder_name"]
+    assert {
+        c.field: c.value
+        for c in s.scalars(
+            select(ListenChoice).where(ListenChoice.listen_id == one.id, ListenChoice.unchosen_at.is_(None))
+        )
+    }["author"] == "Chosen Person"

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app import scan
 from app.store import listens as L
-from app.store.models import Listen, ListenPart, PartRecord
+from app.store.models import Listen, ListenChoice, ListenPart, PartFilegroup, PartRecord
 
 TAG_FIELDS = (
     "album",
@@ -141,8 +141,22 @@ FILES_BELOW = text("""with recursive g(id) as (select cast(:gid as int) union al
 select f.probe from g join part_filegroup_member m on m.group_id = g.id join part_file f on f.id = m.file_id""")
 
 
-def add_metadata(s: Session, *, actor_ref: str = "metadata-v1") -> dict[str, int]:
-    """Records and choices for every live listen that has none yet (so a rerun after more listens appear only does the new ones). Returns counts."""
+def name_parts(path: str, label: str, group: PartFilegroup | None) -> tuple[str, str, str]:
+    """(name to parse, its parent folder, folder to record) for a listen. A folder's own name is what a folder-listen is called, but a stand-alone file (a whole-book m4b lying in a container folder, `from_group` -1) has the *container's* path with the file's name as label: reading the container made `Books/The Title.m4b` a book called "Books", and every file in a folder named after an author a book called by the author. The file's own name is the name; the container is then its parent (author fallback unless generic)."""
+    if group is not None and group.file_count == 1 and (group.detail or {}).get("from_group") == -1 and group.label:
+        return group.label, os.path.basename(path), group.label
+    return os.path.basename(path) or label, os.path.basename(os.path.dirname(path)), os.path.basename(path)
+
+
+def add_metadata(s: Session, *, actor_ref: str = "metadata-v1", redo: list[int] | None = None) -> dict[str, int]:
+    """Records and choices for every live listen that has none yet (so a rerun after more listens appear only does the new ones). Returns counts. `redo`: listen ids whose metadata is read again after a rule change (their record parts are unlinked and new ones linked; fields a person chose are kept)."""
+    for part in s.scalars(
+        select(ListenPart).where(
+            ListenPart.listen_id.in_(redo or []), ListenPart.role == "record", ListenPart.unlinked_at.is_(None)
+        )
+    ):
+        L.unlink(s, part, actor_kind="rule", actor_ref=actor_ref, reason="metadata read again after a rule change")
+    s.flush()
     done = {
         r
         for (r,) in s.execute(
@@ -150,7 +164,11 @@ def add_metadata(s: Session, *, actor_ref: str = "metadata-v1") -> dict[str, int
         )
     }
     n = {"listens": 0, "choices": 0, "from_tags": 0, "from_folder": 0}
-    for l in s.scalars(select(Listen).where(Listen.merged_into_id.is_(None)).order_by(Listen.id)):
+    for l in s.scalars(
+        select(Listen)
+        .where(Listen.merged_into_id.is_(None), *([Listen.id.in_(redo)] if redo else []))
+        .order_by(Listen.id)
+    ):
         if l.id in done:
             continue
         inputs = list(
@@ -163,8 +181,10 @@ def add_metadata(s: Session, *, actor_ref: str = "metadata-v1") -> dict[str, int
         probes = [p for ip in inputs if ip.filegroup_id for (p,) in s.execute(FILES_BELOW, {"gid": ip.filegroup_id})]
         first = (inputs[0].detail or {}) if inputs else {}
         path = first.get("path") or ""
+        group = s.get(PartFilegroup, inputs[0].filegroup_id) if inputs and inputs[0].filegroup_id else None
+        what, parent, folder = name_parts(path, l.label, group)
         tags = tag_summary(probes)
-        name = scan.parse_name(os.path.basename(path) or l.label, os.path.basename(os.path.dirname(path)))
+        name = scan.parse_name(what, parent)
         name = {k: v for k, v in name.items() if v not in ("", None)}
         tp = L.link(
             s,
@@ -180,13 +200,23 @@ def add_metadata(s: Session, *, actor_ref: str = "metadata-v1") -> dict[str, int
             s,
             l,
             "record",
-            record_id=_record(s, "folder_name", "parsed_name", {**name, "folder": os.path.basename(path)}).id,
+            record_id=_record(s, "folder_name", "parsed_name", {**name, "folder": folder}).id,
             ordinal=2,
             actor_kind="rule",
             actor_ref=actor_ref,
             reason="what the folder name reads as",
         )
+        by_person = {
+            c.field
+            for c in s.scalars(
+                select(ListenChoice).where(
+                    ListenChoice.listen_id == l.id, ListenChoice.unchosen_at.is_(None), ListenChoice.chosen_by == "user"
+                )
+            )
+        }
         for field, (value, src) in choose_fields(tags, name).items():
+            if field in by_person:
+                continue
             L.choose(
                 s,
                 l,

@@ -22,7 +22,7 @@ def doctor(args):
             print(f"  ok       {label} {getattr(m, '__version__', '')}".rstrip())
         except ImportError:
             ok = False
-            print(f"  MISSING  {label}: uv sync")
+            print(f"  MISSING  {label}: pip install -r requirements.txt")
     if getattr(args, "audio", False):
         for tool in ("ffmpeg", "ffprobe", "mp3gain", "fpcalc"):
             path = shutil.which(tool)
@@ -416,6 +416,20 @@ def cmd_listens_identify_prepare(args):
     )
     dataset.save_cache(data)
     print(f"{len(data)} listens, {sum(len(d['clusters']) for d in data.values())} candidate works")
+    return 0
+
+
+def cmd_listens_metadata_redo(args):
+    """Read the metadata of these listens again (after a rule change in `store/metadata.py`); their old record parts are unlinked with events, fields a person chose are kept."""
+    from omarchy_db import connect
+    from sqlalchemy.orm import Session
+
+    from app.store import metadata
+
+    with Session(connect("listory")) as s:
+        n = metadata.add_metadata(s, actor_ref="metadata-v2", redo=args.ids)
+        s.commit()
+    print(n)
     return 0
 
 
@@ -866,7 +880,7 @@ def main(argv=None):
     sub.add_parser("ingest-status", help="stage metrics, runs and current thresholds").set_defaults(fn=cmd_ingest)
     sub.add_parser(
         "identify-train",
-        help="train the identification model from approvals and stored review decisions (needs `uv sync --group model`)",
+        help="train the identification model from approvals and stored review decisions (needs requirements-model.txt)",
     ).set_defaults(fn=cmd_identify)
     sub.add_parser("identify-refresh", help="score the library and cache the review queue").set_defaults(
         fn=cmd_identify
@@ -937,6 +951,12 @@ def main(argv=None):
     sc.add_argument("folder", nargs="?")
     sc.add_argument("--dry-run", action="store_true")
     sc.set_defaults(fn=cmd_scan)
+    mr = sub.add_parser(
+        "listens-metadata-redo",
+        help="read the metadata of these listens again after a rule change (record parts are unlinked with events; fields a person chose are kept)",
+    )
+    mr.add_argument("ids", nargs="+", type=int)
+    mr.set_defaults(fn=cmd_listens_metadata_redo)
     fgp = sub.add_parser(
         "filegroups",
         help="scan the library folder into the listory Postgres schema (sha256 per file) and group it by folder; rerunnable, hashes only changed files",
