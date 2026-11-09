@@ -1,5 +1,9 @@
 # Progress log
 
+## 2026-11-09: Matches queue order and filters
+
+The Matches page (home) can now be worked in other orders and on part of the queue: most certain first (default), least certain first, most recently added first (newest listen id first, since one build adds many listens in the same transaction) or oldest first; and filters to skip or show only the matches the model accepted on its own, by certainty word (the bands the cards show), kind of listen, listen status, with or without an Audible recording, and words searched across the listen's title, author, narrator and folders and every candidate's title and authors. All of it lives in the URL (`?sort=uncertain&auto=skip`), each option says how many cards it holds over the whole queue (`facets` in the response), and `total` says how many fit. The ordering and filtering are pure functions in `src/app/linkage/queue.py`; the cursor is now the sort key itself (`key:listen_id`) so paging stays exact in every order. Validation: unit tests for the new module, a Postgres store test for the API, web integration tests for URL state, keyboard answers within a filtered list, search and clearing.
+
 ## 2026-11-07: frontend redesign on strata-react, Review as home
 
 The web app now runs on [strata-react](https://github.com/jburnhams/strata-react) (AppShell, DataView, DataTable, Field, AsyncButton, Tabs, UndoBar, Done, TanStack Query, React Router with hash routing) with a theme generated from a book-cloth brown. Home is **Review**: one endless list of every doubtful identify decision, most impactful first, with Accept and Not this book on each card, keyboard shortcuts, an undo window and retrain. Page map, decisions and what is left: [frontend.md](frontend.md). The identify queue API now pages with `after=<last group>` and decisions look any group up in the cached queue (they were limited to the first 50). Validation: web typecheck, 134 tests, coverage gate and build; unit tests for the paged queue.

@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.linkage import apply, service
+from app.linkage import queue as qf
 from app.store.api import _engine, get_session
 from app.store.models import Listen, ListenChoice, ListenEvent, ListenPart, PartRecord
 
@@ -36,7 +37,7 @@ def _candidate(p: ListenPart) -> dict:
 
 
 def queue_items(s: Session) -> list[dict]:
-    """Every undecided listen with model candidates, highest probability first (ties by listen id)."""
+    """Every undecided listen with model candidates, highest probability first (ties by listen id), with its kind, status and when it was added (epoch seconds) for the filters."""
     parts = list(s.scalars(select(ListenPart).join(Listen, Listen.id == ListenPart.listen_id).where(ListenPart.role.in_(('match', 'candidate')), ListenPart.unlinked_at.is_(None), ListenPart.state != 'rejected', Listen.merged_into_id.is_(None), Listen.status != apply.NOT_FOUND)))
     decided = apply.person_decisions(s, parts)
     by: dict[int, list[ListenPart]] = {}
@@ -46,6 +47,10 @@ def queue_items(s: Session) -> list[dict]:
         if any(p.state == 'accepted' and (p.id in decided or p.linked_by == 'user') for p in ps): continue
         cands = sorted((_candidate(p) for p in ps), key=lambda c: -c['p'])
         items.append(dict(listen_id=lid, p=cands[0]['p'], candidates=cands))
+    facts = {lid: (kind, status, created) for lid, kind, status, created in s.execute(select(Listen.id, Listen.kind, Listen.status, Listen.created_at).where(Listen.id.in_(list(by))))} if by else {}
+    for it in items:
+        kind, status, created = facts.get(it['listen_id'], (None, None, None))
+        it.update(kind=kind, status=status, added=created.timestamp() if created else None)
     return sorted(items, key=lambda it: (-it['p'], it['listen_id']))
 
 
@@ -62,18 +67,31 @@ def _confirmed(s: Session) -> set[int]:
     return {lid for (lid,) in s.execute(select(ListenPart.listen_id).join(ListenEvent, ListenEvent.listen_part_id == ListenPart.id).where(ListenPart.role.in_(('match', 'candidate')), ListenPart.state == 'accepted', ListenPart.unlinked_at.is_(None), ListenEvent.actor_kind == 'user', ListenEvent.action == 'accept'))}
 
 
+def _search_text(s: Session, ids: list[int]) -> dict[int, str]:
+    """What a person might type to find a listen: its label, the chosen title, author and narrator, and its folders."""
+    out = {lid: [label or ''] for lid, label in s.execute(select(Listen.id, Listen.label).where(Listen.id.in_(ids)))}
+    for lid, value in s.execute(select(ListenChoice.listen_id, ListenChoice.value).where(ListenChoice.listen_id.in_(ids), ListenChoice.unchosen_at.is_(None), ListenChoice.field.in_(('title', 'author', 'narrator', 'series')))): out.setdefault(lid, []).append(str(value))
+    for p in s.scalars(select(ListenPart).where(ListenPart.listen_id.in_(ids), ListenPart.role == 'input', ListenPart.unlinked_at.is_(None))): out.setdefault(p.listen_id, []).append((p.detail or {}).get('path') or '')
+    return {lid: ' '.join(v) for lid, v in out.items()}
+
+
 @router.get('')
-def queue(after: str = '', limit: int = 20, s: Session = Depends(get_session)):
-    """A page of the queue after the cursor `p:listen_id` (the last item held), so answers given meanwhile cannot skip or repeat cards."""
+def queue(after: str = '', limit: int = 20, sort: str = 'certain', auto: str = '', kind: str = '', status: str = '', certainty: str = '', audible: str = '', q: str = '', s: Session = Depends(get_session)):
+    """A page of the queue, filtered and in the chosen order (`queue.SORTS`), after the cursor `key:listen_id` (the last item held), so answers given meanwhile cannot skip or repeat cards.
+    `total` is how many pass the filters; `facets` counts each filter value over the whole queue."""
     limit = max(1, min(limit, 100)); items = queue_items(s)
+    try: f = qf.Filters(sort=sort, auto=auto, kind=kind, status=status, certainty=certainty, audible=audible, q=q)
+    except ValueError as e: raise HTTPException(400, str(e))
+    if f.q:
+        text = _search_text(s, [it['listen_id'] for it in items])
+        for it in items: it['text'] = text.get(it['listen_id'], '')
+    chosen = qf.select(items, f); total = len(chosen)
     if after:
-        try: ap, alid = after.split(':'); ap, alid = float(ap), int(alid)
-        except ValueError: raise HTTPException(400, 'after must be p:listen_id')
-        items_after = [it for it in items if (-it['p'], it['listen_id']) > (-ap, alid)]
-    else: items_after = items
-    page = items_after[:limit]; info = _listen_info(s, [it['listen_id'] for it in page])
+        try: chosen = qf.after(chosen, after, f.sort)
+        except ValueError: raise HTTPException(400, 'after must be key:listen_id')
+    page = chosen[:limit]; info = _listen_info(s, [it['listen_id'] for it in page])
     labels = dict(s.execute(select(Listen.id, Listen.label).where(Listen.id.in_([it['listen_id'] for it in page]))).all())
-    return dict(summary=summary(s, items), items=[dict(it, label=labels.get(it['listen_id'], ''), cursor=f"{it['p']}:{it['listen_id']}", **info[it['listen_id']]) for it in page])
+    return dict(summary=summary(s, items), total=total, facets=qf.facets(items), items=[dict({k: v for k, v in it.items() if k != 'text'}, label=labels.get(it['listen_id'], ''), cursor=qf.cursor(it, f.sort), **info[it['listen_id']]) for it in page])
 
 
 class Decision(BaseModel):

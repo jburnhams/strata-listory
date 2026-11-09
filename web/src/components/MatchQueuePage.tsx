@@ -3,15 +3,70 @@
 // easy ones, so the queue is one endless list, most certain first, and each card shows everything known side by side (what the files say against the work and its recordings, with the
 // evidence the model used) so one look and one key is enough. Answers are saved after a short Undo window; every few dozen answers the model is refitted with them and re-decides the rest,
 // so confirming easy matches teaches it to accept more on its own and the harder cards further down change as you go.
-import { useEffect, useMemo, useRef } from 'react'
+// The order and the filters (skip what the model already accepted, hardest or newest first, a kind of listen, a certainty, with or without an Audible recording, words) live in the URL,
+// so a way of working the queue can be bookmarked; the keys work on whatever the filters leave, and each filter says how many cards it holds so a choice never leads to nothing.
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { Ban, Check, X } from 'lucide-react'
-import { AsyncButton, Button, Done, EmptyState, InfiniteList, KeysLegend, Metric, MetricStrip, PageHeader, Skeleton, Status, UndoBar, format, useActiveItem, useAsyncAction, useHotkeys, useInfiniteLoad, useUndoable, type ActiveItem, type Tone } from 'strata-react'
-import { matchApi, type QueueAction, type QueueCandidate, type QueueItem, type QueueRecording } from '../api'
-import { hours } from './ListensPage'
+import { AsyncButton, Button, Done, EmptyState, Field, InfiniteList, Input, KeysLegend, Metric, MetricStrip, NativeSelect, PageHeader, Skeleton, Status, UndoBar, format, useActiveItem, useAsyncAction, useHotkeys, useInfiniteLoad, useUndoable, type ActiveItem, type Tone } from 'strata-react'
+import { matchApi, type QueueAction, type QueueCandidate, type QueueFacets, type QueueFilters, type QueueItem, type QueueRecording } from '../api'
+import { KIND_LABEL, hours } from './ListensPage'
 
 const PAGE = 20
+
+export const SORTS: Record<QueueFilters['sort'], { label: string; scope: string; finding: string }> = {
+  certain: { label: 'Most certain first', scope: 'Easiest first', finding: 'most certain first' },
+  uncertain: { label: 'Least certain first', scope: 'Hardest first', finding: 'least certain first' },
+  recent: { label: 'Most recently added first', scope: 'Newest first', finding: 'most recently added first' },
+  oldest: { label: 'Oldest first', scope: 'Oldest first', finding: 'oldest first' },
+}
+const CERTAINTY: Record<string, string> = { sure: 'Sure (95% or more)', likely: 'Likely (70% or more)', close: 'Close call', unsure: 'Unsure (under 70%)' }
+const FILTER_KEYS = ['auto', 'kind', 'status', 'certainty', 'audible', 'q'] as const
+
+/** The queue's order and filters from the page URL; anything unknown reads as the default. */
+export function readFilters(params: URLSearchParams): QueueFilters {
+  const pick = <T extends string>(key: string, ok: readonly T[], fallback: T): T => { const v = params.get(key) ?? ''; return (ok as readonly string[]).includes(v) ? v as T : fallback }
+  return {
+    sort: pick('sort', Object.keys(SORTS) as QueueFilters['sort'][], 'certain'), auto: pick('auto', ['skip', 'only'] as const, ''), certainty: pick('certainty', ['sure', 'likely', 'close', 'unsure'] as const, ''),
+    audible: pick('audible', ['yes', 'no'] as const, ''), kind: params.get('kind') ?? '', status: params.get('status') ?? '', q: (params.get('q') ?? '').trim(),
+  }
+}
+
+/** A select option's label with how many cards it would show, "Book (12)". */
+const counted = (label: string, n: number | undefined) => n == null ? label : `${label} (${format.integer.format(n)})`
+
+/** The order and the filters, written to the URL as they change (the search box after a short pause). */
+function QueueControls({ filters, facets, set, clear }: { filters: QueueFilters; facets: QueueFacets | undefined; set: (key: keyof QueueFilters, value: string) => void; clear: (() => void) | null }) {
+  const [typed, setTyped] = useState(filters.q)
+  useEffect(() => { setTyped(filters.q) }, [filters.q])
+  useEffect(() => {
+    if (typed.trim() === filters.q) return
+    const t = setTimeout(() => set('q', typed.trim()), 250)
+    return () => clearTimeout(t)
+  }, [typed]) // eslint-disable-line react-hooks/exhaustive-deps
+  const options = (facet: keyof QueueFacets, labels: (v: string) => string, current: string) => {
+    const values = Object.keys(facets?.[facet] ?? {}).filter(v => facets![facet][v] > 0)
+    if (current && !values.includes(current)) values.push(current)          // a value from the URL that has no cards now stays choosable
+    return values.map(v => <option key={v} value={v}>{counted(labels(v), facets?.[facet][v] ?? 0)}</option>)
+  }
+  return (
+    <section aria-label="Order and filters" className="flex flex-wrap items-end gap-3">
+      <Field label="Search matches" className="min-w-56 flex-1"><Input type="search" value={typed} onChange={e => setTyped(e.target.value)} placeholder="Title, author, narrator or folder" /></Field>
+      <Field label="Order"><NativeSelect value={filters.sort} onChange={e => set('sort', e.target.value)}>{Object.entries(SORTS).map(([v, s]) => <option key={v} value={v}>{s.label}</option>)}</NativeSelect></Field>
+      <Field label="Accepted by the model"><NativeSelect value={filters.auto} onChange={e => set('auto', e.target.value)}>
+        <option value="">Show them</option><option value="skip">{counted('Skip them', facets?.auto.skip)}</option><option value="only">{counted('Only these', facets?.auto.only)}</option>
+      </NativeSelect></Field>
+      <Field label="Certainty"><NativeSelect value={filters.certainty} onChange={e => set('certainty', e.target.value)}><option value="">Any certainty</option>{['sure', 'likely', 'close', 'unsure'].map(v => <option key={v} value={v}>{counted(CERTAINTY[v], facets?.certainty[v] ?? 0)}</option>)}</NativeSelect></Field>
+      <Field label="Kind of listen"><NativeSelect value={filters.kind} onChange={e => set('kind', e.target.value)}><option value="">Any kind</option>{options('kind', v => KIND_LABEL[v] ?? v, filters.kind)}</NativeSelect></Field>
+      <Field label="Audible"><NativeSelect value={filters.audible} onChange={e => set('audible', e.target.value)}>
+        <option value="">Any</option><option value="yes">{counted('Has an Audible recording', facets?.audible.yes)}</option><option value="no">{counted('No Audible recording', facets?.audible.no)}</option>
+      </NativeSelect></Field>
+      <Field label="Status"><NativeSelect value={filters.status} onChange={e => set('status', e.target.value)}><option value="">Any status</option>{options('status', v => v.replaceAll('_', ' '), filters.status)}</NativeSelect></Field>
+      {clear && <Button variant="ghost" onClick={clear}>Clear filters</Button>}
+    </section>
+  )
+}
 
 /** How sure the model is, in words. */
 export function certainty(p: number, second = 0): { tone: Tone; word: string } {
@@ -73,7 +128,7 @@ export function uniqueNames(names: string[]): string[] {
   return [...best.values()]
 }
 
-function Field({ label, value }: { label: string; value: unknown }) {
+function Fact({ label, value }: { label: string; value: unknown }) {
   if (value == null || value === '') return null
   return <><dt className="text-muted-foreground">{label}</dt><dd className="min-w-0 break-words">{String(value)}</dd></>
 }
@@ -85,16 +140,16 @@ function Files({ it }: { it: QueueItem }) {
       <p className="type-caption text-muted-foreground">Your files</p>
       <p className="type-heading break-words">{String(c.title ?? it.label)}{c.author ? <span className="type-body text-muted-foreground"> by {String(c.author)}</span> : <span className="type-body text-muted-foreground"> · no author</span>}</p>
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 type-body-sm">
-        <Field label="Read by" value={c.narrator} />
-        <Field label="Year" value={c.year} />
-        <Field label="Length" value={it.copies.map(x => hours(x.minutes ?? 0)).filter(Boolean).join(' · ')} />
-        <Field label="Folder" value={first?.folder} />
-        <Field label="Album tag" value={t.album !== c.title ? t.album : null} />
-        <Field label="Artist tag" value={t.artist !== c.author ? t.artist : null} />
-        <Field label="Composer tag" value={t.composer !== c.narrator ? t.composer : null} />
-        <Field label="Publisher" value={c.publisher ?? t.publisher} />
-        <Field label="ASIN" value={c.asin} />
-        <Field label="Files" value={first ? `${first.files ?? '?'} files${it.copies.length > 1 ? ` · ${it.copies.length} copies` : ''}` : null} />
+        <Fact label="Read by" value={c.narrator} />
+        <Fact label="Year" value={c.year} />
+        <Fact label="Length" value={it.copies.map(x => hours(x.minutes ?? 0)).filter(Boolean).join(' · ')} />
+        <Fact label="Folder" value={first?.folder} />
+        <Fact label="Album tag" value={t.album !== c.title ? t.album : null} />
+        <Fact label="Artist tag" value={t.artist !== c.author ? t.artist : null} />
+        <Fact label="Composer tag" value={t.composer !== c.narrator ? t.composer : null} />
+        <Fact label="Publisher" value={c.publisher ?? t.publisher} />
+        <Fact label="ASIN" value={c.asin} />
+        <Fact label="Files" value={first ? `${first.files ?? '?'} files${it.copies.length > 1 ? ` · ${it.copies.length} copies` : ''}` : null} />
       </dl>
       {first?.group_id ? <Link className="type-caption underline" to={`/files?group=${first.group_id}`}>Open the files</Link> : null}
     </section>
@@ -143,6 +198,8 @@ function Card({ it, active, itemProps, onAnswer }: { it: QueueItem; active: bool
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Status tone={sure.tone}>{sure.word}</Status>
         {top.auto && <Status tone="neutral">Accepted automatically, not yet confirmed</Status>}
+        {it.kind && it.kind !== 'book' && <Status tone="neutral">{KIND_LABEL[it.kind] ?? it.kind}</Status>}
+        {it.added != null && <span className="type-caption text-muted-foreground">Added {format.shortDay.format(new Date(it.added * 1000))}</span>}
       </div>
       <div className="flex flex-wrap gap-x-6 gap-y-4">
         <Files it={it} />
@@ -178,19 +235,24 @@ function Skeletons() {
 export default function MatchQueuePage() {
   const qc = useQueryClient()
   const undoable = useUndoable()
+  const [params, setParams] = useSearchParams()
+  const filters = useMemo(() => readFilters(params), [params])
+  const filtered = FILTER_KEYS.some(k => filters[k])
+  const set = (key: keyof QueueFilters, value: string) => setParams(p => { const n = new URLSearchParams(p); if (value && !(key === 'sort' && value === 'certain')) n.set(key, value); else n.delete(key); return n }, { replace: true })
+  const clear = () => setParams(p => { const n = new URLSearchParams(p); FILTER_KEYS.forEach(k => n.delete(k)); return n }, { replace: true })
   const load = useInfiniteLoad({
-    queryKey: ['match-queue'],
-    queryFn: ({ cursor }) => matchApi.queue(cursor, PAGE),
+    queryKey: ['match-queue', filters],
+    queryFn: ({ cursor }) => matchApi.queue(cursor, PAGE, filters),
     items: (page): QueueItem[] => page.items, itemKey: item => String(item.listen_id), hasMore: page => page.items.length >= PAGE,
-    cursorAfter: item => item.cursor,          // "probability:listen", so answers given meanwhile cannot skip or repeat cards
+    cursorAfter: item => item.cursor,          // "sort key:listen", so answers given meanwhile cannot skip or repeat cards
     isRemoved: undoable.isRemoved,
     staleTime: 0,
   })
-  const summaryQuery = useQuery({
-    queryKey: ['match-summary'], queryFn: async () => (await matchApi.queue(undefined, 1)).summary, staleTime: 0,
-    refetchInterval: q => (q.state.data?.training.running ? 3000 : false),          // while the model relearns, watch for it to finish
+  const summaryQuery = useQuery({             // the whole queue's summary and facets, and how many cards the filters leave
+    queryKey: ['match-summary', filters], queryFn: () => matchApi.queue(undefined, 1, filters), staleTime: 0, placeholderData: previous => previous,
+    refetchInterval: q => (q.state.data?.summary.training.running ? 3000 : false),          // while the model relearns, watch for it to finish
   })
-  const summary = summaryQuery.data
+  const summary = summaryQuery.data?.summary, facets = summaryQuery.data?.facets, total = summaryQuery.data?.total
   const items = useMemo(() => (load.status === 'ready' ? load.data : []), [load])
   const active = useActiveItem(items, i => String(i.listen_id), { noun: 'match' })
 
@@ -230,11 +292,15 @@ export default function MatchQueuePage() {
 
   const pending = undoable.pending ? 1 : 0
   const waiting = summary ? Math.max(0, summary.waiting - pending) : 0
-  const finding = summary ? { text: waiting > 0 ? `${format.count(waiting, 'match', 'matches')} to check, most certain first. ${format.count(summary.confirmed + pending, 'listen')} confirmed so far.` : 'Every proposed match has an answer.' } : undefined
+  const shown = Math.max(0, (total ?? 0) - pending)
+  const order = SORTS[filters.sort]
+  const finding = summary ? { text: waiting === 0 ? 'Every proposed match has an answer.'
+    : filtered ? `${format.integer.format(shown)} of ${format.count(waiting, 'match', 'matches')} fit the filters, ${order.finding}. ${format.count(summary.confirmed + pending, 'listen')} confirmed so far.`
+    : `${format.count(waiting, 'match', 'matches')} to check, ${order.finding}. ${format.count(summary.confirmed + pending, 'listen')} confirmed so far.` } : undefined
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Matches" scope="Is this the right book? Easiest first" finding={finding} actions={retrainButton('outline')} />
+      <PageHeader title="Matches" scope={`Is this the right book? ${order.scope}`} finding={finding} actions={retrainButton('outline')} />
       {summary && (
         <MetricStrip label="Where identification stands">
           <Metric label="Waiting for you" value={format.integer.format(waiting)} note={`${format.integer.format(summary.auto_unconfirmed)} already accepted by the model`} />
@@ -243,8 +309,11 @@ export default function MatchQueuePage() {
         </MetricStrip>
       )}
       {training?.error && <p role="alert" className="type-body-sm text-danger">Learning failed: {training.error}</p>}
+      <QueueControls filters={filters} facets={facets} set={set} clear={filtered ? clear : null} />
       <InfiniteList state={load} label="Matches to check" skeleton={<Skeletons />} moreSkeleton={<Skeletons />} moreLabel="Show more matches" estimateSize={320} height={Math.max(480, Math.round(window.innerHeight * 0.75))} keepAtLeast={4}
-        empty={summary?.model == null
+        empty={filtered && waiting > 0
+          ? <EmptyState title="No matches fit these filters" action={<Button onClick={clear}>Clear filters</Button>}>{`${format.count(waiting, 'match', 'matches')} ${waiting === 1 ? 'is' : 'are'} waiting outside them.`}</EmptyState>
+          : summary?.model == null
           ? <EmptyState title="Nothing identified yet">Run <code>./app listens-identify-prepare</code>, <code>listens-identify-train</code> and <code>listens-identify</code> and the proposed matches appear here.</EmptyState>
           : <Done title="Every proposed match has an answer" next="Let the model learn from your answers: it will re-decide the rest." actions={retrainButton('default')} />}>
         {it => <Card it={it} active={String(it.listen_id) === active.activeKey} itemProps={active.itemProps(String(it.listen_id))} onAnswer={(action, c) => answer(it, action, c)} />}

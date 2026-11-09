@@ -188,12 +188,15 @@ export interface QueueRecording { asin: string; title: string; narrators: string
 export type QueueEvidence = Partial<Record<'title' | 'author' | 'narrator' | 'runtime' | 'asin' | 'year' | 'numbers' | 'sources' | 'popularity', string | null>>
 export interface QueueCandidate { part_id: number; ordinal: number; state: string; auto: boolean; p: number; work_id: number; key: string; title: string | null; authors: string[]; year: number | null; editions: number | null; ol: string[]; isbns: string[]; recordings: QueueRecording[]; recording: string | null; alias: string | null; reading: string | null; evidence: QueueEvidence; p_none: number | null; second: number | null }
 export interface QueueCopy { minutes: number | null; files: number | null; bytes: number | null; folder: string; path: string | null; group_id: number | null }
-export interface QueueItem { listen_id: number; p: number; label: string; cursor: string; candidates: QueueCandidate[]; chosen: Record<string, string | number>; tags: Record<string, string | number>; folder: Record<string, string | number>; copies: QueueCopy[] }
+export interface QueueItem { listen_id: number; p: number; label: string; cursor: string; kind: string | null; status: string | null; added: number | null; candidates: QueueCandidate[]; chosen: Record<string, string | number>; tags: Record<string, string | number>; folder: Record<string, string | number>; copies: QueueCopy[] }
 export interface QueueSummary { waiting: number; auto_unconfirmed: number; confirmed: number; not_found: number; statuses: Record<string, number>; decisions: number; since_train: number | null; model: string | null; auto_retrain: number; training: { running: boolean; finished: number | null; error: string; counts: Record<string, number> | null } }
-export interface QueuePage { summary: QueueSummary; items: QueueItem[] }
+/** The match queue's order and filters, as the page keeps them in its URL; '' means any. */
+export interface QueueFilters { sort: 'certain' | 'uncertain' | 'recent' | 'oldest'; auto: '' | 'skip' | 'only'; kind: string; status: string; certainty: '' | 'sure' | 'likely' | 'close' | 'unsure'; audible: '' | 'yes' | 'no'; q: string }
+export type QueueFacets = Record<'kind' | 'status' | 'certainty' | 'auto' | 'audible', Record<string, number>>
+export interface QueuePage { summary: QueueSummary; total: number; facets: QueueFacets; items: QueueItem[] }
 export type QueueAction = 'approve' | 'reject' | 'none'
 export const matchApi = {
-  queue: (after?: string, limit = 20) => req<QueuePage>(`/api/matches?${new URLSearchParams({ limit: String(limit), ...(after ? { after } : {}) })}`),
+  queue: (after?: string, limit = 20, filters: Partial<QueueFilters> = {}) => req<QueuePage>(`/api/matches?${new URLSearchParams({ limit: String(limit), ...(after ? { after } : {}), ...Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) })}`),
   decide: (listen_id: number, action: QueueAction, part_id?: number) => req<{ ok: boolean; status: string; retraining: boolean }>('/api/matches/decide', send('POST', { listen_id, action, part_id })),
   retrain: () => req<{ started: boolean }>('/api/matches/retrain', { method: 'POST' }),
 }

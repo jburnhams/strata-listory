@@ -106,6 +106,61 @@ describe('MatchQueuePage', () => {
     expect(matchState.decided).toEqual([{ listen_id: 1, action: 'reject', part_id: 11 }])      // flushed before learning
   })
 
+  it('reads the order and the filters from the URL and answers from the keyboard within them', async () => {
+    const { user } = setup(<MatchQueuePage />, { route: '/?sort=uncertain&auto=skip' })
+    expect(await screen.findByText('3 of 4 matches fit the filters, least certain first. 0 listens confirmed so far.')).toBeInTheDocument()
+    expect(screen.getByText('Is this the right book? Hardest first')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Order' })).toHaveValue('uncertain')
+    expect(screen.getByRole('combobox', { name: 'Accepted by the model' })).toHaveValue('skip')
+    await waitFor(() => expect(cards().map(c => c.getAttribute('aria-label'))).toEqual(['Untagged folder', 'Lune', 'Salt Roads']))      // the auto-accepted Glass Orchard is left out
+    expect(within(cards()[0]).getByText('Radio series')).toBeInTheDocument()
+    await user.keyboard('a')                                                                     // the first card of the filtered list
+    expect(screen.getByText('Approved the match.')).toBeInTheDocument()
+    await waitFor(() => expect(cards().map(c => c.getAttribute('aria-label'))).toEqual(['Lune', 'Salt Roads']))
+    await user.keyboard('a')                                                                     // the next answer saves the first
+    await waitFor(() => expect(matchState.decided).toEqual([{ listen_id: 4, action: 'approve', part_id: 41 }]))
+  })
+
+  it('changes the order and the filters, says how many each holds, and clears them', async () => {
+    const { user } = setup(<MatchQueuePage />)
+    await screen.findByText(/4 matches to check, most certain first/)
+    const kind = screen.getByRole('combobox', { name: 'Kind of listen' })
+    await waitFor(() => expect(within(kind).getByRole('option', { name: 'Radio series (1)' })).toBeInTheDocument())
+    expect(within(screen.getByRole('combobox', { name: 'Audible' })).getByRole('option', { name: 'No Audible recording (1)' })).toBeInTheDocument()
+    expect(within(screen.getByRole('combobox', { name: 'Certainty' })).getByRole('option', { name: 'Close call (1)' })).toBeInTheDocument()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Order' }), 'recent')
+    await waitFor(() => expect(cards().map(c => c.getAttribute('aria-label'))).toEqual(['Salt Roads', 'Glass Orchard', 'Lune', 'Untagged folder']))      // newest first; one with no time last
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).toBeNull()                 // an order is not a filter
+    await user.selectOptions(kind, 'book')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Certainty' }), 'unsure')
+    await waitFor(() => expect(cards().map(c => c.getAttribute('aria-label'))).toEqual(['Lune']))
+    expect(await screen.findByText(/^1 of 4 matches fit the filters, most recently added first/)).toBeInTheDocument()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Audible' }), 'yes')
+    expect(await screen.findByText('No matches fit these filters')).toBeInTheDocument()
+    expect(screen.getByText('4 matches are waiting outside them.')).toBeInTheDocument()
+    await user.click(screen.getAllByRole('button', { name: 'Clear filters' })[0])
+    await waitFor(() => expect(cards()).toHaveLength(4))
+    expect(screen.getByRole('combobox', { name: 'Order' })).toHaveValue('recent')               // clearing the filters keeps the order
+  })
+
+  it('searches the files and the proposed works after a short pause', async () => {
+    const { user } = setup(<MatchQueuePage />)
+    await screen.findByRole('list', { name: 'Matches to check' })
+    await user.type(screen.getByRole('searchbox', { name: 'Search matches' }), 'salt again')        // words from another candidate's title
+    await waitFor(() => expect(cards().map(c => c.getAttribute('aria-label'))).toEqual(['Salt Roads']))
+    await user.clear(screen.getByRole('searchbox', { name: 'Search matches' }))
+    await waitFor(() => expect(cards()).toHaveLength(4))
+  })
+
+  it('keeps a filter value from the URL choosable when no card has it now', async () => {
+    setup(<MatchQueuePage />, { route: '/?kind=radio_show&status=held&sort=nonsense' })
+    expect(await screen.findByText('No matches fit these filters')).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Kind of listen' })).toHaveValue('radio_show')
+    expect(screen.getByRole('option', { name: 'Radio show (0)' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'held (0)' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Order' })).toHaveValue('certain')              // an order it does not know reads as the default
+  })
+
   it('says how to start when nothing is identified', async () => {
     matchState.queue = []; matchState.model = null
     setup(<MatchQueuePage />)
