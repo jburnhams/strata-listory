@@ -384,3 +384,11 @@ def test_chapter_files_alone_stay_one_book_even_with_a_long_one(monkeypatch):
         kinds(st.classify(leaf("Invented", *names)))[0] == "book"
         and len(st.classify(leaf("Invented", *names)).subs) == 0
     )
+
+
+def test_a_long_file_whose_name_has_nothing_to_do_with_the_chapters_is_not_their_full_copy(monkeypatch):
+    names = ["Unrelated Long Talk.mp3"] + [f"Invented Book {i:02d}.mp3" for i in range(1, 6)]
+    monkeypatch.setitem(st.DURATIONS, 0, 18000.0)
+    for i in range(1, 6):
+        monkeypatch.setitem(st.DURATIONS, i, 3600.0)  # the lengths add up, the names do not
+    assert st.full_beside_its_parts([(i, n) for i, n in enumerate(names)]) is None

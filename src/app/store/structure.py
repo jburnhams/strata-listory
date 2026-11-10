@@ -271,6 +271,13 @@ def standalone(f: tuple[int, str], why: str) -> tuple[str, list[tuple[int, str]]
     return "programme", [f], {"reason": why, "radio": True}
 
 
+def sibling_names(full: str, others: list[str]) -> bool:
+    """The names back up the lengths: most of the other files share the start of the full file's name ('Book 06.mp3' beside 'Book 06_1.mp3'...), so they are that file split up, not an unrelated long file."""
+    stem = re.sub(r"[^a-z0-9]+", "", os.path.splitext(full)[0].lower())
+    share = lambda o: os.path.commonprefix([stem, re.sub(r"[^a-z0-9]+", "", os.path.splitext(o)[0].lower())])
+    return len(stem) >= 4 and sum(len(share(o)) >= 0.8 * len(stem) for o in others) >= 0.8 * len(others)
+
+
 def full_beside_its_parts(files: list[tuple[int, str]], tolerance: float = 0.03) -> tuple[int, str] | None:
     """The file whose length is the sum of all the others (at least three) within `tolerance`: one full-length copy lying beside the same book split into chapters. Needs durations (off in unit tests that set none)."""
     if len(files) < 4 or not all(f[0] in DURATIONS for f in files):
@@ -278,7 +285,7 @@ def full_beside_its_parts(files: list[tuple[int, str]], tolerance: float = 0.03)
     total = sum(DURATIONS[f[0]] for f in files)
     for f in files:
         d = DURATIONS[f[0]]
-        if d > 0 and abs(d - (total - d)) / d <= tolerance:
+        if d > 0 and abs(d - (total - d)) / d <= tolerance and sibling_names(f[1], [g[1] for g in files if g is not f]):
             return f
     return None
 
