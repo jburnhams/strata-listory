@@ -271,6 +271,18 @@ def standalone(f: tuple[int, str], why: str) -> tuple[str, list[tuple[int, str]]
     return "programme", [f], {"reason": why, "radio": True}
 
 
+def full_beside_its_parts(files: list[tuple[int, str]], tolerance: float = 0.03) -> tuple[int, str] | None:
+    """The file whose length is the sum of all the others (at least three) within `tolerance`: one full-length copy lying beside the same book split into chapters. Needs durations (off in unit tests that set none)."""
+    if len(files) < 4 or not all(f[0] in DURATIONS for f in files):
+        return None
+    total = sum(DURATIONS[f[0]] for f in files)
+    for f in files:
+        d = DURATIONS[f[0]]
+        if d > 0 and abs(d - (total - d)) / d <= tolerance:
+            return f
+    return None
+
+
 def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[int, str]], dict]]:
     """Split the audio files directly in one folder into (kind, files, evidence) clusters: every whole-book file (.m4b/.m4a/.aac) is a book of its own, the rest are the chapter files of one work or unrelated tracks."""
     out = []
@@ -283,6 +295,10 @@ def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[in
         whole = []
     out += [("book", [f], {"reason": "whole-book file"}) for f in whole]
     rest = [f for f in files if os.path.splitext(f[1])[1].lower() not in WHOLE_BOOK]
+    full = full_beside_its_parts(rest)
+    if full:  # the same book twice in one folder: whole, and split into chapters; two groups, which the copies step then joins as copies
+        out.append(("book", [full], {"reason": "a whole-book file with its split chapters beside it"}))
+        rest = [f for f in rest if f is not full]
     by_season = split_by_season(rest) if rest else []
     parts = by_season if len(by_season) > 1 else (split_by_shape(rest) if rest else [])
     judged = [judge(p) for p in parts]

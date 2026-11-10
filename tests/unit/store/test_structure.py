@@ -364,3 +364,23 @@ def test_play_length_makes_a_programme_but_a_lone_short_work_among_books_stays_a
         for c in st.classify(leaf("Shelf", subs=books + [leaf("Short story", "Part 1.mp3", "Part 2.mp3")])).subs
     )  # one short work among five books
     assert all(i in st.DURATIONS for i in range(2))
+
+
+def test_a_full_length_file_beside_its_split_chapters_is_two_groups(monkeypatch):
+    names = ["Invented Book 06.mp3"] + [f"Invented Book 06_{i}.mp3" for i in range(1, 15)]
+    monkeypatch.setitem(st.DURATIONS, 0, 47520.0)  # the full file: 792 minutes
+    for i in range(1, 15):
+        monkeypatch.setitem(st.DURATIONS, i, 3394.3)  # fourteen parts adding up to the same length
+    n = st.classify(leaf("Invented", *names))
+    assert [c.kind for c in n.subs] == ["book", "book"] and sorted(len(c.files) for c in n.subs) == [1, 14]
+    assert n.subs[0].detail["reason"] == "a whole-book file with its split chapters beside it"
+
+
+def test_chapter_files_alone_stay_one_book_even_with_a_long_one(monkeypatch):
+    names = tracks(6)
+    for i, d in enumerate((3600, 3600, 3600, 3600, 3600, 36000)):
+        monkeypatch.setitem(st.DURATIONS, i, float(d))
+    assert (
+        kinds(st.classify(leaf("Invented", *names)))[0] == "book"
+        and len(st.classify(leaf("Invented", *names)).subs) == 0
+    )

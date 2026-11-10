@@ -683,3 +683,6 @@ Follow-up: a single-file listen's file name is now also an identification readin
 
 ## 2026-11-09: tag-editor placeholders
 `Album`, `Album Artist`, `Artist`, `Title`, `Untitled`, `Various Artists` (what tag editors write for an empty field) are generic like `Track 01`, in `store/metadata.py` (chosen title/author fall back to the folder name) and `linkage/query.py` (an already-chosen placeholder is not a reading). Affected listens are re-read with `listens-metadata-redo <ids>`.
+
+## 2026-11-10: a full-length file beside its own split chapters
+A folder holding one book twice, as a full-length `.mp3` and the same book split into chapter `.mp3`s, was one "chapter files of one work" group with double the runtime (two Flashman books: 1584 minutes for a 792-minute book). `structure.full_beside_its_parts` takes out the file whose length is the sum of all the others (within 3%, at least three others) as a book of its own, so the two become two groups that `link_copies` then joins as copies. `filegroups-structure --check` on the real library moves four folders (three Flashman books, one chapterized thriller part); the live groups change only when structure and listens are rebuilt.
