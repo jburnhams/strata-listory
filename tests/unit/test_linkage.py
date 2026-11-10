@@ -576,3 +576,18 @@ def test_common_title_of_multi_file_names():
     assert ct(["Invented Book 1.mp3", "Invented Book 2.mp3"]) == ""  # too few files to trust
     rs = Q.make_readings({}, {}, {}, None, "Invented Book")
     assert [(r.title, r.source) for r in rs][0] == ("Invented Book", "prefix")
+
+
+def test_tag_editor_placeholders_are_not_a_title_or_author():
+    # files tagged with the literal field names 'Album' / 'Album Artist' (an empty tag written by an editor) say nothing
+    rs = Q.make_readings(
+        dict(title="Album", author="Album Artist"),
+        dict(tagged=8, album=dict(value="Album", share=0.9), album_artist=dict(value="Album Artist", share=1.0)),
+        dict(title="Pat Author The Invented Gate", folder="Pat Author The Invented Gate"),
+    )
+    assert all(r.title.lower() != "album" and r.author.lower() != "album artist" for r in rs) and rs[0].source in (
+        "folder",
+        "swapped",
+        "split",
+        "stripped",
+    )

@@ -256,3 +256,11 @@ def test_redo_reads_a_listens_metadata_again_and_keeps_a_persons_choice(s, tmp_p
             select(ListenChoice).where(ListenChoice.listen_id == one.id, ListenChoice.unchosen_at.is_(None))
         )
     }["author"] == "Chosen Person"
+
+
+def test_placeholder_tags_fall_back_to_the_folder_name():
+    tags = md.tag_summary([probe(album="Album", album_artist="Album Artist", artist="A Narrator") for _ in range(4)])
+    assert md.choose_fields(tags, {"title": "The Invented Gate", "author": "Pat Author"}) == {
+        "title": ("The Invented Gate", "folder_name"),
+        "author": ("Pat Author", "folder_name"),
+    }
