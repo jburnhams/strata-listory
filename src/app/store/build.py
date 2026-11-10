@@ -139,6 +139,34 @@ def preference(part: ListenPart, label: str) -> tuple:
     return (container, -(d.get("bytes") or 0), d.get("path") or "")
 
 
+def numbering(label: str) -> tuple[str, ...]:
+    """The numbers in a group's own name (a leading index, years and brackets ignored): `Title 01` and `Title 02` are numbered differently, so they are parts of one book, not two copies of it, even when their tags agree on the title and their runtimes are alike."""
+    x = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", label.lower())
+    x = re.sub(r"^\s*\d+\s*[-.]\s*", "", x)
+    x = re.sub(r"(?<!\d)(?:19|20)\d\d(?!\d)", " ", x)
+    return tuple(str(int(n)) for n in re.findall(r"\d+", x))
+
+
+def numbered_apart(s: Session, group: list[tuple[Listen, ListenPart]]) -> list[list[tuple[Listen, ListenPart]]]:
+    """Split a would-be set of copies so that no two members are numbered differently (`numbering` of their group names): 'For X 01' and 'For X 02' stay apart. A copy with no numbers in its name may join any."""
+    labels = {
+        gid: label
+        for gid, label in s.execute(select(PartFilegroup.id, PartFilegroup.label))
+        if gid in {lp[1].filegroup_id for lp in group}
+    }
+    out: list[tuple[list[tuple[Listen, ListenPart]], set[tuple[str, ...]]]] = []
+    for lp in group:
+        n = numbering(labels.get(lp[1].filegroup_id, ""))
+        for members, seen in out:
+            if not n or all(not o or o == n for o in seen):
+                members.append(lp)
+                seen.add(n)
+                break
+        else:
+            out.append(([lp], {n}))
+    return [members for members, _ in out]
+
+
 def link_copies(s: Session, *, tolerance: float = 0.04) -> dict[str, int]:
     """Merge book listens that are copies of one recording: the same chosen title (brackets, "unabridged"-style words, a leading index and years ignored; digits kept), authors that do not disagree (equal, or one unknown) and runtimes within `tolerance` of each other. Needs the metadata step first, so the title and author are what the tags say, not what a folder happens to be called. Anything less certain waits until the works are identified. A different runtime under the same title is another recording (narrator or edit) of the same work and stays its own listen; so does the same title by a different author. The preferred copy survives, the others become its later input parts; every merge has its event with the evidence, and `split` undoes it."""
     run = new_run(s, "link_copies", {"tolerance": tolerance})
@@ -189,10 +217,11 @@ def link_copies(s: Session, *, tolerance: float = 0.04) -> dict[str, int]:
             if len(by_author) == 1:
                 next(iter(by_author.values())).extend(unknown)
                 unknown = []  # one known author: a copy with no author may join it
-            for group in [
+            candidates = [
                 *by_author.values(),
                 unknown,
-            ]:  # different authors under one title are never copies; copies with no author only join each other
+            ]  # different authors under one title are never copies; copies with no author only join each other
+            for group in (sub for g in candidates for sub in numbered_apart(s, g)):
                 if len(group) < 2:
                     continue
                 group.sort(key=lambda lp: preference(lp[1], lp[0].label))

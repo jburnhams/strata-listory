@@ -683,3 +683,6 @@ Follow-up: a single-file listen's file name is now also an identification readin
 
 ## 2026-11-09: tag-editor placeholders
 `Album`, `Album Artist`, `Artist`, `Title`, `Untitled`, `Various Artists` (what tag editors write for an empty field) are generic like `Track 01`, in `store/metadata.py` (chosen title/author fall back to the folder name) and `linkage/query.py` (an already-chosen placeholder is not a reading). Affected listens are re-read with `listens-metadata-redo <ids>`.
+
+## 2026-11-10: parts are not copies
+`link_copies` merged `X 01` and `X 02` (two whole-book files of one book, same album tag, runtimes within 4%) as copies of one recording, so the listen looked like a duplicate and matched as a whole book with half the runtime. Group names numbered differently (`build.numbering`) are now kept apart (`numbered_apart`); an unnumbered copy may still join one of them. Already-merged cases need `split` (listen 10576 into 10577). Whether parts should become one listen with ordered input parts (and their summed runtime) is an open design question.
