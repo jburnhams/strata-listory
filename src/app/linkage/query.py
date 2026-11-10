@@ -15,7 +15,10 @@ NOISE = re.compile(
     re.I,
 )
 ALL_KINDS = ("book", "radio_series", "radio_show", "play", "other")
-GENERIC = re.compile(r"^\s*(track\s*\d*|unknown\b.*|audiobook|disc\s*\d*|chapter\s*\d*|\d+)\s*$", re.I)
+GENERIC = re.compile(
+    r"^\s*(track\s*\d*|unknown\b.*|audiobooks?|disc\s*\d*|chapter\s*\d*|\d+|album(?:\s+artist)?|artist|title|untitled|no\s+title|various(?:\s+artists)?)\s*$",
+    re.I,
+)
 
 
 @dataclass
@@ -110,8 +113,11 @@ def make_readings(choices: dict, tags: dict, folder: dict, file: dict | None = N
         return v if v and not GENERIC.match(v) else ""
 
     raw: list[Reading] = []
-    if choices.get("title"):
-        raw.append(Reading(str(choices["title"]), str(choices.get("author") or ""), "chosen"))
+    if choices.get("title") and not GENERIC.match(
+        str(choices["title"])
+    ):  # a placeholder ("Album") chosen from tags says nothing
+        author = str(choices.get("author") or "")
+        raw.append(Reading(str(choices["title"]), "" if GENERIC.match(author) else author, "chosen"))
     for title_field in ("album", "title"):
         if (t := tag(title_field)) and (title_field == "album" or (tags.get("tagged") or 0) <= 3):
             raw.append(Reading(t, tag("album_artist") or tag("artist"), "tags"))

@@ -31,7 +31,10 @@ TAG_FIELDS = (
     "language",
     "audible_asin",
 )
-GENERIC_TITLE = re.compile(r"^\s*(track\s*\d*|unknown\b.*|audiobook|disc\s*\d*|chapter\s*\d*|\d+)\s*$", re.I)
+GENERIC_TITLE = re.compile(
+    r"^\s*(track\s*\d*|unknown\b.*|audiobooks?|disc\s*\d*|chapter\s*\d*|\d+|album(?:\s+artist)?|artist|title|untitled|no\s+title|various(?:\s+artists)?)\s*$",
+    re.I,
+)
 
 
 def canon(v: str) -> str:
