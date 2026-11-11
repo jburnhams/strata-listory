@@ -61,14 +61,17 @@ def restructure_listen(s: Session, listen_id: int, *, actor_ref: str = "restruct
     )
     if old is None or not members or any(m.file_id is None for m in members):
         raise ValueError("the input group must hold plain files only")
-    names = {
-        fid: os.path.basename(path)
-        for fid, path in s.execute(
-            select(PartFileLocation.file_id, PartFileLocation.path).where(
-                PartFileLocation.gone_at.is_(None), PartFileLocation.file_id.in_([m.file_id for m in members])
-            )
+    here: dict[
+        int, str
+    ] = {}  # the file's name in this group's own folder; a file's content can also sit elsewhere under another name (`scan_files` deduplicates by content)
+    elsewhere: dict[int, str] = {}
+    for fid, path in s.execute(
+        select(PartFileLocation.file_id, PartFileLocation.path).where(
+            PartFileLocation.gone_at.is_(None), PartFileLocation.file_id.in_([m.file_id for m in members])
         )
-    }
+    ):
+        (here if os.path.dirname(path) == (old.path or "") else elsewhere).setdefault(fid, os.path.basename(path))
+    names = {**elsewhere, **here}
     files = [(m.file_id, names.get(m.file_id, f"file {m.file_id}")) for m in members if m.file_id is not None]
     durations = {
         fid: (d or 0.0, size)

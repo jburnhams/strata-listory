@@ -337,6 +337,11 @@ def test_restructure_listen_replaces_one_double_group_with_copies_and_keeps_deci
         top, _ = st.infer(s, fg.group_by_folder(s, str(tmp_path), ids))
         build.build_listens(s, top)
     md.add_metadata(s)
+    full = next(fid for path, fid in ids.items() if path.endswith("Invented Book 06.mp3"))
+    s.add(
+        fg.PartFileLocation(file_id=full, path=str(tmp_path / "Backup/zz unrelated copy.mp3"), size=1, mtime_ns=1)
+    )  # the same content kept elsewhere under another name must not be read as this group's file name
+    s.flush()
     listen = s.scalars(select(Listen)).one()
     inputs = s.scalars(
         select(ListenPart).where(
