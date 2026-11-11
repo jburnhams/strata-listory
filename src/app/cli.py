@@ -433,6 +433,23 @@ def cmd_listens_metadata_redo(args):
     return 0
 
 
+def cmd_listens_split(args):
+    """Move some input parts (e.g. wrongly merged copies) of a listen into a listen of their own; a one-off repair, logged as a user event."""
+    from omarchy_db import connect
+    from sqlalchemy.orm import Session
+
+    from app.store import repair
+
+    with Session(connect("listory")) as s:
+        try:
+            new_id = repair.split_input_parts(s, args.listen, args.parts, reason=args.reason).id
+        except ValueError as e:
+            sys.exit(str(e))
+        s.commit()
+    print(f"listen {args.listen}: parts {args.parts} moved to new listen {new_id}")
+    return 0
+
+
 def cmd_listens_identify_train(args):
     """Fit the record-linkage model on every prepared listen (labelled ones clamped: old catalogue approvals and the match queue's answers), cross-validate on the labelled ones and save data/linkage/model.json and report.json."""
     from omarchy_db import connect
@@ -951,6 +968,14 @@ def main(argv=None):
     sc.add_argument("folder", nargs="?")
     sc.add_argument("--dry-run", action="store_true")
     sc.set_defaults(fn=cmd_scan)
+    sp = sub.add_parser(
+        "listens-split",
+        help="move some input parts of a listen into a listen of their own (one-off repair of a wrong merge; logged)",
+    )
+    sp.add_argument("listen", type=int)
+    sp.add_argument("parts", nargs="+", type=int, help="input listen-part ids (see the listen's parts)")
+    sp.add_argument("--reason", default="split by request", help="why, for the event log")
+    sp.set_defaults(fn=cmd_listens_split)
     mr = sub.add_parser(
         "listens-metadata-redo",
         help="read the metadata of these listens again after a rule change (record parts are unlinked with events; fields a person chose are kept)",
