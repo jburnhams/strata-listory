@@ -378,9 +378,9 @@ def listen_minutes(s: Session, lid: int) -> tuple[ListenPart | None, float]:
 
 
 def merge_parts(
-    s: Session, *, tolerance: float = 0.03, minimum: float = 0.5, actor_ref: str = ""
+    s: Session, *, tolerance: float = 0.12, minimum: float = 0.5, actor_ref: str = ""
 ) -> list[tuple[int, int]]:
-    """Join listens that are the numbered parts of one recording into one listen with ordered input parts (`detail.relation` = "part"), once their work is known: each listen's best candidate is the same work (P >= `minimum`), their group names differ only by a number (`build.part_key`, `build.numbering`), each is clearly shorter than the book, and their runtimes add up to one of the work's recordings within `tolerance`. Not copies: copies share a runtime, parts sum to it."""
+    """Join listens that are the numbered parts of one recording into one listen with ordered input parts (`detail.relation` = "part"), once their work is known: each listen's best candidate is the same work (P >= `minimum`), their group names differ only by a number (`build.part_key`, `build.numbering`), each is clearly shorter than the book, and their runtimes add up to one of the work's recordings within `tolerance` (12%: another edition or narration runs a few percent longer or shorter, and the name evidence is strong) (12%: another edition or narration of a book runs a few percent longer or shorter, and the name evidence is strong). Not copies: copies share a runtime, parts sum to it."""
     from app.store.build import numbering, part_key
 
     run = new_run(s, "merge_parts", {"tolerance": tolerance})
