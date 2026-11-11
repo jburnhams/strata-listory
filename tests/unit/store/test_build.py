@@ -237,3 +237,34 @@ def test_files_numbered_differently_are_parts_not_copies(s, tmp_path):
     }  # the unnumbered copy joins one part, but the two parts stay apart
     live = s.scalars(select(Listen).where(Listen.merged_into_id.is_(None))).all()
     assert len(live) == 2
+
+
+def test_format_words_are_not_part_numbers():
+    assert (
+        build.numbering("Delta Title mp3") == ()
+        and build.numbering("Delta Title m4b") == ()
+        and build.numbering("Delta Title Unabridged mp3 files") == ()
+    )
+    assert build.numbering("Delta Title 01") == ("1",) and build.numbering("Delta Title 02") == ("2",)
+
+
+def test_copies_in_format_named_folders_still_merge(s, tmp_path):
+    names = {"Books/Delta Title mp3": 284, "Audible/Delta Title m4b": 283}
+    for folder in names:
+        for i in range(1, 4):
+            p = tmp_path / folder / f"{i:02d}.mp3"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(f"{folder}{i}".encode())
+    ids = fg.scan_files(s, str(tmp_path))
+    for path, fid in ids.items():
+        f = s.get(fg.PartFile, fid)
+        f.duration_s = names[path[len(str(tmp_path)) + 1 :].rsplit("/", 1)[0]] * 60 / 3
+        f.probe = {
+            "format": {"tags": {"album": "Delta Title", "artist": "Pat Author"}},
+            "streams": [{"codec_type": "audio", "tags": {}}],
+        }
+    s.flush()
+    top, _ = st.infer(s, fg.group_by_folder(s, str(tmp_path), ids))
+    build.build_listens(s, top)
+    md.add_metadata(s)
+    assert build.link_copies(s) == {"listens_with_copies": 1, "copies_merged": 1}

@@ -142,6 +142,9 @@ def preference(part: ListenPart, label: str) -> tuple:
 def numbering(label: str) -> tuple[str, ...]:
     """The numbers in a group's own name (a leading index, years and brackets ignored): `Title 01` and `Title 02` are numbered differently, so they are parts of one book, not two copies of it, even when their tags agree on the title and their runtimes are alike."""
     x = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", label.lower())
+    x = re.sub(
+        r"\b(unabridged|abridged|audiobook|mp3|m4[ab]|aac|files?)\b", " ", x
+    )  # the words `title_key` drops: the 3 of 'mp3' and the 4 of 'm4b' are not part numbers
     x = re.sub(r"^\s*\d+\s*[-.]\s*", "", x)
     x = re.sub(r"(?<!\d)(?:19|20)\d\d(?!\d)", " ", x)
     return tuple(str(int(n)) for n in re.findall(r"\d+", x))
@@ -149,11 +152,12 @@ def numbering(label: str) -> tuple[str, ...]:
 
 def numbered_apart(s: Session, group: list[tuple[Listen, ListenPart]]) -> list[list[tuple[Listen, ListenPart]]]:
     """Split a would-be set of copies so that no two members are numbered differently (`numbering` of their group names): 'For X 01' and 'For X 02' stay apart. A copy with no numbers in its name may join any."""
-    labels = {
-        gid: label
-        for gid, label in s.execute(select(PartFilegroup.id, PartFilegroup.label))
-        if gid in {lp[1].filegroup_id for lp in group}
-    }
+    if len(group) < 2:
+        return [group] if group else []
+    ids = {lp[1].filegroup_id for lp in group}
+    labels = dict(
+        s.execute(select(PartFilegroup.id, PartFilegroup.label).where(PartFilegroup.id.in_(ids))).tuples().all()
+    )
     out: list[tuple[list[tuple[Listen, ListenPart]], set[tuple[str, ...]]]] = []
     for lp in group:
         n = numbering(labels.get(lp[1].filegroup_id, ""))
