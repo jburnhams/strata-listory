@@ -56,6 +56,7 @@ def _listen_info(s: Session, ids: list[int]) -> dict[int, dict]:
                 folder=os.path.basename(d.get("path") or ""),
                 path=d.get("path"),
                 group_id=p.filegroup_id,
+                relation=d.get("relation") or "copy",
             )
         )
     return out

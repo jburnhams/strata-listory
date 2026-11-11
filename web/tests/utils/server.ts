@@ -90,9 +90,9 @@ const fgDetail = {
   2: { group: { id: 2, kind: 'folder', label: 'Red Dragon', path: '/audio/Red Dragon', file_count: 2, total_bytes: 2e9, group_count: 0 }, ancestors: [{ id: 1, label: 'audio', kind: 'root' }], children: [], files: [{ id: 10, ordinal: 1, name: 'CD1 01.mp3', path: null, size: 1e9, duration_s: null, codec: null, tags: {}, probe_error: 'moov atom not found' }, { id: 11, ordinal: 2, name: 'CD1 02.mp3', path: null, size: 1e9, duration_s: 95, codec: 'aac', tags: {}, probe_error: null }] },
 }
 const listenRows = [
-  { id: 1, label: 'Red Dragon', kind: 'book', status: 'grouped', files: 136, bytes: 2e9, minutes: 725, group_id: 2, path: '/audio/Red Dragon', copies: 3, author: 'Thomas Harris', narrator: 'Steven Weber', year: 1981, kind_info: null },
-  { id: 2, label: 'Persuader', kind: 'book', status: 'grouped', files: 99, bytes: 5e8, minutes: 45, group_id: 3, path: '/audio/Lee Child/Persuader', copies: 1, author: 'Lee Child', narrator: null, year: null, kind_info: kindInfos.close },
-  { id: 3, label: 'Dead Ringers (season 11)', kind: 'radio_series', status: 'grouped', files: 6, bytes: 1e8, minutes: 0, group_id: null, path: null, copies: 1, author: null, narrator: null, year: null, kind_info: kindInfos.series },
+  { id: 1, label: 'Red Dragon', kind: 'book', status: 'grouped', files: 136, bytes: 2e9, minutes: 725, group_id: 2, path: '/audio/Red Dragon', copies: 3, parts: 0, author: 'Thomas Harris', narrator: 'Steven Weber', year: 1981, kind_info: null },
+  { id: 2, label: 'Persuader', kind: 'book', status: 'grouped', files: 99, bytes: 5e8, minutes: 45, group_id: 3, path: '/audio/Lee Child/Persuader', copies: 1, parts: 2, author: 'Lee Child', narrator: null, year: null, kind_info: kindInfos.close },
+  { id: 3, label: 'Dead Ringers (season 11)', kind: 'radio_series', status: 'grouped', files: 6, bytes: 1e8, minutes: 0, group_id: null, path: null, copies: 1, parts: 0, author: null, narrator: null, year: null, kind_info: kindInfos.series },
 ]
 export const handlers = [
   http.get('/api/match-reviews', ({ request }) => { const mode = new URL(request.url).searchParams.get('mode') === 'automatic' ? 'automatic' : 'shortlist'; return HttpResponse.json({ rows: [matchReviewFixture(mode)], total: 1, offset: 0, limit: 10 }) }),

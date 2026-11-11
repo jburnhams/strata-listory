@@ -150,6 +150,18 @@ def numbering(label: str) -> tuple[str, ...]:
     return tuple(str(int(n)) for n in re.findall(r"\d+", x))
 
 
+def part_key(label: str) -> str:
+    """A group's name without what tells its parts apart (`Part 1`, `CD 2`, a leading index, a trailing number, format words, years, brackets): the same for 'For X 01' and 'For X 02' and for '01 Y Part 1' and '02 Y Part 2', different for different books."""
+    x = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", label.lower())
+    x = re.sub(r"\b(unabridged|abridged|audiobook|mp3|m4[ab]|aac|files?)\b", " ", x)
+    x = re.sub(r"^\s*\d+\s*[-.]\s*", "", x)
+    x = re.sub(r"^\s*\d{1,3}\s+", "", x)  # a leading index with no separator ('01 Title Part 1')
+    x = re.sub(r"(?<!\d)(?:19|20)\d\d(?!\d)", " ", x)
+    x = re.sub(r"\b(?:part|pt|cd|disc|disk|side|chapter|track)\b\.?\s*\d+", " ", x)
+    x = re.sub(r"\s\d+\s*$", " ", x)
+    return re.sub(r"[^a-z0-9]+", "", x)
+
+
 def numbered_apart(s: Session, group: list[tuple[Listen, ListenPart]]) -> list[list[tuple[Listen, ListenPart]]]:
     """Split a would-be set of copies so that no two members are numbered differently (`numbering` of their group names): 'For X 01' and 'For X 02' stay apart. A copy with no numbers in its name may join any."""
     if len(group) < 2:

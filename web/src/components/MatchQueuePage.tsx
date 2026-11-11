@@ -99,6 +99,13 @@ export function evidence(e: QueueCandidate['evidence']): { key: string; tone: To
   return Object.entries(EVIDENCE).flatMap(([field, levels]) => { const lvl = e[field as keyof typeof e]; const hit = lvl ? levels[lvl] : undefined; return hit ? [{ key: field, tone: hit[0], word: hit[1] }] : [] })
 }
 
+/** What a listen's inputs are: numbered parts run one after the other (their lengths add up to one recording), every other input is an alternative copy of the same thing. The runtime to compare with a recording is the parts' sum when there are parts, else the preferred copy's. */
+export function inputsOf(copies: QueueItem['copies']): { parts: QueueItem['copies']; copies: QueueItem['copies']; minutes: number | null } {
+  const parts = copies.filter(x => x.relation === 'part'), alt = copies.filter(x => x.relation !== 'part')
+  const sum = parts.reduce((n, x) => n + (x.minutes ?? 0), 0)
+  return { parts, copies: alt, minutes: parts.length ? sum : (alt[0]?.minutes ?? null) }
+}
+
 /** A recording's runtime against the listen's, as a signed percentage. */
 export function runtimeDelta(rec: QueueRecording, minutes: number | null | undefined) {
   if (!rec.minutes || !minutes) return ''
@@ -140,7 +147,7 @@ function Fact({ label, value }: { label: string; value: unknown }) {
 }
 
 function Files({ it }: { it: QueueItem }) {
-  const c = it.chosen, t = it.tags, first = it.copies[0]
+  const c = it.chosen, t = it.tags, first = it.copies[0], inp = inputsOf(it.copies)
   return (
     <section aria-label="What your files say" className="min-w-0 flex-1 basis-72 space-y-2">
       <p className="type-caption text-muted-foreground">Your files</p>
@@ -148,14 +155,14 @@ function Files({ it }: { it: QueueItem }) {
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 type-body-sm">
         <Fact label="Read by" value={c.narrator} />
         <Fact label="Year" value={c.year} />
-        <Fact label="Length" value={it.copies.map(x => hours(x.minutes ?? 0)).filter(Boolean).join(' · ')} />
+        <Fact label="Length" value={inp.parts.length ? [`${hours(inp.minutes ?? 0)} in ${inp.parts.length} parts`, ...inp.copies.map(x => hours(x.minutes ?? 0))].filter(Boolean).join(' · ') : it.copies.map(x => hours(x.minutes ?? 0)).filter(Boolean).join(' · ')} />
         <Fact label="Folder" value={first?.folder} />
         <Fact label="Album tag" value={t.album !== c.title ? t.album : null} />
         <Fact label="Artist tag" value={t.artist !== c.author ? t.artist : null} />
         <Fact label="Composer tag" value={t.composer !== c.narrator ? t.composer : null} />
         <Fact label="Publisher" value={c.publisher ?? t.publisher} />
         <Fact label="ASIN" value={c.asin} />
-        <Fact label="Files" value={first ? `${first.files ?? '?'} files${it.copies.length > 1 ? ` · ${it.copies.length} copies` : ''}` : null} />
+        <Fact label="Files" value={first ? `${first.files ?? '?'} files${inp.parts.length ? ` · ${inp.parts.length} parts` : ''}${inp.copies.length > 1 ? ` · ${inp.copies.length} copies` : ''}` : null} />
       </dl>
       {first?.group_id ? <Link className="type-caption underline" to={`/files?group=${first.group_id}`}>Open the files</Link> : null}
     </section>
@@ -232,7 +239,7 @@ function Card({ it, active, itemProps, onAnswer }: { it: QueueItem; active: bool
       {it.kind && <div className="mb-3"><KindInfo listenId={it.listen_id} kind={it.kind} info={it.kind_info} /></div>}
       <div className="flex flex-wrap gap-x-6 gap-y-4">
         <Files it={it} />
-        <Work c={top} minutes={it.copies[0]?.minutes} />
+        <Work c={top} minutes={inputsOf(it.copies).minutes} />
       </div>
       {others.length > 0 && (
         <div className="mt-3 border-t border-border pt-2">
