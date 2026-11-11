@@ -282,6 +282,10 @@ def full_beside_its_parts(files: list[tuple[int, str]], tolerance: float = 0.03)
     """The file whose length is the sum of all the others (at least three) within `tolerance`: one full-length copy lying beside the same book split into chapters. Needs durations (off in unit tests that set none)."""
     if len(files) < 4 or not all(f[0] in DURATIONS for f in files):
         return None
+    if parts_of_one(
+        [f[1] for f in files]
+    ):  # the names say every file is a numbered part of one work ('1_of_4' ... '4_of_4'): one long part is not a full copy
+        return None
     total = sum(DURATIONS[f[0]] for f in files)
     for f in files:
         d = DURATIONS[f[0]]

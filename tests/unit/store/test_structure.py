@@ -392,3 +392,12 @@ def test_a_long_file_whose_name_has_nothing_to_do_with_the_chapters_is_not_their
     for i in range(1, 6):
         monkeypatch.setitem(st.DURATIONS, i, 3600.0)  # the lengths add up, the names do not
     assert st.full_beside_its_parts([(i, n) for i, n in enumerate(names)]) is None
+
+
+def test_explicitly_numbered_parts_are_never_split_into_a_full_copy(monkeypatch):
+    names = [f"Invented Novel Part {i}_of_4.mp3" for i in range(1, 5)]
+    for i, hours in enumerate((1, 1, 1, 3)):  # the last part is as long as the other three together
+        monkeypatch.setitem(st.DURATIONS, i, hours * 3600.0)
+    assert st.full_beside_its_parts([(i, n) for i, n in enumerate(names)]) is None
+    n = st.classify(leaf("Invented", *names))
+    assert n.kind == "book" and not n.subs
