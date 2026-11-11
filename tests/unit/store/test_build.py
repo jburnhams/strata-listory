@@ -309,3 +309,65 @@ def test_split_input_parts_repairs_a_wrong_merge(s, tmp_path):
     ).all()
     assert [p.id for p in left] == [inputs[0].id]
     assert any(e.action == "split" for e in s.scalars(select(ListenEvent).where(ListenEvent.listen_id == a.id)))
+
+
+def test_restructure_listen_replaces_one_double_group_with_copies_and_keeps_decisions(s, tmp_path, monkeypatch):
+    from app.store import listens as Ls
+    from app.store import repair
+
+    names = {"Books/Invented Book 06.mp3": 600, **{f"Books/Invented Book 06_{i}.mp3": 100 for i in range(1, 7)}}
+    for rel in names:
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(rel.encode())
+    ids = fg.scan_files(s, str(tmp_path))
+    for path, fid in ids.items():
+        f = s.get(fg.PartFile, fid)
+        f.duration_s = names[path[len(str(tmp_path)) + 1 :]] * 60
+        f.probe = {
+            "format": {"tags": {"album": "Invented Book 06", "artist": "Pat Author"}},
+            "streams": [{"codec_type": "audio", "tags": {}}],
+        }
+    s.flush()
+    st.DURATIONS.clear()
+    with monkeypatch.context() as m:
+        m.setattr(
+            st, "full_beside_its_parts", lambda files, tolerance=0.03: None
+        )  # the rules as they were when the listen was built
+        top, _ = st.infer(s, fg.group_by_folder(s, str(tmp_path), ids))
+        build.build_listens(s, top)
+    md.add_metadata(s)
+    full = next(fid for path, fid in ids.items() if path.endswith("Invented Book 06.mp3"))
+    s.add(
+        fg.PartFileLocation(file_id=full, path=str(tmp_path / "Backup/zz unrelated copy.mp3"), size=1, mtime_ns=1)
+    )  # the same content kept elsewhere under another name must not be read as this group's file name
+    s.flush()
+    listen = s.scalars(select(Listen)).one()
+    inputs = s.scalars(
+        select(ListenPart).where(
+            ListenPart.listen_id == listen.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None)
+        )
+    ).all()
+    assert len(inputs) == 1 and inputs[0].detail["minutes"] == 1200  # the double runtime
+    Ls.choose(s, listen, "author", "Chosen Person", actor_kind="user")
+    groups = repair.restructure_listen(s, listen.id)
+    assert len(groups) == 2
+    inputs = s.scalars(
+        select(ListenPart)
+        .where(ListenPart.listen_id == listen.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+        .order_by(ListenPart.ordinal)
+    ).all()
+    assert [(p.ordinal, p.detail["minutes"], p.detail["files"]) for p in inputs] == [
+        (1, 600, 6),
+        (2, 600, 1),
+    ]  # two copies of 600 minutes, ranked by build.preference (the bigger set first)
+    assert {
+        c.field: c.value
+        for c in s.scalars(
+            select(ListenChoice).where(ListenChoice.listen_id == listen.id, ListenChoice.unchosen_at.is_(None))
+        )
+    }["author"] == "Chosen Person"  # a person's choice survives
+    assert s.scalar(select(func.count()).select_from(Listen)) == 1
+    assert any(e.action == "unlink" for e in s.scalars(select(ListenEvent).where(ListenEvent.listen_id == listen.id)))
+    with pytest.raises(ValueError):
+        repair.restructure_listen(s, listen.id)  # two inputs now: nothing to do
