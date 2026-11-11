@@ -691,3 +691,6 @@ A folder holding one book twice, as a full-length `.mp3` and the same book split
 
 ## 2026-11-10: `listens-split`
 `./app listens-split <listen> <input-part ids> [--reason ...]` moves some input parts of a listen (not all) into a listen of their own, status `grouped`, with a user `split` event and metadata read from its files. For one-off repairs of an earlier rule's mistake (the rule is fixed separately so a rebuild does not repeat it); first use: two numbered parts wrongly merged as copies.
+
+## 2026-11-11: `listens-restructure`
+`./app listens-restructure <listen ids>` (`repair.restructure_listen`) re-reads a built listen's files with the current structure rules, for a rule fixed after the listen was built (the full-length file beside its own split chapters: three Flashman books had one group of double length). The listen with its choices, matches, decisions and events stays; its single input group is unlinked and replaced by one new group per cluster the rules now see, linked as copies ranked by `build.preference`, with its metadata read again (a person's chosen fields are kept). It refuses listens whose files the rules still see as one group. Unlike `listens-build --rebuild` it removes nothing else. Run `listens-identify-prepare` and `listens-identify` afterwards.

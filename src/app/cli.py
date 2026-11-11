@@ -450,6 +450,25 @@ def cmd_listens_split(args):
     return 0
 
 
+def cmd_listens_restructure(args):
+    """Re-read listens' files with the current structure rules after a rule fix (e.g. a full-length file beside its split chapters); the listens, their choices, matches and decisions are kept."""
+    from omarchy_db import connect
+    from sqlalchemy.orm import Session
+
+    from app.store import repair
+
+    with Session(connect("listory")) as s:
+        for lid in args.ids:
+            try:
+                groups = repair.restructure_listen(s, lid)
+            except ValueError as e:
+                print(f"listen {lid}: {e}")
+                continue
+            print(f"listen {lid}: now {len(groups)} input groups {groups}")
+        s.commit()
+    return 0
+
+
 def cmd_listens_identify_train(args):
     """Fit the record-linkage model on every prepared listen (labelled ones clamped: old catalogue approvals and the match queue's answers), cross-validate on the labelled ones and save data/linkage/model.json and report.json."""
     from omarchy_db import connect
@@ -968,6 +987,12 @@ def main(argv=None):
     sc.add_argument("folder", nargs="?")
     sc.add_argument("--dry-run", action="store_true")
     sc.set_defaults(fn=cmd_scan)
+    rs = sub.add_parser(
+        "listens-restructure",
+        help="re-read these listens' files with the current structure rules (decisions are kept; run listens-identify-prepare and listens-identify afterwards)",
+    )
+    rs.add_argument("ids", nargs="+", type=int)
+    rs.set_defaults(fn=cmd_listens_restructure)
     sp = sub.add_parser(
         "listens-split",
         help="move some input parts of a listen into a listen of their own (one-off repair of a wrong merge; logged)",
