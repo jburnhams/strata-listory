@@ -155,6 +155,7 @@ def part_key(label: str) -> str:
     x = re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", label.lower())
     x = re.sub(r"\b(unabridged|abridged|audiobook|mp3|m4[ab]|aac|files?)\b", " ", x)
     x = re.sub(r"^\s*\d+\s*[-.]\s*", "", x)
+    x = re.sub(r"^\s*\d{1,3}\s+", "", x)  # a leading index with no separator ('01 Title Part 1')
     x = re.sub(r"(?<!\d)(?:19|20)\d\d(?!\d)", " ", x)
     x = re.sub(r"\b(?:part|pt|cd|disc|disk|side|chapter|track)\b\.?\s*\d+", " ", x)
     x = re.sub(r"\s\d+\s*$", " ", x)

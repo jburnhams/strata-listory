@@ -760,3 +760,28 @@ def test_copies_of_one_recording_are_not_parts(s, tmp_path):
     by = _parts_listens(s, tmp_path, {"Books/Delta Title.m4b": 565, "Audible/Delta Title.m4b": 563})
     _decide(s, by)
     assert apply.merge_parts(s) == []  # no numbers in the names, and each runs as long as the book
+
+
+def test_a_leading_index_without_a_separator_and_a_listen_merged_as_copies(s, tmp_path):
+    from app.store import build as B
+
+    assert (
+        B.part_key("01 Delta Title Part 1")
+        == B.part_key("02 Delta Title Part 2")
+        == B.part_key("Delta Title 03")
+        == "deltatitle"
+    )
+    assert B.part_key("01 Alpha Book") != B.part_key("02 Beta Book")  # numbered books of a series are different books
+    by = _parts_listens(s, tmp_path, {"Books/01 Delta Title Part 1.m4b": 284, "Books/02 Delta Title Part 2.m4b": 281})
+    a, b = sorted(by.values(), key=lambda lst: lst.id)
+    L.merge(s, a, b, actor_kind="rule", actor_ref="copies", reason="merged as copies before the numbering rule")
+    _decide(s, {1: a})
+    assert apply.merge_parts(s) == [
+        (a.id, a.id)
+    ]  # one listen whose two inputs were taken for copies: converted in place
+    parts = s.scalars(
+        select(ListenPart)
+        .where(ListenPart.listen_id == a.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+        .order_by(ListenPart.ordinal)
+    ).all()
+    assert [(p.detail["minutes"], p.detail["relation"]) for p in parts] == [(284, "part"), (281, "part")]

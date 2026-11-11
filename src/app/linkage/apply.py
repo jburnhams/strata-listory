@@ -404,8 +404,6 @@ def merge_parts(
         by_work.setdefault(p.work_id, []).append(lid)
     out = []
     for work_id, ids in by_work.items():
-        if len(ids) < 2:
-            continue
         keyed: dict[str, list[tuple[tuple[str, ...], int, ListenPart, float]]] = {}
         for lid in sorted(ids):
             inputs = list(
@@ -415,13 +413,17 @@ def merge_parts(
                     .order_by(ListenPart.ordinal)
                 )
             )
-            if len(inputs) != 1 or (inputs[0].detail or {}).get("relation") == "part" or not inputs[0].filegroup_id:
+            if not inputs or any((x.detail or {}).get("relation") == "part" or not x.filegroup_id for x in inputs):
                 continue
-            label = s.scalar(select(PartFilegroup.label).where(PartFilegroup.id == inputs[0].filegroup_id)) or ""
-            n = numbering(label)
-            if n and part_key(label):
+            labels = [
+                s.scalar(select(PartFilegroup.label).where(PartFilegroup.id == x.filegroup_id)) or "" for x in inputs
+            ]
+            keys = {part_key(label) for label in labels}
+            if len(keys) != 1 or "" in keys or not all(numbering(label) for label in labels):
+                continue  # a listen of several inputs is looked at as a whole: all of them numbered, all one name (merged as copies earlier, they are converted in place)
+            for x, label in zip(inputs, labels):
                 keyed.setdefault(part_key(label), []).append(
-                    (n, lid, inputs[0], float((inputs[0].detail or {}).get("minutes") or 0))
+                    (numbering(label), lid, x, float((x.detail or {}).get("minutes") or 0))
                 )
         for items in keyed.values():
             if len(items) < 2 or len({n for n, *_ in items}) != len(items):
@@ -436,7 +438,9 @@ def merge_parts(
                 continue
             items.sort(key=lambda x: (tuple(int(v) for v in x[0]), x[1]))
             survivor = s.get(Listen, items[0][1])
-            for _, lid, _, _ in items[1:]:
+            for lid in dict.fromkeys(i[1] for i in items):
+                if lid == survivor.id:
+                    continue
                 L.merge(
                     s,
                     survivor,
@@ -447,9 +451,13 @@ def merge_parts(
                     reason=f"parts of one recording of work {work_id}: group names differ only by number, runtimes add up to {total:.0f} min",
                 )
                 out.append((survivor.id, lid))
+            if not any(lid != survivor.id for _, lid, _, _ in items):
+                out.append(
+                    (survivor.id, survivor.id)
+                )  # one listen whose inputs were taken for copies: converted in place
             order = [i[2].id for i in items]
-            for p in s.scalars(select(ListenPart).where(ListenPart.id.in_(order))):
-                p.detail = {**(p.detail or {}), "relation": "part"}
+            for part in s.scalars(select(ListenPart).where(ListenPart.id.in_(order))):
+                part.detail = {**(part.detail or {}), "relation": "part"}
             s.flush()
             L.reorder(
                 s, survivor, "input", order, actor_kind="model", actor_ref=actor_ref, reason="parts in listening order"
