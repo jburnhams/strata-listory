@@ -268,3 +268,44 @@ def test_copies_in_format_named_folders_still_merge(s, tmp_path):
     build.build_listens(s, top)
     md.add_metadata(s)
     assert build.link_copies(s) == {"listens_with_copies": 1, "copies_merged": 1}
+
+
+def test_split_input_parts_repairs_a_wrong_merge(s, tmp_path):
+    from app.store import repair
+
+    names = {"Books/Delta Title 01.m4b": 284, "Books/Delta Title 02.m4b": 281}
+    for rel in names:
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(rel.encode())
+    ids = fg.scan_files(s, str(tmp_path))
+    for path, fid in ids.items():
+        f = s.get(fg.PartFile, fid)
+        f.duration_s = names[path[len(str(tmp_path)) + 1 :]] * 60
+        f.probe = {
+            "format": {"tags": {"album": "Delta Title", "artist": "Pat Author"}},
+            "streams": [{"codec_type": "audio", "tags": {}}],
+        }
+    s.flush()
+    top, _ = st.infer(s, fg.group_by_folder(s, str(tmp_path), ids))
+    build.build_listens(s, top)
+    md.add_metadata(s)
+    a, b = s.scalars(select(Listen).order_by(Listen.id)).all()
+    from app.store import listens as Ls
+
+    Ls.merge(s, a, b, actor_kind="rule", actor_ref="copies", reason="wrongly merged as copies")
+    inputs = s.scalars(
+        select(ListenPart).where(ListenPart.listen_id == a.id, ListenPart.role == "input").order_by(ListenPart.ordinal)
+    ).all()
+    assert len(inputs) == 2
+    with pytest.raises(ValueError):
+        repair.split_input_parts(s, a.id, [inputs[0].id, inputs[1].id], reason="x")  # not all of them
+    new = repair.split_input_parts(s, a.id, [inputs[1].id], reason="parts, not copies")
+    assert new.id not in (a.id, b.id) and new.status == "grouped" and new.label == "Delta Title"
+    left = s.scalars(
+        select(ListenPart).where(
+            ListenPart.listen_id == a.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None)
+        )
+    ).all()
+    assert [p.id for p in left] == [inputs[0].id]
+    assert any(e.action == "split" for e in s.scalars(select(ListenEvent).where(ListenEvent.listen_id == a.id)))
