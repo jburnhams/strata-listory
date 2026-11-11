@@ -673,3 +673,90 @@ def test_changing_a_kind_identifies_that_listen_again(monkeypatch, tmp_path):
     assert calls == [("clear", {7}), ("apply", ["7"], "params", {7}), "commit"] and dataset.load_cache() == {
         "7": {"sig": "x"}
     }
+
+
+def _parts_listens(s, tmp_path, names):
+    for rel in names:
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(rel.encode())
+    ids = fg.scan_files(s, str(tmp_path))
+    for path, fid in ids.items():
+        f = s.get(fg.PartFile, fid)
+        f.duration_s = names[path[len(str(tmp_path)) + 1 :]] * 60
+        f.probe = {
+            "format": {"tags": {"album": "Delta Title", "artist": "Pat Author"}},
+            "streams": [{"codec_type": "audio", "tags": {}}],
+        }
+    s.flush()
+    top, _ = st.infer(s, fg.group_by_folder(s, str(tmp_path), ids))
+    build.build_listens(s, top)
+    md.add_metadata(s)
+    return {
+        p.detail["minutes"]: s.get(Listen, p.listen_id)
+        for p in s.scalars(select(ListenPart).where(ListenPart.role == "input"))
+    }
+
+
+DELTA = dict(
+    key="asin:B0DELTA0001",
+    title="Delta Title",
+    authors=["Pat Author"],
+    year=None,
+    ol=[],
+    asins=["B0DELTA0001"],
+    isbns=[],
+    recordings=[dict(asin="B0DELTA0001", title="Delta Title", narrators=[], minutes=565, fmt="", year=None)],
+)
+
+
+def _decide(s, by_minutes):
+    good = dict(
+        title="exact_rare",
+        author="all",
+        runtime="far",
+        sources="audible",
+        _alias="delta title",
+        _asin="B0DELTA0001",
+        _reading="chosen",
+    )
+    data = {
+        str(l.id): dict(clusters={DELTA["key"]: DELTA}, vectors={DELTA["key"]: [good]}) for l in by_minutes.values()
+    }
+    apply.apply(s, data, params())
+
+
+def test_numbered_parts_whose_runtimes_add_up_to_the_recording_become_one_listen(s, tmp_path):
+    by = _parts_listens(s, tmp_path, {"Books/Delta Title 01.m4b": 284, "Books/Delta Title 02.m4b": 281})
+    _decide(s, by)
+    joined = apply.merge_parts(s)
+    assert len(joined) == 1
+    live = s.scalars(select(Listen).where(Listen.merged_into_id.is_(None))).all()
+    assert len(live) == 1
+    parts = s.scalars(
+        select(ListenPart)
+        .where(ListenPart.listen_id == live[0].id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+        .order_by(ListenPart.ordinal)
+    ).all()
+    assert [(p.ordinal, p.detail["minutes"], p.detail["relation"]) for p in parts] == [
+        (1, 284, "part"),
+        (2, 281, "part"),
+    ]  # in listening order, marked as parts
+    q = next(q for q in Q.load(s) if q.listen_id == live[0].id)
+    assert q.minutes == [565.0]  # one runtime for identification, not two alternative copies
+    assert apply.merge_parts(s) == []
+
+
+def test_parts_that_do_not_add_up_or_are_other_books_are_not_joined(s, tmp_path):
+    by = _parts_listens(
+        s, tmp_path, {"Books/Delta Title 01.m4b": 284, "Books/Delta Title 02.m4b": 120}
+    )  # 404 minutes: not the recording
+    _decide(s, by)
+    assert apply.merge_parts(s) == []
+    s.rollback()
+
+
+def test_copies_of_one_recording_are_not_parts(s, tmp_path):
+    by = _parts_listens(s, tmp_path, {"Books/Delta Title.m4b": 565, "Audible/Delta Title.m4b": 563})
+    _decide(s, by)
+    assert apply.merge_parts(s) == []  # no numbers in the names, and each runs as long as the book

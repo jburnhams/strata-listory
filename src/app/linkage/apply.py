@@ -15,7 +15,7 @@ from app.identify import textkeys as tk
 from app.linkage import model as M
 from app.store import listens as L
 from app.store.filegroups import finish_run, new_run
-from app.store.models import Listen, ListenEvent, ListenPart, Person, Work, WorkCredit, WorkIdentifier
+from app.store.models import Listen, ListenEvent, ListenPart, PartFilegroup, Person, Work, WorkCredit, WorkIdentifier
 
 THRESHOLD = 0.95
 REVIEW_CANDIDATES = 3
@@ -361,6 +361,112 @@ def same_work_groups(s: Session) -> dict[int, list[int]]:
     return {w: sorted(set(ls)) for w, ls in out.items() if len(set(ls)) > 1}
 
 
+def listen_minutes(s: Session, lid: int) -> tuple[ListenPart | None, float]:
+    """(preferred input part, runtime): a listen of parts runs as long as all its parts together, a listen of copies as long as its preferred copy."""
+    parts = list(
+        s.scalars(
+            select(ListenPart)
+            .where(ListenPart.listen_id == lid, ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+            .order_by(ListenPart.ordinal)
+        )
+    )
+    if not parts:
+        return None, 0.0
+    if any((p.detail or {}).get("relation") == "part" for p in parts):
+        return parts[0], sum(float((p.detail or {}).get("minutes") or 0) for p in parts)
+    return parts[0], float((parts[0].detail or {}).get("minutes") or 0)
+
+
+def merge_parts(
+    s: Session, *, tolerance: float = 0.03, minimum: float = 0.5, actor_ref: str = ""
+) -> list[tuple[int, int]]:
+    """Join listens that are the numbered parts of one recording into one listen with ordered input parts (`detail.relation` = "part"), once their work is known: each listen's best candidate is the same work (P >= `minimum`), their group names differ only by a number (`build.part_key`, `build.numbering`), each is clearly shorter than the book, and their runtimes add up to one of the work's recordings within `tolerance`. Not copies: copies share a runtime, parts sum to it."""
+    from app.store.build import numbering, part_key
+
+    run = new_run(s, "merge_parts", {"tolerance": tolerance})
+    best: dict[int, ListenPart] = {}
+    for p in s.scalars(
+        select(ListenPart)
+        .join(Listen, Listen.id == ListenPart.listen_id)
+        .where(
+            ListenPart.role.in_(("match", "candidate")),
+            ListenPart.state != "rejected",
+            ListenPart.unlinked_at.is_(None),
+            Listen.merged_into_id.is_(None),
+            Listen.kind == "book",
+            ListenPart.score >= minimum,
+        )
+    ):
+        if p.listen_id not in best or (p.score or 0) > (best[p.listen_id].score or 0):
+            best[p.listen_id] = p
+    by_work: dict[int, list[int]] = {}
+    for lid, p in best.items():
+        by_work.setdefault(p.work_id, []).append(lid)
+    out = []
+    for work_id, ids in by_work.items():
+        if len(ids) < 2:
+            continue
+        keyed: dict[str, list[tuple[tuple[str, ...], int, ListenPart, float]]] = {}
+        for lid in sorted(ids):
+            inputs = list(
+                s.scalars(
+                    select(ListenPart)
+                    .where(ListenPart.listen_id == lid, ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+                    .order_by(ListenPart.ordinal)
+                )
+            )
+            if len(inputs) != 1 or (inputs[0].detail or {}).get("relation") == "part" or not inputs[0].filegroup_id:
+                continue
+            label = s.scalar(select(PartFilegroup.label).where(PartFilegroup.id == inputs[0].filegroup_id)) or ""
+            n = numbering(label)
+            if n and part_key(label):
+                keyed.setdefault(part_key(label), []).append(
+                    (n, lid, inputs[0], float((inputs[0].detail or {}).get("minutes") or 0))
+                )
+        for items in keyed.values():
+            if len(items) < 2 or len({n for n, *_ in items}) != len(items):
+                continue
+            total = sum(m for *_, m in items)
+            runtimes = [
+                float(r.get("minutes") or 0) for r in ((best[items[0][1]].detail or {}).get("recordings") or [])
+            ]
+            if not total or not any(
+                r and abs(total - r) / r <= tolerance and all(m < 0.8 * r for *_, m in items) for r in runtimes
+            ):
+                continue
+            items.sort(key=lambda x: (tuple(int(v) for v in x[0]), x[1]))
+            survivor = s.get(Listen, items[0][1])
+            for _, lid, _, _ in items[1:]:
+                L.merge(
+                    s,
+                    survivor,
+                    s.get(Listen, lid),
+                    actor_kind="model",
+                    actor_ref=actor_ref,
+                    run_id=run.id,
+                    reason=f"parts of one recording of work {work_id}: group names differ only by number, runtimes add up to {total:.0f} min",
+                )
+                out.append((survivor.id, lid))
+            order = [i[2].id for i in items]
+            for p in s.scalars(select(ListenPart).where(ListenPart.id.in_(order))):
+                p.detail = {**(p.detail or {}), "relation": "part"}
+            s.flush()
+            L.reorder(
+                s, survivor, "input", order, actor_kind="model", actor_ref=actor_ref, reason="parts in listening order"
+            )
+            L.set_status(
+                s,
+                survivor,
+                "review",
+                actor_kind="model",
+                actor_ref=actor_ref,
+                run_id=run.id,
+                reason="parts joined: identify again with the whole runtime",
+            )
+    finish_run(s, run, "done")
+    return out
+
+
 def merge_copies(s: Session, *, tolerance: float = 0.02, actor_ref: str = "") -> list[tuple[int, int]]:
     """Merge listens that are copies of one recording, now that their work is known: both accepted as the same work, runtimes within `tolerance` (2%, half the tolerance used before identification) and narrators that do not disagree. Different recordings of one work (another narrator, an abridgement, a radio version) have different runtimes and stay separate listens linked to the same work. The preferred copy survives (`store.build.preference`); returns [(survivor, merged)]."""
     from app.store.build import preference
@@ -374,18 +480,14 @@ def merge_copies(s: Session, *, tolerance: float = 0.02, actor_ref: str = "") ->
             continue  # different episodes and series of one programme are different broadcasts, never copies of one recording (as `build.link_copies` leaves radio series alone)
         info = {}
         for lid in ids:
-            part = s.scalars(
-                select(ListenPart)
-                .where(ListenPart.listen_id == lid, ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
-                .order_by(ListenPart.ordinal)
-            ).first()
+            part, total = listen_minutes(s, lid)
             narr = s.scalars(
                 select(ListenChoice.value).where(
                     ListenChoice.listen_id == lid, ListenChoice.field == "narrator", ListenChoice.unchosen_at.is_(None)
                 )
             ).first()
-            if part and (part.detail or {}).get("minutes"):
-                info[lid] = (part, float(part.detail["minutes"]), tk.people(narr or ""))
+            if part and total:
+                info[lid] = (part, total, tk.people(narr or ""))
         live = sorted(info, key=lambda lid: preference(info[lid][0], s.get(Listen, lid).label))
         while live:
             keep = live.pop(0)

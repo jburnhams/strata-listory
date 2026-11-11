@@ -473,6 +473,9 @@ def cmd_listens_identify(args):
                 f"cleared the earlier identification of {apply.clear(s, ids=set(args.ids) if args.ids else None)} listens"
             )
         counts = apply.apply(s, data, params, threshold=args.threshold, ids=set(args.ids) if args.ids else None)
+        joined = apply.merge_parts(s, actor_ref=params.version()) if args.merge_parts else []
+        if args.merge_parts:
+            print(f"{len(joined)} listens joined as parts of one recording")
         merged = apply.merge_copies(s, actor_ref=params.version()) if args.merge_copies else []
         groups = apply.same_work_groups(s)
         if merged:
@@ -1025,6 +1028,11 @@ def main(argv=None):
         "--threshold", type=float, default=0.95, help="accept when P(work) is at least this (default 0.95)"
     )
     lid.add_argument("--dry-run", action="store_true", help="count what would change, write nothing")
+    lid.add_argument(
+        "--merge-parts",
+        action="store_true",
+        help="join listens whose group names differ only by a number and whose runtimes add up to one recording of their common work (the parts of one recording); run before --merge-copies and identify again afterwards",
+    )
     lid.add_argument(
         "--merge-copies",
         action="store_true",

@@ -185,7 +185,11 @@ def from_parts(
         tk.people(narr),
         asin,
         year,
-        [float(i["minutes"]) for i in inputs if i.get("minutes")],
+        [sum(float(i["minutes"]) for i in inputs if i.get("minutes"))]
+        if any(i.get("relation") == "part" for i in inputs)
+        else [
+            float(i["minutes"]) for i in inputs if i.get("minutes")
+        ],  # parts add up to one runtime, copies are alternatives
         str(choices.get("language") or ""),
         (inputs[0].get("path") or "") if inputs else "",
         list(dict.fromkeys(hints)),
