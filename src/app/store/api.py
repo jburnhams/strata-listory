@@ -292,9 +292,13 @@ def list_listens(
     kinds = dict(
         s.execute(select(Listen.kind, func.count()).where(Listen.merged_into_id.is_(None)).group_by(Listen.kind)).all()
     )
-    copies = dict(
-        s.execute(
-            select(ListenPart.listen_id, func.count())
+    is_part = (
+        ListenPart.detail["relation"].astext == "part"
+    )  # numbered parts run one after the other; every other input is an alternative copy
+    counts = {
+        lid: (n, k)
+        for lid, n, k in s.execute(
+            select(ListenPart.listen_id, func.count(), func.count().filter(is_part))
             .where(
                 ListenPart.listen_id.in_([l.id for l, _ in rows]),
                 ListenPart.role == "input",
@@ -302,7 +306,7 @@ def list_listens(
             )
             .group_by(ListenPart.listen_id)
         ).all()
-    )
+    }
     chosen: dict[int, dict] = defaultdict(dict)
     for lid, field, value in s.execute(
         select(ListenChoice.listen_id, ListenChoice.field, ListenChoice.value).where(
@@ -329,7 +333,8 @@ def list_listens(
             dict(
                 _listen_row(l, p),
                 kind_info=infos.get(l.id),
-                copies=copies.get(l.id, 1),
+                copies=max(counts.get(l.id, (1, 0))[0] - counts.get(l.id, (1, 0))[1], 1),
+                parts=counts.get(l.id, (1, 0))[1],
                 author=chosen[l.id].get("author"),
                 narrator=chosen[l.id].get("narrator"),
                 year=chosen[l.id].get("year"),

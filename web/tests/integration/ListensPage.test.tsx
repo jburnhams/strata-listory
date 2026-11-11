@@ -11,6 +11,7 @@ describe('ListensPage', () => {
     expect(screen.getByText('Thomas Harris · read by Steven Weber · 1981')).toBeInTheDocument()
     expect(screen.getByText('3 copies')).toBeInTheDocument()                       // linked copies of one recording
     expect(screen.queryByText('1 copies')).toBeNull()
+    expect(screen.getByText('2 parts')).toBeInTheDocument()                          // numbered parts of one recording, not copies
     expect(screen.getByText('Dead Ringers (season 11)')).toBeInTheDocument()      // no files group: plain text, not a link
     expect(screen.queryByRole('link', { name: 'Dead Ringers (season 11)' })).toBeNull()
   })

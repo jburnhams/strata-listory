@@ -152,6 +152,14 @@ def make_readings(choices: dict, tags: dict, folder: dict, file: dict | None = N
     return out[:12]
 
 
+def input_minutes(inputs: list[dict]) -> list[float]:
+    """The runtimes a listen's inputs offer for comparison: numbered parts (`relation` "part") run one after the other, so they count once as their sum; every other input is an alternative copy and counts on its own. Parts first, as they are the preferred recording."""
+    parts = [float(i["minutes"]) for i in inputs if i.get("relation") == "part" and i.get("minutes")]
+    return ([sum(parts)] if parts else []) + [
+        float(i["minutes"]) for i in inputs if i.get("relation") != "part" and i.get("minutes")
+    ]
+
+
 def from_parts(
     listen_id: int,
     kind: str,
@@ -185,11 +193,7 @@ def from_parts(
         tk.people(narr),
         asin,
         year,
-        [sum(float(i["minutes"]) for i in inputs if i.get("minutes"))]
-        if any(i.get("relation") == "part" for i in inputs)
-        else [
-            float(i["minutes"]) for i in inputs if i.get("minutes")
-        ],  # parts add up to one runtime, copies are alternatives
+        input_minutes(inputs),
         str(choices.get("language") or ""),
         (inputs[0].get("path") or "") if inputs else "",
         list(dict.fromkeys(hints)),

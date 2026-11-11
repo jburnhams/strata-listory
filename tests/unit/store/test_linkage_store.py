@@ -785,3 +785,45 @@ def test_a_leading_index_without_a_separator_and_a_listen_merged_as_copies(s, tm
         .order_by(ListenPart.ordinal)
     ).all()
     assert [(p.detail["minutes"], p.detail["relation"]) for p in parts] == [(284, "part"), (281, "part")]
+
+
+def test_a_full_copy_beside_joined_parts_does_not_inflate_the_runtime(s, tmp_path):
+    by = _parts_listens(
+        s, tmp_path, {"Books/Delta Title 01.m4b": 284, "Books/Delta Title 02.m4b": 281, "Audible/Delta Title.m4b": 565}
+    )
+    parts_listens = [l for m, l in by.items() if m != 565]
+    full = by[565]
+    _decide(s, {i: l for i, l in enumerate(parts_listens)})
+    assert len(apply.merge_parts(s)) == 1
+    survivor = s.scalars(
+        select(Listen).where(Listen.merged_into_id.is_(None), Listen.id.in_([l.id for l in parts_listens]))
+    ).one()
+    L.merge(s, survivor, full, actor_kind="model", reason="a full-length copy of the same recording")
+    inputs = s.scalars(
+        select(ListenPart)
+        .where(ListenPart.listen_id == survivor.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+        .order_by(ListenPart.ordinal)
+    ).all()
+    assert [p.detail.get("relation") for p in inputs] == ["part", "part", None]
+    assert sorted(p.detail["minutes"] for p in inputs) == [281, 284, 565]
+    assert next(q for q in Q.load(s) if q.listen_id == survivor.id).minutes == [
+        565.0,
+        565.0,
+    ]  # the parts' sum, then the alternative copy: never 1130
+    assert apply.listen_minutes(s, survivor.id)[1] == 565.0
+
+
+def test_the_listens_api_counts_parts_apart_from_copies(s, tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.store import api
+
+    by = _parts_listens(s, tmp_path, {"Books/Delta Title 01.m4b": 284, "Books/Delta Title 02.m4b": 281})
+    _decide(s, by)
+    apply.merge_parts(s)
+    app = FastAPI()
+    app.include_router(api.listens_router)
+    app.dependency_overrides[api.get_session] = lambda: s
+    rows = TestClient(app).get("/api/listens").json()["rows"]
+    assert len(rows) == 1 and rows[0]["parts"] == 2 and rows[0]["copies"] == 1

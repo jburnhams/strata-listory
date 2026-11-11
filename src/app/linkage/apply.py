@@ -372,8 +372,12 @@ def listen_minutes(s: Session, lid: int) -> tuple[ListenPart | None, float]:
     )
     if not parts:
         return None, 0.0
-    if any((p.detail or {}).get("relation") == "part" for p in parts):
-        return parts[0], sum(float((p.detail or {}).get("minutes") or 0) for p in parts)
+    if any(
+        (p.detail or {}).get("relation") == "part" for p in parts
+    ):  # the parts count once, as their sum; alternative copies lying beside them do not add to it
+        return parts[0], sum(
+            float((p.detail or {}).get("minutes") or 0) for p in parts if (p.detail or {}).get("relation") == "part"
+        )
     return parts[0], float((parts[0].detail or {}).get("minutes") or 0)
 
 

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { installFakeIntersectionObserver, installLayoutShims, type FakeIntersectionObserverControls } from 'strata-react/testing'
 import { cleanup } from '@testing-library/react'
-import MatchQueuePage, { certainty, evidence, runtimeDelta, subtitleOf, uniqueNames, displayTitle } from '../../src/components/MatchQueuePage'
+import MatchQueuePage, { certainty, evidence, inputsOf, runtimeDelta, subtitleOf, uniqueNames, displayTitle } from '../../src/components/MatchQueuePage'
 import { setup, screen, within, waitFor } from '../utils/render'
 import { http, HttpResponse } from 'msw'
 import { matchState, server } from '../utils/server'
@@ -49,7 +49,30 @@ describe('uniqueNames', () => {
   })
 })
 
+describe('inputsOf', () => {
+  const x = (minutes: number, relation?: 'copy' | 'part') => ({ minutes, files: 1, bytes: 1, folder: 'f', path: null, group_id: 1, relation })
+  it('adds numbered parts up to one runtime and keeps alternative copies apart', () => {
+    expect(inputsOf([x(284, 'part'), x(281, 'part')])).toMatchObject({ minutes: 565, parts: [{}, {}], copies: [] })
+    expect(inputsOf([x(284, 'part'), x(281, 'part'), x(565, 'copy')])).toMatchObject({ minutes: 565, copies: [{ minutes: 565 }] })   // never 1130
+  })
+  it('uses the preferred copy when there are no parts, and nothing when there are no inputs', () => {
+    expect(inputsOf([x(600), x(606)]).minutes).toBe(600)
+    expect(inputsOf([]).minutes).toBeNull()
+  })
+})
+
 describe('MatchQueuePage', () => {
+  it('labels numbered parts as parts and compares the recording with their summed length', async () => {
+    const parts = (n: number, relation?: 'copy' | 'part') => ({ minutes: n, files: 1, bytes: 1, folder: 'Mara Quill - Glass Orchard', path: '/x/y', group_id: 7, relation })
+    matchState.queue[0].copies = [parts(284, 'part'), parts(281, 'part')]
+    setup(<MatchQueuePage />)
+    const [first] = await waitFor(() => { const c = cards(); expect(c.length).toBeGreaterThan(0); return c })
+    expect(within(first).getByText('9h 25m in 2 parts')).toBeInTheDocument()
+    expect(within(first).getByText('1 files · 2 parts')).toBeInTheDocument()
+    expect(within(first).getByText(/Ada Penn · 10h 06m/)).toHaveTextContent('+7%')               // 606 min against the 565 the parts add up to, not against 284
+  })
+
+
   it('shows the most certain match first with the files, the work, its recordings and the evidence', async () => {
     setup(<MatchQueuePage />)
     expect(await screen.findByText('4 matches to check, most certain first. 0 listens confirmed so far.')).toBeInTheDocument()
