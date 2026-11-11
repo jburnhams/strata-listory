@@ -442,11 +442,11 @@ def cmd_listens_split(args):
 
     with Session(connect("listory")) as s:
         try:
-            new = repair.split_input_parts(s, args.listen, args.parts, reason=args.reason)
+            new_id = repair.split_input_parts(s, args.listen, args.parts, reason=args.reason).id
         except ValueError as e:
             sys.exit(str(e))
         s.commit()
-    print(f"listen {args.listen}: parts {args.parts} moved to new listen {new.id}")
+    print(f"listen {args.listen}: parts {args.parts} moved to new listen {new_id}")
     return 0
 
 
