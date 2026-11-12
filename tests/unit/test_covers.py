@@ -52,7 +52,7 @@ def test_size_rewriting_asks_for_the_largest_picture():
 
 
 def reply(status, body=b"", error=""):
-    return net.Reply(status, body, error)
+    return net.Reply(status, body, error, limited=status == 429)
 
 
 def test_records_say_why_a_source_found_nothing():
@@ -135,7 +135,7 @@ def test_google_takes_the_largest_image_link_of_each_isbn(monkeypatch):
     monkeypatch.setattr(net, "get", get)
     items, rec = sources.google(sources.Context(isbns=["1", "2", "3"]))
     assert [i.url for i in items] == ["https://books.google.com/a?zoom=0"] and rec["status"] == "found"
-    assert "2: no cover" in rec["detail"] and "error: 3" in rec["detail"]
+    assert "2: no cover" in rec["detail"] and "rate limited: 3" in rec["detail"]
 
 
 def test_local_reads_images_from_the_folder_cover_names_first(tmp_path):
@@ -290,3 +290,87 @@ def test_local_reads_art_embedded_in_the_first_audio_file(tmp_path, monkeypatch)
     monkeypatch.setattr(sources.subprocess, "run", boom)
     assert "error: could not read the audio file" in sources.local(ctx)[1]["detail"]
     assert sources.local(sources.Context(files=["/nowhere/a.mp3"]))[1]["status"] == "skipped"
+
+
+def test_a_rate_limited_google_stops_the_lookups_and_the_record_says_so(monkeypatch):
+    calls = []
+    monkeypatch.setattr(net, "get", lambda url, **k: calls.append(url) or reply(429, error="slow down"))
+    items, rec = sources.google(sources.Context(isbns=["1", "2", "3"]))
+    assert (
+        items == [] and len(calls) == 1 and rec["status"] == "limited" and rec["detail"] == "rate limited: 1: slow down"
+    )
+    monkeypatch.setenv("GOOGLE_BOOKS_API_KEY", "k e y")
+    sources.google(sources.Context(isbns=["1"]))
+    assert calls[-1].endswith("&key=k%20e%20y")
+    monkeypatch.delenv("GOOGLE_BOOKS_API_KEY")
+    monkeypatch.setattr(sources.os.path, "expanduser", lambda p: p.replace("~", "/nonexistent-home"))
+    assert sources.google_key() == ""
+
+
+def test_google_key_is_read_from_the_key_file(monkeypatch, tmp_path):
+    monkeypatch.delenv("GOOGLE_BOOKS_API_KEY", raising=False)
+    (tmp_path / ".config/strata-listory").mkdir(parents=True)
+    (tmp_path / ".config/strata-listory/googlebooks.key").write_text("filekey\nignored\n")
+    monkeypatch.setattr(sources.os.path, "expanduser", lambda p: p.replace("~", str(tmp_path)))
+    assert sources.google_key() == "filekey"
+
+
+def test_other_sources_report_rate_limits_too(monkeypatch):
+    monkeypatch.setattr(net, "get", lambda url, **k: reply(429, error="slow"))
+    assert sources.audnexus(sources.Context(asins=["A1", "A2"]))[1]["status"] == "limited"
+    assert sources.apple(sources.Context(title="T"))[1]["status"] == "limited"
+    assert sources.openlibrary(sources.Context(ol_works=["/works/OL9W"]))[1]["status"] == "limited"
+
+
+class _Hdr(dict):
+    pass
+
+
+def test_get_waits_as_long_as_retry_after_says_then_succeeds(monkeypatch):
+    sleeps, calls = [], []
+    monkeypatch.setattr(net.time, "sleep", lambda s: sleeps.append(s))
+
+    def fake(req, timeout=None):
+        calls.append(1)
+        if len(calls) < 3:
+            raise net.urllib.error.HTTPError(req.full_url, 429, "slow", _Hdr({"Retry-After": "7"}), None)
+        return _Resp(200, b"{}")
+
+    monkeypatch.setattr(net.urllib.request, "urlopen", fake)
+    r = net.get("https://slow.test/x")
+    assert r.ok and len(calls) == 3 and sleeps.count(7.0) == 2
+
+
+def test_a_host_that_keeps_saying_429_is_left_alone_for_a_while(monkeypatch):
+    monkeypatch.setattr(net.time, "sleep", lambda s: None)
+    calls = []
+
+    def fake(req, timeout=None):
+        calls.append(1)
+        raise net.urllib.error.HTTPError(req.full_url, 429, "slow", _Hdr({"Retry-After": "never"}), None)
+
+    monkeypatch.setattr(net.urllib.request, "urlopen", fake)
+    r = net.get("https://busy.test/x")
+    assert r.limited and r.status == 429 and len(calls) == net.ATTEMPTS
+    again = net.get("https://busy.test/y")
+    assert (
+        again.limited and len(calls) == net.ATTEMPTS and "not asking again" in again.error
+    )  # no new request during the cool-down
+    monkeypatch.setitem(net._cool_until, "busy.test", 0)
+    assert net.get("https://busy.test/z").limited and len(calls) == 2 * net.ATTEMPTS
+
+
+def test_retry_after_is_capped_and_defaults_to_growing_waits():
+    assert net._retry_after({"Retry-After": "9999"}, 1) == net.MAX_WAIT
+    assert net._retry_after({}, 3) == 8.0 and net._retry_after(None, 1) == 2.0
+
+
+def test_retry_after_may_be_an_http_date():
+    from datetime import UTC, datetime, timedelta
+    from email.utils import format_datetime
+
+    soon = format_datetime(datetime.now(UTC) + timedelta(seconds=45), usegmt=True)
+    assert 40 <= net._retry_after({"Retry-After": soon}, 1) <= 45
+    past = format_datetime(datetime.now(UTC) - timedelta(seconds=45), usegmt=True)
+    assert net._retry_after({"Retry-After": past}, 1) == 0.5  # already passed: the smallest wait
+    assert net._retry_after({"Retry-After": "not a date"}, 2) == 4.0

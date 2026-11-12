@@ -39,6 +39,14 @@ describe('CoversPage', () => {
     await waitFor(() => expect(coverState.runs).toEqual([{ ids: [2] }]))
   })
 
+  it('marks a source that was rate limited, so the search can be repeated later', async () => {
+    const { user } = setup(<CoversPage />, { route: '/covers' })
+    const card = await screen.findByRole('article', { name: 'Glass Orchard' })
+    await user.click(within(card).getByText('What each source said'))
+    expect(within(card).getByText('rate limited')).toBeInTheDocument()
+    expect(within(card).getByText('rate limited: 9780000000002: HTTP Error 429')).toBeInTheDocument()
+  })
+
   it('starts the job for everything waiting and follows its progress', async () => {
     const { user } = setup(<CoversPage pollMs={30} />, { route: '/covers' })
     const button = await screen.findByRole('button', { name: 'Search for covers (2)' })
