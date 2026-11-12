@@ -260,5 +260,6 @@ def explode_listen(s: Session, listen_id: int, *, actor_ref: str = "explode") ->
                 reason="made from a folder of several books",
             )
     metadata.add_metadata(s, actor_ref=actor_ref, redo=[listen_id])
+    metadata.add_metadata(s, actor_ref=actor_ref)  # the new listens have no metadata yet
     finish_run(s, run, "done")
     return ids
