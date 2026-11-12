@@ -40,22 +40,26 @@ def _chosen(s: Session, ids: list[int]) -> dict[int, dict]:
 
 
 def _card(s: Session, listen: Listen, run: CoverRun, chosen: dict | None) -> dict:
-    covers = [
+    covers = [  # best fit first: the page shows the first one already selected
         dict(
-            image_id=g["image"].id,
-            width=g["image"].width,
-            height=g["image"].height,
-            bytes=g["image"].size,
-            sources=g["sources"],
-            members=sorted({x["image_id"] for x in g["sources"]}),
+            image_id=x.group["image"].id,
+            width=x.group["image"].width,
+            height=x.group["image"].height,
+            bytes=x.group["image"].size,
+            sources=x.group["sources"],
+            members=sorted({e["image_id"] for e in x.group["sources"]}),
+            score=round(x.score, 2),
+            share=round(x.share, 3),
+            signals=[g.as_dict() for g in x.signals],
         )
-        for g in R.distinct(s, run.id)
+        for x in R.ranked(s, listen, run.id)
     ]
     chosen_id = (chosen or {}).get("image_id")
     state = "chosen" if chosen_id else ("choose" if covers else "none")
     return dict(
         listen_id=listen.id,
         label=listen.label,
+        kind=listen.kind,
         run_id=run.id,
         searched=run.finished_at.isoformat() if run.finished_at else None,
         state=state,
@@ -105,6 +109,32 @@ def covers(state: str = "", q: str = "", limit: int = 24, offset: int = 0, s: Se
 
 class Choice(BaseModel):
     image_id: int | None = None
+    via: str = "pick"  # "accept": the suggested best fit as it was; "pick": any other choice (the ranking learns from both, accepting more weakly)
+
+
+LEARN = threading.Lock()
+_again = threading.Event()  # a choice or a cleared choice arrived while a fit was running: fit once more when it ends
+
+
+def relearn() -> None:
+    """Refit the ranking's weights on every cover chosen so far, in the background, one fit at a time: a request that arrives while one runs makes it fit once more when it ends, so the saved weights always catch up with the last choice (or the last cleared one). The ranking is computed when a page is read, so new weights apply at once."""
+    _again.set()
+    if not LEARN.acquire(blocking=False):
+        return
+
+    def work():
+        try:
+            while _again.is_set():
+                _again.clear()
+                try:
+                    with Session(_engine()) as s:
+                        R.learn(s)
+                except Exception:  # the weights stay as they were; a person's choice is already saved
+                    pass
+        finally:
+            LEARN.release()
+
+    threading.Thread(target=work, daemon=True).start()
 
 
 @router.post("/{listen_id}/choose")
@@ -117,8 +147,9 @@ def choose(listen_id: int, b: Choice, s: Session = Depends(get_session)):
         img = s.get(CoverImage, b.image_id)
         if img is None:
             raise HTTPException(404, "no such picture")
-    R.choose(s, listen, img)
+    R.choose(s, listen, img, via="accept" if b.via == "accept" else "pick")
     s.commit()
+    relearn()  # a cleared choice too: its influence must leave the weights
     return dict(ok=True, chosen=b.image_id)
 
 

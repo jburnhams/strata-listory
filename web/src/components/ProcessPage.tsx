@@ -15,7 +15,8 @@ const TABS: { id: string; label: string; states: PlanState[] }[] = [
 const GROUPS = [
   { id: 'failed', label: 'Failed', states: ['failed'] },
   { id: 'running', label: 'In progress', states: ['running', 'planning'] },
-  { id: 'pending', label: 'Pending', states: ['queued', 'approved', 'waiting'] },
+  { id: 'pending', label: 'Pending', states: ['queued', 'approved'] },
+  { id: 'waiting', label: 'Awaiting approval', states: ['waiting'] },   // the old per-book ingest stages (book, audiobook, quality) waiting for a person: hundreds of them, and not work in the queue
   { id: 'done', label: 'Completed', states: ['done', 'completed'] },
 ] as const
 const DEFAULT_GROUPS = ['failed', 'running', 'pending']

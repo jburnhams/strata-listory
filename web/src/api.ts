@@ -144,15 +144,17 @@ export const listenApi = {
 }
 
 // Covers (src/app/covers/api.py): listens a cover search has run on, the distinct pictures found (with every source that offered each) or why none, and the preferred one.
-export interface CoverSource { source: string; ref: string; label: string; url: string | null; image_id: number }
-export interface CoverPicture { image_id: number; width: number; height: number; bytes: number; sources: CoverSource[]; members: number[] }
+export interface CoverSource { source: string; ref: string; label: string; url: string | null; image_id: number; width: number; height: number; bytes: number }
+/** One reason a picture ranks where it does: its weight in the score, the hand-set `prior` when learning moved it, and what was seen. */
+export interface CoverSignal { name: string; weight: number; detail: string; prior?: number; learned?: boolean }
+export interface CoverPicture { image_id: number; width: number; height: number; bytes: number; sources: CoverSource[]; members: number[]; score: number; share: number; signals: CoverSignal[] }
 export interface CoverStatus { source: string; status: 'found' | 'none' | 'error' | 'limited' | 'skipped' | 'not_found'; detail: string; count: number }
-export interface CoverRow { listen_id: number; label: string; run_id: number; searched: string | null; state: 'choose' | 'chosen' | 'none'; chosen: number | null; covers: CoverPicture[]; sources: CoverStatus[] }
+export interface CoverRow { listen_id: number; label: string; kind: string; run_id: number; searched: string | null; state: 'choose' | 'chosen' | 'none'; chosen: number | null; covers: CoverPicture[]; sources: CoverStatus[] }
 export interface CoverJob { running: boolean; done: number; total: number; current: string; finished: number | null; error: string }
 export interface CoverList { total: number; counts: Record<'choose' | 'chosen' | 'none', number>; waiting: number; rows: CoverRow[]; job: CoverJob }
 export const coverApi = {
   list: (state = '', q = '', limit = 24) => req<CoverList>(`/api/covers?${new URLSearchParams({ state, q, limit: String(limit) })}`),
-  choose: (listenId: number, imageId: number | null) => req<{ ok: boolean; chosen: number | null }>(`/api/covers/${listenId}/choose`, send('POST', { image_id: imageId })),
+  choose: (listenId: number, imageId: number | null, via: 'pick' | 'accept' = 'pick') => req<{ ok: boolean; chosen: number | null }>(`/api/covers/${listenId}/choose`, send('POST', { image_id: imageId, via })),
   run: (listenIds?: number[], force = false) => req<{ started: boolean }>('/api/covers/run', send('POST', { listen_ids: listenIds ?? null, force })),
   image: (id: number, w = 0) => withBase(`/api/covers/image/${id}${w ? `?w=${w}` : ''}`),
 }
