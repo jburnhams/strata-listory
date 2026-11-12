@@ -440,16 +440,18 @@ def merge_parts(
                 keyed.setdefault(part_key(label), []).append(
                     (numbering(label), lid, x, float((x.detail or {}).get("minutes") or 0))
                 )
-        sequences = [
-            g
-            for g in chapters.values()
-            if len(g) >= 3
-            and sorted(int(n[0]) for n, *_ in g)
-            == list(range(int(min(n[0] for n, *_ in g)), int(min(n[0] for n, *_ in g)) + len(g)))
-        ]  # at least three, numbered one after the other, in one folder: the chapters of one book, if the runtimes below agree
+        sequences = []
+        for g in chapters.values():
+            numbers = sorted(int(n[0]) for n, *_ in g)
+            if len(g) >= 3 and numbers == list(range(numbers[0], numbers[0] + len(g))):
+                sequences.append(
+                    g
+                )  # at least three, numbered one after the other, in one folder: the chapters of one book, if the runtimes below agree
         for items in [*keyed.values(), *sequences]:
             if len(items) < 2 or len({n for n, *_ in items}) != len(items):
                 continue
+            if any(s.get(Listen, lid).merged_into_id is not None for _, lid, _, _ in items):
+                continue  # already joined by the other grouping above (the same listens can be a keyed group and a chapter sequence)
             total = sum(m for *_, m in items)
             runtimes = [
                 float(r.get("minutes") or 0) for r in ((best[items[0][1]].detail or {}).get("recordings") or [])

@@ -896,3 +896,23 @@ def test_numbered_folders_with_gaps_or_only_two_are_left_alone(s, tmp_path):
     listens = _chapter_folders(s, tmp_path, {"01 The Arrest": 280, "03 Sorry": 285})  # a gap, and two only
     _decide_all(s, listens)
     assert apply.merge_parts(s) == []
+
+
+def test_a_set_found_by_both_groupings_is_joined_once(s, tmp_path, monkeypatch):
+    from app.store import build as B
+
+    monkeypatch.setattr(
+        B, "part_key", lambda label: "deltatitle"
+    )  # as if the folder names also gave one part key: the same listens are a keyed group and a chapter sequence
+    listens = _chapter_folders(
+        s, tmp_path, {"01 The Arrest": 150, "02 Sorry": 140, "03 The Arraignment": 130, "04 Yellow": 145}
+    )
+    _decide_all(s, listens)
+    assert len(apply.merge_parts(s)) == 3
+    assert len(s.scalars(select(Listen).where(Listen.merged_into_id.is_(None))).all()) == 1
+
+
+def test_numbered_folders_crossing_a_decimal_boundary_are_joined(s, tmp_path):
+    listens = _chapter_folders(s, tmp_path, {"08 The Arrest": 190, "09 Sorry": 190, "10 Yellow": 185})
+    _decide_all(s, listens)
+    assert len(apply.merge_parts(s)) == 2
