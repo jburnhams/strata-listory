@@ -98,7 +98,8 @@ def audible_rows(asins: list[str], connect=None) -> list[dict]:
             if not row:
                 continue
             credits = c.execute(
-                "SELECT role, name FROM credit WHERE asin=? AND region=? ORDER BY role, rowid", (asin, row["region"])
+                "SELECT role, name FROM credit WHERE asin=? AND region=? ORDER BY role, person_key",
+                (asin, row["region"]),
             ).fetchall()
             out.append(
                 dict(

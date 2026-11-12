@@ -161,10 +161,10 @@ def test_audible_rows_reads_the_index_by_asin(tmp_path):
     db = sqlite3.connect(path)
     db.executescript(
         "CREATE TABLE book (asin TEXT, region TEXT, title TEXT, subtitle TEXT, language TEXT, abridged INTEGER, runtime_min INTEGER, release TEXT, publisher TEXT, isbn TEXT, series TEXT, series_pos TEXT);"
-        "CREATE TABLE credit (asin TEXT, region TEXT, role TEXT, name TEXT);"
+        "CREATE TABLE credit (asin TEXT NOT NULL, region TEXT NOT NULL, role TEXT NOT NULL, person_key TEXT NOT NULL, name TEXT, PRIMARY KEY (asin, region, role, person_key)) WITHOUT ROWID;"  # as the real index builds it: no rowid to order by
         "INSERT INTO book VALUES ('B0A','us','T-us','', 'english', NULL, 60, '2008-01-01', 'P', NULL, '', '');"
         "INSERT INTO book VALUES ('B0A','uk','T-uk','Sub', 'english', 0, 60, '2008-01-01', 'P', '978', 'S', '1');"
-        "INSERT INTO credit VALUES ('B0A','uk','Author','Mara Quill'), ('B0A','uk','Narrator','Ada Penn');"
+        "INSERT INTO credit VALUES ('B0A','uk','Author','mara quill','Mara Quill'), ('B0A','uk','Narrator','ada penn','Ada Penn'), ('B0A','uk','Narrator','sam hart','Sam Hart');"
     )
     db.commit()
 
@@ -175,7 +175,7 @@ def test_audible_rows_reads_the_index_by_asin(tmp_path):
 
     rows = C.audible_rows(["B0A", "B0MISSING"], connect)
     assert [(r["title"], r["region"], r["authors"], r["narrators"], r["abridged"]) for r in rows] == [
-        ("T-uk", "uk", ["Mara Quill"], ["Ada Penn"], False)
+        ("T-uk", "uk", ["Mara Quill"], ["Ada Penn", "Sam Hart"], False)
     ]
     assert C.audible_rows([], connect) == [] and C.audible_rows(["B0A"], lambda: None) == []
 
