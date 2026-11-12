@@ -229,7 +229,16 @@ def merge(
             .order_by(ListenPart.role, ListenPart.ordinal, ListenPart.id)
         )
     )
-    for p in [p for p in moved if p.role in ("match", "candidate") and p.linked_by != "user"]:
+    decided = {  # a person's approve, confirm or reject is only an event on the part (`apply.decide` leaves `linked_by` alone)
+        pid
+        for (pid,) in s.execute(
+            select(ListenEvent.listen_part_id).where(
+                ListenEvent.listen_part_id.in_([p.id for p in moved]), ListenEvent.actor_kind == "user"
+            )
+        )
+        if pid is not None
+    }
+    for p in [p for p in moved if p.role in ("match", "candidate") and p.linked_by != "user" and p.id not in decided]:
         unlink(
             s,
             p,

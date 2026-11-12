@@ -989,3 +989,18 @@ def test_discard_listen_retires_a_stray_file_without_leaving_it_in_any_listen(s,
     assert len(inputs) == 1 and inputs[0].detail["minutes"] == 565  # the stray's file is in no listen
     with pytest.raises(ValueError):
         repair.discard_listen(s, stray.id, a.id, reason="again")
+
+
+def test_a_match_a_person_confirmed_survives_a_merge(s, tmp_path):
+    by = _parts_listens(s, tmp_path, {"Books/Delta Title.m4b": 565, "Audible/Delta Title Again.m4b": 563})
+    _decide(s, by)
+    keep, absorbed = by[565], by[563]
+    match = s.scalars(
+        select(ListenPart).where(
+            ListenPart.listen_id == absorbed.id, ListenPart.role == "match", ListenPart.unlinked_at.is_(None)
+        )
+    ).one()
+    apply.decide(s, absorbed, match, "approve")  # a person's answer is an event on the part: `linked_by` stays "model"
+    assert match.linked_by == "model"
+    L.merge(s, keep, absorbed, actor_kind="user", reason="copies")
+    assert s.get(ListenPart, match.id).listen_id == keep.id and s.get(ListenPart, match.id).unlinked_at is None
