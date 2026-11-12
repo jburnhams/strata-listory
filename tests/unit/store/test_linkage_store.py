@@ -827,3 +827,49 @@ def test_the_listens_api_counts_parts_apart_from_copies(s, tmp_path):
     app.dependency_overrides[api.get_session] = lambda: s
     rows = TestClient(app).get("/api/listens").json()["rows"]
     assert len(rows) == 1 and rows[0]["parts"] == 2 and rows[0]["copies"] == 1
+
+
+def test_an_answer_given_after_the_model_relearned_goes_to_the_current_candidate_of_that_work(s, listens, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.linkage import api as A
+    from app.linkage import service
+
+    monkeypatch.setattr(service, "start", lambda factory, **kw: False)
+    apply.apply(s, data_for(listens, sure=False), params())
+    app = FastAPI()
+    app.include_router(A.router)
+    app.dependency_overrides[A.get_session] = lambda: s
+    c = TestClient(app)
+    item = c.get("/api/matches").json()["items"][0]
+    old = s.get(ListenPart, item["candidates"][0]["part_id"])
+    listen = s.get(Listen, item["listen_id"])
+    new = L.link(
+        s,
+        listen,
+        "candidate",
+        work_id=old.work_id,
+        ordinal=old.ordinal,
+        state="candidate",
+        score=old.score,
+        actor_kind="model",
+        reason="decided again after relearning",
+    )
+    L.unlink(
+        s, old, actor_kind="model", reason="replaced by a new identification"
+    )  # what a retrain does while the card is on screen
+    r = c.post("/api/matches/decide", json=dict(listen_id=listen.id, action="approve", part_id=old.id))
+    assert r.status_code == 200 and r.json()["status"] == "identified"
+    assert s.get(ListenPart, new.id).state == "accepted"  # the answer reached the new candidate of the same work
+    other = c.get("/api/matches").json()["items"][0]
+    gone = s.get(ListenPart, other["candidates"][0]["part_id"])
+    L.unlink(
+        s, gone, actor_kind="model", reason="replaced by a new identification"
+    )  # and this work is no longer a candidate at all
+    assert (
+        c.post(
+            "/api/matches/decide", json=dict(listen_id=other["listen_id"], action="approve", part_id=gone.id)
+        ).status_code
+        == 409
+    )

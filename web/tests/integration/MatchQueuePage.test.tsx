@@ -205,13 +205,18 @@ describe('MatchQueuePage', () => {
     expect(await screen.findByText('Every proposed match has an answer')).toBeInTheDocument()
   })
 
-  it('shows a relearn in progress, then reloads the list when it is done', async () => {
+  it('shows a relearn in progress, then offers the new order without moving the cards', async () => {
     matchState.training = true
-    setup(<MatchQueuePage />)
+    const { user } = setup(<MatchQueuePage />)
     expect(await screen.findByRole('button', { name: /Learning/ })).toBeInTheDocument()
+    expect(cards()).toHaveLength(4)
     matchState.training = false; matchState.queue = matchState.queue.slice(1)
-    await waitFor(() => expect(cards()).toHaveLength(3), { timeout: 6000 })
-  }, 10000)
+    expect(await screen.findByText(/The model has learned from your answers/, undefined, { timeout: 6000 })).toBeInTheDocument()
+    expect(cards()).toHaveLength(4)                                     // nothing moved under the reader
+    await user.click(screen.getByRole('button', { name: 'Show the new order' }))
+    await waitFor(() => expect(cards()).toHaveLength(3))
+    expect(screen.queryByText(/The model has learned from your answers/)).toBeNull()
+  }, 12000)
 
   it('says when relearning failed', async () => {
     server.use(http.get('/api/matches', () => HttpResponse.json({ summary: { waiting: 0, auto_unconfirmed: 0, confirmed: 2, not_found: 0, statuses: {}, decisions: 2, since_train: 2, model: 'fs-x', auto_retrain: 25, training: { running: false, finished: 1, error: 'nothing prepared', counts: null } }, items: [] })))

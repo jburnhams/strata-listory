@@ -320,10 +320,12 @@ export default function MatchQueuePage() {
   }, { settleMs: 3000 })
   const training = summary?.training
   const running = training?.running ?? false, wasRunning = useRef(false)
-  useEffect(() => {                  // relearned: the order and the candidates below have changed
+  const [relearned, setRelearned] = useState(false)
+  useEffect(() => {                  // relearned: the order and the candidates below have changed, but not under the reader's hands: say so and let them reload when ready (a card could move between the look and the key)
     if (running) wasRunning.current = true
-    else if (wasRunning.current) { wasRunning.current = false; void qc.invalidateQueries({ queryKey: ['match-queue'] }) }
-  }, [running, qc])
+    else if (wasRunning.current) { wasRunning.current = false; setRelearned(true) }
+  }, [running])
+  const showNewOrder = () => { setRelearned(false); void qc.invalidateQueries({ queryKey: ['match-queue'] }) }
   const retrainButton = (variant: 'outline' | 'default') => <AsyncButton variant={variant} phase={training?.running ? 'pending' : retrain.phase} error={retrain.error} onClick={() => void retrain.run()} labels={{ idle: 'Learn from my answers', pending: 'Learning…', done: 'Learned', error: 'Learning failed' }} />
 
   const pending = undoable.pending ? 1 : 0
@@ -344,6 +346,7 @@ export default function MatchQueuePage() {
           <Metric label="Not found" value={format.integer.format(summary.not_found)} note="None of the candidates was right" />
         </MetricStrip>
       )}
+      {relearned && <div role="status" className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-card p-3 type-body-sm"><span>The model has learned from your answers: the order and candidates below are out of date. Your answers still count.</span><Button variant="outline" onClick={showNewOrder}>Show the new order</Button></div>}
       {training?.error && <p role="alert" className="type-body-sm text-danger">Learning failed: {training.error}</p>}
       <QueueControls filters={filters} facets={facets} set={set} clear={filtered ? clear : null} />
       <InfiniteList state={load} label="Matches to check" skeleton={<Skeletons />} moreSkeleton={<Skeletons />} moreLabel="Show more matches" estimateSize={320} height={Math.max(480, Math.round(window.innerHeight * 0.75))} keepAtLeast={4}

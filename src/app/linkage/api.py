@@ -278,8 +278,20 @@ def decide(d: Decision, s: Session = Depends(get_session)):
     if listen is None or listen.merged_into_id is not None:
         raise HTTPException(404, "no such listen")
     part = s.get(ListenPart, d.part_id) if d.part_id else None
-    if part is not None and part.unlinked_at is not None and d.action == "approve":
-        raise HTTPException(409, "that candidate was replaced by a newer identification; reload")
+    if part is not None and part.listen_id == listen.id and part.unlinked_at is not None:
+        # The model relearned and decided this listen again while the card was on screen (or in its Undo window): the answer is about the work, so it goes to the listen's current candidate for the same work.
+        now = s.scalars(
+            select(ListenPart).where(
+                ListenPart.listen_id == listen.id,
+                ListenPart.role.in_(("match", "candidate")),
+                ListenPart.work_id == part.work_id,
+                ListenPart.unlinked_at.is_(None),
+                ListenPart.state != "rejected",
+            )
+        ).first()
+        if now is None:
+            raise HTTPException(409, "that work is no longer one of this listen's candidates; reload")
+        part = now
     try:
         apply.decide(s, listen, part, d.action)
     except ValueError as e:
