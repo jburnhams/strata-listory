@@ -278,6 +278,20 @@ def sibling_names(full: str, others: list[str]) -> bool:
     return len(stem) >= 4 and sum(len(share(o)) >= 0.8 * len(stem) for o in others) >= 0.8 * len(others)
 
 
+def named_files(
+    folder: str | None, file_ids: list[int], names: dict[tuple[str, int], list[str]]
+) -> list[tuple[int, str]]:
+    """(file id, name) for a group's members. Identical content is one file however many names it has, so a folder holding the same book twice under two naming schemes lists each file id twice (one member per path): the n-th member of an id takes the n-th name it has in this folder, so both schemes reach the structure rules (a missing name falls back to the last one, or to `file <id>`)."""
+    seen: dict[int, int] = {}
+    out = []
+    for fid in file_ids:
+        have = names.get((folder or "", fid)) or []
+        n = seen.get(fid, 0)
+        seen[fid] = n + 1
+        out.append((fid, have[min(n, len(have) - 1)] if have else f"file {fid}"))
+    return out
+
+
 def full_beside_its_parts(files: list[tuple[int, str]], tolerance: float = 0.03) -> tuple[int, str] | None:
     """The file whose length is the sum of all the others (at least three) within `tolerance`: one full-length copy lying beside the same book split into chapters. Needs durations (off in unit tests that set none)."""
     if len(files) < 4 or not all(f[0] in DURATIONS for f in files):
@@ -502,18 +516,20 @@ def load_tree(s: Session, root_group: PartFilegroup) -> Node:
     DURATIONS.update(
         {i: d for i, d in s.execute(select(PartFile.id, PartFile.duration_s).where(PartFile.duration_s.is_not(None)))}
     )
-    names: dict[tuple[str, int], str] = {}
+    names: dict[tuple[str, int], list[str]] = {}
     for fid, path in s.execute(
-        select(PartFileLocation.file_id, PartFileLocation.path).where(PartFileLocation.gone_at.is_(None))
+        select(PartFileLocation.file_id, PartFileLocation.path)
+        .where(PartFileLocation.gone_at.is_(None))
+        .order_by(PartFileLocation.path)
     ):
-        names[(os.path.dirname(path), fid)] = os.path.basename(path)
+        names.setdefault((os.path.dirname(path), fid), []).append(os.path.basename(path))
 
     def build(g: PartFilegroup) -> Node:
         n = Node(
             g.id,
             g.label,
             g.path,
-            [(m.file_id, names.get((g.path, m.file_id), f"file {m.file_id}")) for m in mem.get(g.id, []) if m.file_id],
+            named_files(g.path, [m.file_id for m in mem.get(g.id, []) if m.file_id], names),
         )
         n.subs = [build(groups[m.child_group_id]) for m in mem.get(g.id, []) if m.child_group_id]
         return n
