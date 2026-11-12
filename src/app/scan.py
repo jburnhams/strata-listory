@@ -109,6 +109,14 @@ def parse_name(name: str, parent: str = "") -> dict:
         out["title"] = s
     if not out["author"] and parent.lower() not in GENERIC:
         out["author"] = parent
+        if (
+            len(parent) >= 3
+            and out["title"].lower().startswith(parent.lower() + " ")
+            and len(out["title"]) - len(parent) > 2
+        ):
+            out["title"] = out["title"][len(parent) :].strip(
+                " -._"
+            )  # 'Author Title.mp3' in the folder 'Author': the author is not part of the title
     if m := re.match(r"^(\d{1,3})\s*[-.:]*\s+(.+)$", out["title"]):
         out["series_position"] = float(m[1])
         out["title"] = m[2]
