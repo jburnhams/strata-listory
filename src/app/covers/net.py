@@ -6,6 +6,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 
 USER_AGENT = "strata-listory/0.1 (personal audiobook catalogue)"
 MAX_BYTES = 40_000_000
@@ -37,11 +39,15 @@ _cool_until: dict[str, float] = {}
 
 
 def _retry_after(headers, attempt: int) -> float:
-    """Seconds to wait before trying again: the server's Retry-After when it sends one, else 2, 4, 8... seconds."""
+    """Seconds to wait before trying again: the server's Retry-After (a number of seconds or an HTTP date) when it sends one, else 2, 4, 8... seconds."""
+    value = headers.get("Retry-After", "") if headers is not None else ""
     try:
-        wait = float(headers.get("Retry-After", ""))
-    except (TypeError, ValueError, AttributeError):
-        wait = 2.0**attempt
+        wait = float(value)
+    except (TypeError, ValueError):
+        try:  # an HTTP date: wait until then
+            wait = (parsedate_to_datetime(value) - datetime.now(UTC)).total_seconds()
+        except (TypeError, ValueError):
+            wait = 2.0**attempt
     return max(0.5, min(wait, MAX_WAIT))
 
 

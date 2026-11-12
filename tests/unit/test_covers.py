@@ -363,3 +363,14 @@ def test_a_host_that_keeps_saying_429_is_left_alone_for_a_while(monkeypatch):
 def test_retry_after_is_capped_and_defaults_to_growing_waits():
     assert net._retry_after({"Retry-After": "9999"}, 1) == net.MAX_WAIT
     assert net._retry_after({}, 3) == 8.0 and net._retry_after(None, 1) == 2.0
+
+
+def test_retry_after_may_be_an_http_date():
+    from datetime import UTC, datetime, timedelta
+    from email.utils import format_datetime
+
+    soon = format_datetime(datetime.now(UTC) + timedelta(seconds=45), usegmt=True)
+    assert 40 <= net._retry_after({"Retry-After": soon}, 1) <= 45
+    past = format_datetime(datetime.now(UTC) - timedelta(seconds=45), usegmt=True)
+    assert net._retry_after({"Retry-After": past}, 1) == 0.5  # already passed: the smallest wait
+    assert net._retry_after({"Retry-After": "not a date"}, 2) == 4.0
