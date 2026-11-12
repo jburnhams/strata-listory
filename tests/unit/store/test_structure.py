@@ -442,3 +442,35 @@ def test_short_files_with_different_titles_are_not_taken_for_books(monkeypatch):
         == []
     )
     assert st.titled_books([(0, "Only One Long File.mp3")]) == []
+
+
+def test_named_files_gives_each_member_of_a_repeated_file_its_own_name():
+    names = {("/lib/B", 1): ["B 01.mp3", "XY01 B.mp3"], ("/lib/B", 2): ["B 02.mp3", "XY02 B.mp3"]}
+    assert st.named_files("/lib/B", [1, 2, 1, 2], names) == [
+        (1, "B 01.mp3"),
+        (2, "B 02.mp3"),
+        (1, "XY01 B.mp3"),
+        (2, "XY02 B.mp3"),
+    ]
+    assert st.named_files("/lib/B", [3], names) == [(3, "file 3")]  # no name known
+    assert st.named_files("/lib/B", [1, 1, 1], names)[2] == (
+        1,
+        "XY01 B.mp3",
+    )  # more members than names: the last name again
+
+
+def test_the_same_book_twice_under_two_naming_schemes_is_two_groups(s, tmp_path):
+    for i in range(1, 7):
+        content = f"chapter {i}".encode()  # identical bytes, so one file with two names
+        for rel in (
+            f"Books/Invented Book 06/Pat Author -06- Invented Book {i:03d}.mp3",
+            f"Books/Invented Book 06/PAT06{i:02d} Pat Author -06- Invented Book (Unb)(Reader).mp3",
+        ):
+            p = tmp_path / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(content)
+    ids = fg.scan_files(s, str(tmp_path))
+    assert len(set(ids.values())) == 6  # dedupe by content: twelve paths, six files
+    folders = fg.group_by_folder(s, str(tmp_path), ids)
+    top, totals = st.infer(s, folders)
+    assert totals.get("book") == 2  # two copies of the book, not one book of twelve chapters

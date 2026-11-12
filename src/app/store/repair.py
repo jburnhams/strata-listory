@@ -69,18 +69,22 @@ def _read_group(s: Session, listen_id: int):
     )
     if old is None or not members or any(m.file_id is None for m in members):
         raise ValueError("the input group must hold plain files only")
-    here: dict[
-        int, str
-    ] = {}  # the file's name in this group's own folder; a file's content can also sit elsewhere under another name (`scan_files` deduplicates by content)
-    elsewhere: dict[int, str] = {}
+    names: dict[
+        tuple[str, int], list[str]
+    ] = {}  # names in this group's own folder, plus (when a file has none here) wherever else its content is kept: `scan_files` deduplicates by content
+    elsewhere: dict[int, list[str]] = {}
     for fid, path in s.execute(
-        select(PartFileLocation.file_id, PartFileLocation.path).where(
-            PartFileLocation.gone_at.is_(None), PartFileLocation.file_id.in_([m.file_id for m in members])
-        )
+        select(PartFileLocation.file_id, PartFileLocation.path)
+        .where(PartFileLocation.gone_at.is_(None), PartFileLocation.file_id.in_([m.file_id for m in members]))
+        .order_by(PartFileLocation.path)
     ):
-        (here if os.path.dirname(path) == (old.path or "") else elsewhere).setdefault(fid, os.path.basename(path))
-    names = {**elsewhere, **here}
-    files = [(m.file_id, names.get(m.file_id, f"file {m.file_id}")) for m in members if m.file_id is not None]
+        if os.path.dirname(path) == (old.path or ""):
+            names.setdefault((old.path or "", fid), []).append(os.path.basename(path))
+        else:
+            elsewhere.setdefault(fid, []).append(os.path.basename(path))
+    for fid, have in elsewhere.items():
+        names.setdefault((old.path or "", fid), have[:1])
+    files = st.named_files(old.path, [m.file_id for m in members if m.file_id is not None], names)
     durations = {
         fid: (d or 0.0, size)
         for fid, d, size in s.execute(
