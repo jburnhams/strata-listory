@@ -120,7 +120,6 @@ def create_app():
     except ImportError:
         pass
 
-    initial_settings = settings.all_settings()
     jobs = JobQueue(lambda domain, kind, options: tasks.execute(jobs, domain, kind, options))
     app.state.jobs = jobs
 
@@ -167,7 +166,9 @@ def create_app():
 
     @app.get("/api/settings")
     def get_settings():
-        return read_models.get("settings", "current", initial_settings)
+        return (
+            settings.all_settings()
+        )  # read live: a saved copy went stale (and showed "not set") when the environment or settings file changed
 
     @app.put("/api/settings")
     def put_settings(s: SettingsIn):
@@ -195,7 +196,6 @@ def create_app():
             if s.library_dirs is not None:
                 settings.save({"library_dirs": extra or None})
             value = settings.all_settings()
-            read_models.save("settings", "current", value)
             return value
 
     @app.get("/api/books")
