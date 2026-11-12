@@ -229,6 +229,25 @@ def merge(
             .order_by(ListenPart.role, ListenPart.ordinal, ListenPart.id)
         )
     )
+    decided = {  # a person's approve, confirm or reject is only an event on the part (`apply.decide` leaves `linked_by` alone)
+        pid
+        for (pid,) in s.execute(
+            select(ListenEvent.listen_part_id).where(
+                ListenEvent.listen_part_id.in_([p.id for p in moved]), ListenEvent.actor_kind == "user"
+            )
+        )
+        if pid is not None
+    }
+    for p in [p for p in moved if p.role in ("match", "candidate") and p.linked_by != "user" and p.id not in decided]:
+        unlink(
+            s,
+            p,
+            actor_kind=actor_kind,
+            actor_ref=actor_ref,
+            run_id=run_id,
+            reason="the model's answer for a merged listen stays behind: the survivor keeps its own",
+        )
+        moved.remove(p)  # carrying them over left the survivor with one accepted match per absorbed listen
     top: dict[str, int] = {}
     for role, mx in s.execute(
         select(ListenPart.role, ListenPart.ordinal).where(
