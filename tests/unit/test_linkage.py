@@ -591,3 +591,46 @@ def test_tag_editor_placeholders_are_not_a_title_or_author():
         "split",
         "stripped",
     )
+
+
+def test_peel_takes_off_a_leading_author_and_series_code_only():
+    assert Q.peel("Pat Author RW01 The Invented Echo", ["Pat Author"]) == "The Invented Echo"
+    assert Q.peel("RW01 The Invented Echo", []) == "The Invented Echo"
+    assert Q.peel("HB04: Another Invented Road", []) == "Another Invented Road"
+    assert Q.peel("The Invented Echo", ["Pat Author"]) == "The Invented Echo"
+    assert Q.peel("Pat Author", ["Pat Author"]) == "Pat Author"  # never the whole title
+    assert Q.peel("Pat Authority Rules", ["Pat Author"]) == "Pat Authority Rules"  # whole words only
+    assert Q.peel("U2 by U2", []) == "U2 by U2"  # a code needs letters after it
+    assert Q.peel("R2D2 Handbook", []) == "R2D2 Handbook"  # no separator after the code: a name, not a code
+
+
+def test_a_title_read_with_the_author_and_a_series_code_also_gets_a_reading_without_them():
+    choices = dict(title="Pat Author RW01 The Invented Echo", author="Pat Author")
+    tags = dict(tagged=1, title=dict(value="Pat Author RW01 The Invented Echo", share=1.0))
+    folder = dict(title="RW01 The Invented Echo", author="Pat Author", folder="Pat Author RW01 The Invented Echo")
+    rs = Q.make_readings(choices, tags, folder)
+    assert any(r.title == "The Invented Echo" and r.author == "Pat Author" for r in rs)
+    assert [r.title for r in rs].count("The Invented Echo") == 1  # peeled once, however many readings it came from
+
+
+def test_peel_leaves_a_programme_and_its_series_number_alone():
+    assert Q.peel("Invented Show series 23 (2023)", ["Invented Show"]) == "Invented Show series 23 (2023)"
+    assert Q.peel("Invented Show Part 2", ["Invented Show"]) == "Invented Show Part 2"
+    assert Q.peel("Invented Show 12", ["Invented Show"]) == "Invented Show 12"
+
+
+def test_peel_keeps_a_one_word_or_generic_remainder_out():
+    assert Q.peel("Pat Author Upload", ["Pat Author"]) == "Pat Author Upload"  # one word left after an author prefix
+    assert Q.peel("Pat Author the book", ["Pat Author"]) == "Pat Author the book"
+    assert Q.peel("Pat Author RW01 Echo", ["Pat Author"]) == "Echo"  # a series code vouches for a one-word title
+    assert Q.peel("Pat Author RW01 The Invented Echo", ["Pat Author"]) == "The Invented Echo"
+
+
+def test_peel_keeps_a_title_that_merely_starts_with_a_label_word():
+    assert Q.peel("RW01 Book of the Dead", []) == "Book of the Dead"
+    assert Q.peel("Pat Author Part of the Machine", ["Pat Author"]) == "Part of the Machine"
+    assert Q.peel("Pat Author Season of Mists", ["Pat Author"]) == "Season of Mists"
+    assert Q.peel("Pat Author Part 2", ["Pat Author"]) == "Pat Author Part 2"  # a numbered label is not a title
+    assert Q.peel("RW01 Book 3", []) == "RW01 Book 3"
+    rs = Q.make_readings(dict(title="RW01 Book of the Dead", author="Pat Author"), {}, {})
+    assert any(r.title == "Book of the Dead" for r in rs)
