@@ -278,8 +278,30 @@ def decide(d: Decision, s: Session = Depends(get_session)):
     if listen is None or listen.merged_into_id is not None:
         raise HTTPException(404, "no such listen")
     part = s.get(ListenPart, d.part_id) if d.part_id else None
-    if part is not None and part.unlinked_at is not None and d.action == "approve":
-        raise HTTPException(409, "that candidate was replaced by a newer identification; reload")
+    if part is not None and part.unlinked_at is not None:
+        # a relearn replaced this candidate's link while the page kept showing it (the list is not redrawn under the pointer): the answer is about the work, so follow it to the listen's current link to the same work
+        target = (
+            (ListenPart.work_id == part.work_id)
+            if part.work_id is not None
+            else (ListenPart.record_id == part.record_id)
+        )
+        current = s.scalar(
+            select(ListenPart)
+            .where(
+                ListenPart.listen_id == part.listen_id,
+                target,
+                ListenPart.role.in_(("match", "candidate")),
+                ListenPart.unlinked_at.is_(None),
+            )
+            .order_by(ListenPart.id.desc())
+        )
+        if current is None and d.action == "approve":
+            raise HTTPException(409, "that candidate was replaced by a newer identification; reload")
+        if current is None and d.action == "reject":
+            return dict(
+                ok=True, status=listen.status, retraining=False
+            )  # already gone from the candidates: nothing left to exclude
+        part = current
     try:
         apply.decide(s, listen, part, d.action)
     except ValueError as e:
