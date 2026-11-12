@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app import settings
 from app.covers import fit, imaging, net, sources
+from app.linkage.query import input_minutes
 from app.store import listens as L
 from app.store.models import (
     CoverCandidate,
@@ -286,17 +287,17 @@ def target(s: Session, listen: Listen) -> fit.Target:
         t.recordings = {
             r["asin"]: float(r["minutes"]) for r in d.get("recordings") or [] if r.get("asin") and r.get("minutes")
         }
-    mins = [
-        float((p.detail or {}).get("minutes") or 0)
+    inputs = [
+        p.detail or {}
         for p in s.scalars(
-            select(ListenPart).where(
-                ListenPart.listen_id == listen.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None)
-            )
+            select(ListenPart)
+            .where(ListenPart.listen_id == listen.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+            .order_by(ListenPart.ordinal)
         )
     ]
-    # copies share a runtime (the first is the preferred copy); parts of one recording add up to it
-    parts = [m for m in mins if m]
-    t.minutes = parts[0] if parts else 0.0
+    # numbered parts add up to one recording's length, alternative copies stand on their own (the first is preferred)
+    mins = input_minutes(inputs)
+    t.minutes = mins[0] if mins else 0.0
     return t
 
 

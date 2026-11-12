@@ -113,19 +113,24 @@ class Choice(BaseModel):
 
 
 LEARN = threading.Lock()
+_again = threading.Event()  # a choice or a cleared choice arrived while a fit was running: fit once more when it ends
 
 
 def relearn() -> None:
-    """Refit the ranking's weights on every cover chosen so far, in the background (one at a time; a choice made while one runs is picked up by the next). The ranking is computed when a page is read, so the new weights apply at once."""
+    """Refit the ranking's weights on every cover chosen so far, in the background, one fit at a time: a request that arrives while one runs makes it fit once more when it ends, so the saved weights always catch up with the last choice (or the last cleared one). The ranking is computed when a page is read, so new weights apply at once."""
+    _again.set()
     if not LEARN.acquire(blocking=False):
         return
 
     def work():
         try:
-            with Session(_engine()) as s:
-                R.learn(s)
-        except Exception:  # the weights stay as they were; a person's choice is already saved
-            pass
+            while _again.is_set():
+                _again.clear()
+                try:
+                    with Session(_engine()) as s:
+                        R.learn(s)
+                except Exception:  # the weights stay as they were; a person's choice is already saved
+                    pass
         finally:
             LEARN.release()
 
@@ -144,8 +149,7 @@ def choose(listen_id: int, b: Choice, s: Session = Depends(get_session)):
             raise HTTPException(404, "no such picture")
     R.choose(s, listen, img, via="accept" if b.via == "accept" else "pick")
     s.commit()
-    if img is not None:
-        relearn()
+    relearn()  # a cleared choice too: its influence must leave the weights
     return dict(ok=True, chosen=b.image_id)
 
 

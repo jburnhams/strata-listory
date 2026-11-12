@@ -463,7 +463,7 @@ def test_accepting_the_suggestion_and_choosing_another_are_remembered_differentl
     client.post(f"/api/covers/{a.id}/choose", json=dict(image_id=covers[1]["image_id"]))
     assert s.scalars(select(ListenChoice).where(ListenChoice.unchosen_at.is_(None))).one().value["via"] == "pick"
     client.post(f"/api/covers/{a.id}/choose", json=dict(image_id=None))
-    assert len(relearns) == 2  # clearing a choice teaches nothing
+    assert len(relearns) == 3  # a cleared choice refits too: its influence must leave the weights
 
 
 def test_learning_from_chosen_covers_moves_the_weights_and_the_page_ranks_with_them(s):
@@ -511,3 +511,11 @@ def test_learning_skips_listens_with_nothing_to_compare_and_cleared_choices(s):
     R.choose(s, cleared, None)
     params = R.learn(s)
     assert params.labels == dict(chosen=0, accepted=1) and params.seen["audiobook cover"] == 1
+
+
+def test_the_target_runtime_adds_up_numbered_parts_of_one_recording(s):
+    a = make_listen(s, "Glass Orchard")
+    for n, minutes in enumerate((200.0, 190.0, 210.0), 1):
+        input_part(s, a, minutes, n).detail = {"minutes": minutes, "relation": "part"}
+    s.flush()
+    assert R.target(s, a).minutes == 600.0
