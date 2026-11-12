@@ -62,12 +62,12 @@ function Row({ r, selected, onToggle, result }: { r: QueueRow; selected: boolean
 
 export default function ProcessPage({ pollMs = 3000, mode = 'operations' }: { pollMs?: number; mode?: 'operations' | 'proposed' }) {
   const [showCompleted, setShowCompleted] = useState(false)
-  // Both reads are polled while the worker has something running or queued, and left alone otherwise.
-  const queueJob = useJob({ queryKey: ['queue'], queryFn: () => api.queue(), staleTime: 0, every: pollMs, isRunning: q => !!q.worker.busy || !!q.worker.queued || q.rows.some(r => r.state === 'running' || r.state === 'planning') })
+  const operationsJob = useJob({ queryKey: ['operations', mode, showCompleted], queryFn: () => mode === 'operations' ? api.operations(showCompleted) : Promise.resolve({ rows: [], busy: false }), staleTime: 0, every: pollMs, isRunning: o => o.busy })
+  // Both reads are polled while either worker (processing or ingest) has something running or queued, and left alone otherwise: an ingest job ends by creating the plan the queue shows.
+  const queueJob = useJob({ queryKey: ['queue'], queryFn: () => api.queue(), staleTime: 0, every: pollMs, isRunning: q => operationsJob.running || !!q.worker.busy || !!q.worker.queued || q.rows.some(r => r.state === 'running' || r.state === 'planning') })
   const { data, error } = readOf(queueJob)
   const [query, setQuery] = useState('')
   const matches = (...values: (string | number | null | undefined)[]) => query.toLocaleLowerCase().trim().split(/\s+/).every(term => values.join(' ').toLocaleLowerCase().includes(term))
-  const operationsJob = useJob({ queryKey: ['operations', mode, showCompleted], queryFn: () => mode === 'operations' ? api.operations(showCompleted) : Promise.resolve({ rows: [], busy: false }), staleTime: 0, every: pollMs, isRunning: o => o.busy })
   const { data: operations, error: operationsError } = readOf(operationsJob)
   const reload = queueJob.poll, reloadOperations = operationsJob.poll
   const [tab, setTab] = useState(mode === 'proposed' ? 'proposed' : 'all')
