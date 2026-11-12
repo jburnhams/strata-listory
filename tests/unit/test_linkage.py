@@ -634,3 +634,35 @@ def test_peel_keeps_a_title_that_merely_starts_with_a_label_word():
     assert Q.peel("RW01 Book 3", []) == "RW01 Book 3"
     rs = Q.make_readings(dict(title="RW01 Book of the Dead", author="Pat Author"), {}, {})
     assert any(r.title == "Book of the Dead" for r in rs)
+
+
+def test_shared_title_of_numbered_parts():
+    st = Q.shared_title
+    assert (
+        st(["The Invented Book-01 The Start", "The Invented Book-02 Next Bit", "The Invented Book-03 Last"])
+        == "The Invented Book"
+    )
+    assert st(["Invented Book Part 1", "Invented Book Part 2"]) == "Invented Book"
+    assert st(["The Start", "The Other"]) == ""  # one word in common: not a title
+    assert st(["One Alone"]) == ""
+    assert st(["Chapter 1", "Chapter 2"]) == ""  # only a label
+
+
+def test_a_listen_of_parts_is_read_under_the_title_its_parts_share():
+    parts = [dict(minutes=100, relation="part"), dict(minutes=120, relation="part")]
+    q = Q.from_parts(
+        1,
+        "book",
+        "The Invented Book-01 The Start",
+        dict(title="The Invented Book-01 The Start", author="Pat Author"),
+        {},
+        {},
+        parts,
+        part_titles=["The Invented Book-02 Next Bit"],
+    )
+    assert any(
+        r.source == "parts" and r.title == "The Invented Book" and r.author == "Pat Author" for r in q.readings
+    ) and q.minutes == [220.0]
+    copies = [dict(minutes=100), dict(minutes=100)]  # copies share a runtime and say nothing new
+    q = Q.from_parts(2, "book", "A Title", dict(title="A Title"), {}, {}, copies, part_titles=["A Title"])
+    assert not any(r.source == "parts" for r in q.readings)
