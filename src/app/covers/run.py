@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import settings
-from app.covers import imaging, net, sources
+from app.covers import fit, imaging, net, sources
 from app.store import listens as L
 from app.store.models import (
     CoverCandidate,
@@ -25,6 +25,12 @@ from app.store.models import (
 )
 
 FIELD = "cover"
+KINDS = (
+    "book",
+    "radio_series",
+    "radio_show",
+    "play",
+)  # a listen of any of these gets a cover search; the radio kinds ask the sources that know programmes
 
 
 def folder() -> str:
@@ -64,10 +70,10 @@ def accepted_work(s: Session, listen_id: int) -> tuple[Work, ListenPart] | None:
 def pending(
     s: Session, *, listen_ids: list[int] | None = None, force: bool = False, limit: int | None = None
 ) -> list[int]:
-    """Ids of book listens with an accepted or confirmed work and no chosen cover whose newest cover search is older than their newest change (or has none). `force` includes those already searched."""
+    """Ids of book and radio listens with an accepted or confirmed work and no chosen cover whose newest cover search is older than their newest change (or has none). `force` includes those already searched."""
     q = (
         select(Listen.id)
-        .where(Listen.kind == "book", Listen.merged_into_id.is_(None), Listen.retired_at.is_(None))
+        .where(Listen.kind.in_(KINDS), Listen.merged_into_id.is_(None), Listen.retired_at.is_(None))
         .order_by(Listen.id)
     )
     if listen_ids:
@@ -116,7 +122,7 @@ def first_file(s: Session, group_id: int) -> int | None:
 
 def context(s: Session, listen: Listen) -> sources.Context:
     """What the listen is known to be: the identifiers of its accepted work and the folder and files it was made from."""
-    ctx = sources.Context(title=listen.label)
+    ctx = sources.Context(title=listen.label, radio=listen.kind != "book")
     found = accepted_work(s, listen.id)
     if found:
         work, part = found
@@ -126,6 +132,8 @@ def context(s: Session, listen: Listen) -> sources.Context:
             ids.setdefault(i.scheme, []).append(i.value)
         ctx.asins = ids.get("asin", [])
         ctx.isbns = ids.get("isbn", [])
+        ctx.bbc_pids = ids.get("bbc_pid", [])
+        ctx.wikidata = [q for q in ids.get("wikidata", []) if q.startswith("Q")]
         ctx.ol_works = ids.get("ol_work", []) + [k for k in ids.get("work", []) if "/works/" in k]
         ctx.author = ", ".join((part.detail or {}).get("authors") or [])
     inp = s.scalars(
@@ -243,20 +251,96 @@ def distinct(s: Session, run_id: int) -> list[dict]:
                 imaging.distance(g["image"].dhash, img.dhash) <= 4
                 and abs(g["image"].width / g["image"].height - img.width / img.height) < 0.03
             ):
-                g["sources"].append(dict(source=c.source, ref=c.ref, label=c.label, url=c.url, image_id=img.id))
+                g["sources"].append(_entry(c, img))
                 if img.width * img.height > g["image"].width * g["image"].height:
                     g["image"] = img  # the largest of the near-duplicates stands for the group
                 break
         else:
-            groups.append(
-                dict(image=img, sources=[dict(source=c.source, ref=c.ref, label=c.label, url=c.url, image_id=img.id)])
-            )
+            groups.append(dict(image=img, sources=[_entry(c, img)]))
     groups.sort(key=lambda g: -(g["image"].width * g["image"].height))
     return groups
 
 
-def choose(s: Session, listen: Listen, image: CoverImage | None, *, actor_ref: str = "web") -> None:
-    """Save the preferred cover (the listen's `cover` choice), or clear it."""
+def _entry(c: CoverCandidate, img: CoverImage) -> dict:
+    return dict(
+        source=c.source,
+        ref=c.ref,
+        label=c.label,
+        url=c.url,
+        image_id=img.id,
+        width=img.width,
+        height=img.height,
+        bytes=img.size,
+    )
+
+
+def target(s: Session, listen: Listen) -> fit.Target:
+    """What the ranking compares the pictures to: the listen's kind and runtime, its identified title and the recordings of the work with their lengths (from the accepted match's detail)."""
+    t = fit.Target(kind="book" if listen.kind == "book" else "radio", title=listen.label)
+    found = accepted_work(s, listen.id)
+    if found:
+        work, part = found
+        d = part.detail or {}
+        t.title = work.title or t.title
+        t.recording = d.get("recording") or ""
+        t.recordings = {
+            r["asin"]: float(r["minutes"]) for r in d.get("recordings") or [] if r.get("asin") and r.get("minutes")
+        }
+    mins = [
+        float((p.detail or {}).get("minutes") or 0)
+        for p in s.scalars(
+            select(ListenPart).where(
+                ListenPart.listen_id == listen.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None)
+            )
+        )
+    ]
+    # copies share a runtime (the first is the preferred copy); parts of one recording add up to it
+    parts = [m for m in mins if m]
+    t.minutes = parts[0] if parts else 0.0
+    return t
+
+
+def ranked(s: Session, listen: Listen, run_id: int, params: fit.Params | None = None) -> list[fit.Scored]:
+    """The run's distinct pictures best fit first (`params`: what was learned from earlier choices; the saved ones by default)."""
+    return fit.rank(distinct(s, run_id), target(s, listen), fit.load() if params is None else params)
+
+
+def latest_run(s: Session, listen_id: int) -> CoverRun | None:
+    return s.scalars(
+        select(CoverRun)
+        .where(CoverRun.listen_id == listen_id, CoverRun.finished_at.is_not(None))
+        .order_by(CoverRun.id.desc())
+    ).first()
+
+
+def learn(s: Session) -> fit.Params:
+    """Fit the ranking's weights on the covers a person has chosen: each active choice of a listen whose latest search offered at least two pictures is an example (the chosen picture against the others), accepting the suggestion at half weight. Saves and returns the parameters."""
+    examples, counts = [], dict(chosen=0, accepted=0)
+    for c in s.scalars(
+        select(ListenChoice).where(
+            ListenChoice.field == FIELD, ListenChoice.unchosen_at.is_(None), ListenChoice.chosen_by == "user"
+        )
+    ):
+        image_id = (c.value or {}).get("image_id")
+        listen, run = s.get(Listen, c.listen_id), latest_run(s, c.listen_id)
+        if listen is None or run is None or image_id is None:
+            continue
+        groups = distinct(s, run.id)
+        at = next((i for i, g in enumerate(groups) if any(x["image_id"] == image_id for x in g["sources"])), None)
+        if at is None or len(groups) < 2:
+            continue
+        accepted = (c.value or {}).get("via") == "accept"
+        counts["accepted" if accepted else "chosen"] += 1
+        examples.append(
+            ([fit.signals(g, target(s, listen)) for g in groups], at, fit.ACCEPT_WEIGHT if accepted else 1.0)
+        )
+    params = fit.fit_params(examples, counts)
+    fit.save(params)
+    return params
+
+
+def choose(s: Session, listen: Listen, image: CoverImage | None, *, actor_ref: str = "web", via: str = "pick") -> None:
+    """Save the preferred cover (the listen's `cover` choice), or clear it. `via` is `accept` when the person took the suggested best fit as it was and `pick` for any other choice (it weighs differently when the ranking learns)."""
     if image is None:
         old = s.scalars(
             select(ListenChoice).where(
@@ -271,7 +355,7 @@ def choose(s: Session, listen: Listen, image: CoverImage | None, *, actor_ref: s
         s,
         listen,
         FIELD,
-        dict(image_id=image.id, sha256=image.sha256, width=image.width, height=image.height),
+        dict(image_id=image.id, sha256=image.sha256, width=image.width, height=image.height, via=via),
         actor_kind="user",
         actor_ref=actor_ref,
         reason="cover chosen",

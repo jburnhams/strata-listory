@@ -84,15 +84,16 @@ const listenRows = [
   { id: 2, label: 'Persuader', kind: 'book', status: 'grouped', files: 99, bytes: 5e8, minutes: 45, group_id: 3, path: '/audio/Lee Child/Persuader', copies: 1, parts: 2, author: 'Lee Child', narrator: null, year: null, kind_info: kindInfos.close },
   { id: 3, label: 'Dead Ringers (season 11)', kind: 'radio_series', status: 'grouped', files: 6, bytes: 1e8, minutes: 0, group_id: null, path: null, copies: 1, parts: 0, author: null, narrator: null, year: null, kind_info: kindInfos.series },
 ]
-export const coverState: { rows: import('../../src/api').CoverRow[]; waiting: number; chosen: { listen: number; image: number | null }[]; runs: { ids: number[] | null }[]; job: import('../../src/api').CoverJob } = { rows: [], waiting: 0, chosen: [], runs: [], job: { running: false, done: 0, total: 0, current: '', finished: null, error: '' } }
+export const coverState: { rows: import('../../src/api').CoverRow[]; waiting: number; chosen: { listen: number; image: number | null; via?: string }[]; runs: { ids: number[] | null }[]; job: import('../../src/api').CoverJob } = { rows: [], waiting: 0, chosen: [], runs: [], job: { running: false, done: 0, total: 0, current: '', finished: null, error: '' } }
 export function resetCovers() {
-  const src = (source: string, ref: string, image_id: number) => ({ source, ref, label: '', url: null, image_id })
+  const src = (source: string, ref: string, image_id: number, width = 500, height = 500, bytes = 80_000) => ({ source, ref, label: '', url: null, image_id, width, height, bytes })
+  const sig = (name: string, weight: number, detail = '') => ({ name, weight, detail })
   coverState.rows = [
-    { listen_id: 1, label: 'Glass Orchard', run_id: 1, searched: '2026-11-12T10:00:00', state: 'choose', chosen: null,
-      covers: [{ image_id: 11, width: 2400, height: 2400, bytes: 1_500_000, sources: [src('apple', '5', 11), src('audible', 'B0A', 11)], members: [11] }, { image_id: 12, width: 500, height: 750, bytes: 80_000, sources: [src('google', '978', 12)], members: [12] }],
+    { listen_id: 1, label: 'Glass Orchard', kind: 'book', run_id: 1, searched: '2026-11-12T10:00:00', state: 'choose', chosen: null,
+      covers: [{ image_id: 11, width: 2400, height: 2400, bytes: 1_500_000, sources: [src('apple', '5', 11, 2400, 2400, 1_500_000), src('audible', 'B0A', 11, 2400, 2400, 1_500_000)], members: [11], score: 5.4, share: 0.93, signals: [sig('audiobook cover', 2, 'apple, audible'), sig('resolution', 1.2, '2400×2400'), { ...sig('this recording', 1.5), prior: 1, learned: true }] }, { image_id: 12, width: 500, height: 750, bytes: 80_000, sources: [src('google', '978', 12, 500, 750)], members: [12], score: 2.6, share: 0.07, signals: [sig('print edition only', -0.5, 'google')] }],
       sources: [{ source: 'audible', status: 'found', detail: '', count: 1 }, { source: 'openlibrary', status: 'error', detail: 'error: down', count: 0 }, { source: 'google', status: 'limited', detail: 'rate limited: 9780000000002: HTTP Error 429', count: 0 }] },
-    { listen_id: 2, label: 'Salt Roads', run_id: 2, searched: '2026-11-12T10:05:00', state: 'none', chosen: null, covers: [], sources: [{ source: 'audible', status: 'skipped', detail: 'no ASIN known for this book', count: 0 }, { source: 'apple', status: 'none', detail: '8 results, none with a matching title', count: 0 }] },
-    { listen_id: 3, label: 'Third Book', run_id: 3, searched: '2026-11-12T10:09:00Z', state: 'chosen', chosen: 31, covers: [{ image_id: 31, width: 800, height: 800, bytes: 90_000, sources: [src('folder', 'cover.jpg', 31)], members: [31, 32] }], sources: [] },
+    { listen_id: 2, label: 'Salt Roads', kind: 'book', run_id: 2, searched: '2026-11-12T10:05:00', state: 'none', chosen: null, covers: [], sources: [{ source: 'audible', status: 'skipped', detail: 'no ASIN known for this book', count: 0 }, { source: 'apple', status: 'none', detail: '8 results, none with a matching title', count: 0 }] },
+    { listen_id: 3, label: 'Third Book', kind: 'radio_show', run_id: 3, searched: '2026-11-12T10:09:00Z', state: 'chosen', chosen: 31, covers: [{ image_id: 31, width: 800, height: 800, bytes: 90_000, sources: [src('folder', 'cover.jpg', 31, 800, 800, 90_000)], members: [31, 32], score: 1.8, share: 1, signals: [sig('from the listen\'s files', 1)] }], sources: [] },
   ]
   coverState.waiting = 2; coverState.chosen = []; coverState.runs = []; coverState.job = { running: false, done: 0, total: 0, current: '', finished: null, error: '' }
 }
@@ -107,8 +108,8 @@ export const handlers = [
   }),
   http.post('/api/covers/run', async ({ request }) => { const b = await request.json() as { listen_ids: number[] | null }; coverState.runs.push({ ids: b.listen_ids }); return HttpResponse.json({ started: true }, { status: 202 }) }),
   http.post('/api/covers/:id/choose', async ({ request, params }) => {
-    const b = await request.json() as { image_id: number | null }
-    coverState.chosen.push({ listen: Number(params.id), image: b.image_id })
+    const b = await request.json() as { image_id: number | null; via: string }
+    coverState.chosen.push({ listen: Number(params.id), image: b.image_id, via: b.via })
     coverState.rows = coverState.rows.map(r => r.listen_id === Number(params.id) ? { ...r, chosen: b.image_id, state: b.image_id ? 'chosen' : r.covers.length ? 'choose' : 'none' } : r)
     return HttpResponse.json({ ok: true, chosen: b.image_id })
   }),

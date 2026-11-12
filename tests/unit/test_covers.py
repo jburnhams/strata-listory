@@ -374,3 +374,78 @@ def test_retry_after_may_be_an_http_date():
     past = format_datetime(datetime.now(UTC) - timedelta(seconds=45), usegmt=True)
     assert net._retry_after({"Retry-After": past}, 1) == 0.5  # already passed: the smallest wait
     assert net._retry_after({"Retry-After": "not a date"}, 2) == 4.0
+
+
+def test_bbc_follows_the_programme_to_its_image_and_offers_the_original_and_the_1920_rendition(monkeypatch):
+    pages = {
+        "https://www.bbc.co.uk/programmes/b0aaaaaa.json": reply(200, b'{"programme": {"image": {"pid": "p0abcdef"}}}'),
+        "https://www.bbc.co.uk/programmes/b0bbbbbb.json": reply(404, error="nf"),
+        "https://www.bbc.co.uk/programmes/b0cccccc.json": reply(200, b'{"programme": {"image": {"pid": "../bad"}}}'),
+        "https://www.bbc.co.uk/programmes/b0dddddd.json": reply(200, b"<html>"),
+    }
+    monkeypatch.setattr(net, "get", lambda url, **k: pages[url])
+    items, rec = sources.bbc(sources.Context(radio=True, bbc_pids=["b0aaaaaa", "b0bbbbbb", "b0cccccc", "b0dddddd"]))
+    assert [i.url for i in items] == [
+        "https://ichef.bbci.co.uk/images/ic/raw/p0abcdef.jpg",
+        "https://ichef.bbci.co.uk/images/ic/1920x1080/p0abcdef.jpg",
+    ]
+    assert rec["status"] == "found" and rec["detail"] == "b0bbbbbb: not on the BBC; b0cccccc: the BBC lists no image"
+    assert sources.bbc(sources.Context(bbc_pids=["b0dddddd"]))[1]["detail"] == "error: b0dddddd: unreadable answer"
+    monkeypatch.setattr(net, "get", lambda url, **k: reply(429, error="slow"))
+    assert sources.bbc(sources.Context(bbc_pids=["b0aaaaaa", "b0bbbbbb"]))[1]["status"] == "limited"
+    monkeypatch.setattr(net, "get", lambda url, **k: reply(500, error="down"))
+    assert sources.bbc(sources.Context(bbc_pids=["b0aaaaaa"]))[1]["status"] == "error"
+
+
+def test_bbc_looks_a_radio_listen_up_by_title_when_no_programme_id_is_known(monkeypatch):
+    from app.identify import radioindex
+
+    monkeypatch.setattr(
+        radioindex,
+        "find",
+        lambda titles: [dict(source="bbc_radio", ref="b0aaaaaa"), dict(source="wikidata_radio", ref="Q1")],
+    )
+    assert sources.bbc_pids_for(sources.Context(radio=True, title="The Glass Hour")) == ["b0aaaaaa"]
+    assert sources.bbc_pids_for(sources.Context(radio=False, title="The Glass Hour")) == []
+    assert sources.bbc(sources.Context(radio=True))[1]["status"] == "skipped"
+
+
+def test_wikidata_offers_the_image_and_logo_of_each_item_from_commons(monkeypatch):
+    claim = lambda v: {"mainsnak": {"datavalue": {"value": v}}}
+    body = {"entities": {"Q7": {"claims": {"P18": [claim("Glass Hour.jpg")], "P154": [claim("Glass Hour logo.png")]}}}}
+    import json
+
+    pages = {
+        "https://www.wikidata.org/wiki/Special:EntityData/Q7.json": reply(200, json.dumps(body).encode()),
+        "https://www.wikidata.org/wiki/Special:EntityData/Q8.json": reply(200, b'{"entities": {"Q8": {"claims": {}}}}'),
+        "https://www.wikidata.org/wiki/Special:EntityData/Q9.json": reply(404, error="nf"),
+        "https://www.wikidata.org/wiki/Special:EntityData/Q10.json": reply(200, b"nope"),
+    }
+    monkeypatch.setattr(net, "get", lambda url, **k: pages[url])
+    items, rec = sources.wikidata(sources.Context(wikidata=["Q7", "Q8", "Q9", "Q10", "not-an-item"]))
+    assert [i.url for i in items] == [
+        "https://commons.wikimedia.org/wiki/Special:FilePath/Glass_Hour.jpg?width=2000",
+        "https://commons.wikimedia.org/wiki/Special:FilePath/Glass_Hour_logo.png?width=2000",
+    ]
+    assert rec["status"] == "found" and "Q8: no image" in rec["detail"] and "Q9: not on Wikidata" in rec["detail"]
+    monkeypatch.setattr(net, "get", lambda url, **k: reply(429, error="slow"))
+    assert sources.wikidata(sources.Context(wikidata=["Q7"]))[1]["status"] == "limited"
+    monkeypatch.setattr(net, "get", lambda url, **k: reply(500, error="down"))
+    assert sources.wikidata(sources.Context(wikidata=["Q7"]))[1]["status"] == "error"
+
+
+def test_podcast_artwork_is_for_radio_listens_whose_title_matches(monkeypatch):
+    body = b'{"results": [{"collectionName": "The Glass Hour", "collectionId": 5, "artworkUrl600": "https://i.mzstatic.com/x/600x600bb.jpg"}, {"collectionName": "Other", "collectionId": 6, "artworkUrl600": "https://i.mzstatic.com/y/600x600bb.jpg"}]}'
+    asked = []
+    monkeypatch.setattr(net, "get", lambda url, **k: asked.append(url) or reply(200, body))
+    items, rec = sources.podcast(sources.Context(radio=True, title="The Glass Hour"))
+    assert [(i.source, i.ref, i.url) for i in items] == [("podcast", "5", "https://i.mzstatic.com/x/3000x3000bb.jpg")]
+    assert "media=podcast" in asked[0] and rec["status"] == "found"
+    assert sources.podcast(sources.Context(radio=False, title="x"))[1]["status"] == "skipped"
+    assert sources.podcast(sources.Context(radio=True))[1]["status"] == "skipped"
+    monkeypatch.setattr(net, "get", lambda url, **k: reply(200, b'{"results": []}'))
+    assert sources.podcast(sources.Context(radio=True, title="The Glass Hour"))[1]["status"] == "none"
+    monkeypatch.setattr(net, "get", lambda url, **k: reply(429, error="slow"))
+    assert sources.podcast(sources.Context(radio=True, title="T"))[1]["status"] == "limited"
+    monkeypatch.setattr(net, "get", lambda url, **k: reply(200, b"nope"))
+    assert sources.podcast(sources.Context(radio=True, title="T"))[1]["status"] == "error"

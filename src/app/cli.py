@@ -216,7 +216,7 @@ def cmd_filegroups(args):
 
 
 def cmd_covers(args):
-    """Search for covers: every confirmed or accepted book listen that has no chosen cover and was not searched since it last changed (or the listens given, or all with --force). Downloads each source's largest picture into data/covers/; choose the preferred one on the Covers page."""
+    """Search for covers: every confirmed or accepted book or radio listen that has no chosen cover and was not searched since it last changed (or the listens given, or all with --force). Downloads each source's largest picture into data/covers/; choose the preferred one on the Covers page."""
     from omarchy_db import connect
     from sqlalchemy.orm import Session
 
@@ -224,6 +224,13 @@ def cmd_covers(args):
     from app.store.models import Listen
 
     with Session(connect("listory")) as s:
+        if args.learn:
+            params = R.learn(s)
+            print(
+                f"ranking learned from {params.labels}: "
+                + ", ".join(f"{k} x{v}" for k, v in sorted(params.mult.items()))
+            )
+            return 0
         todo = R.pending(s, listen_ids=args.ids or None, force=args.force or bool(args.ids), limit=args.limit)
         print(f"{len(todo)} listens to search")
         for n, lid in enumerate(todo, 1):
@@ -1020,6 +1027,11 @@ def main(argv=None):
     cvp.add_argument("ids", nargs="*", type=int, help="listen ids (default: every listen that needs a search)")
     cvp.add_argument("--force", action="store_true", help="search again even if searched since the listen last changed")
     cvp.add_argument("--limit", type=int, help="stop after this many listens")
+    cvp.add_argument(
+        "--learn",
+        action="store_true",
+        help="only refit the best-fit ranking's weights on the covers chosen so far (the page does it after each choice)",
+    )
     cvp.set_defaults(fn=cmd_covers)
     fgs = sub.add_parser(
         "filegroups-structure",
