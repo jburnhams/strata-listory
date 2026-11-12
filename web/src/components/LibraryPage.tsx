@@ -114,7 +114,7 @@ export default function LibraryPage() {
         empty={<EmptyState title="No books yet" action={<Button variant="default" onClick={() => void scan.run()}>Scan audiobook folder</Button>}>Scan the audiobook folder from Settings, or add a book by title above, and it will appear here.</EmptyState>}>
         {() => books.length === 0
           ? <EmptyState title="No books match these filters">Clear the search, or choose another workflow stage to see books that are already in the pipeline.</EmptyState>
-          : <DataTable caption="Library" columns={columns} rows={books} rowKey={b => String(b.id)} maxHeight={720} selection={{ selected: sel.selected, onChange: sel.onChange, rowLabel: b => `${b.title} (ID ${b.id})`, isSelectable: eligible }} />}
+          : <DataTable caption="Library" virtualizeFrom={2000} columns={columns} rows={books} rowKey={b => String(b.id)} maxHeight={720} selection={{ selected: sel.selected, onChange: sel.onChange, rowLabel: b => `${b.title} (ID ${b.id})`, isSelectable: eligible }} />}
       </DataView>
       <UndoBar undoable={undoable} />
       <p className="type-caption text-muted-foreground">Suggestions use data from Audible, Audnexus and <a className="underline" href="https://audiobookdb.org">audiobookdb.org</a>.</p>
