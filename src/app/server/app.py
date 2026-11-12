@@ -54,18 +54,6 @@ class IdsIn(BaseModel):
     ids: list[int]
 
 
-class IdentifyDecisionIn(BaseModel):
-    group: str = Field(min_length=1)
-    decision: Literal["approve", "reject"]
-    work: str = ""
-    retrain: bool = False
-
-
-class MatchDecisionIn(BaseModel):
-    basis: str = Field(min_length=64, max_length=64)
-    defer_continuation: bool = False
-
-
 class ScanIn(BaseModel):
     folder: str | None = None
 
@@ -330,66 +318,6 @@ def create_app():
         sort: Literal["strongest", "metadata", "newest", "oldest", "title"] | None = None,
     ):
         return dict(ingest.dashboard(offset=offset, phase=phase, sort=sort), worker=ingest_worker.status())
-
-    from app.ingest import match_review
-
-    @app.get("/api/match-reviews")
-    def match_reviews(
-        mode: Literal["automatic", "shortlist"] = "automatic",
-        offset: int = Query(default=0, ge=0),
-        q: str = "",
-        after: str | None = None,
-    ):
-        return ingest_guard(match_review.page, mode, offset, q, after)
-
-    @app.get("/api/match-reviews/{run_id}")
-    def match_review_detail(run_id: str):
-        return ingest_guard(match_review.detail, run_id)
-
-    @app.post("/api/match-reviews/{run_id}/{action}")
-    def match_review_decide(
-        run_id: str, action: Literal["accept", "unapprove", "confirm", "reject", "restore"], b: MatchDecisionIn
-    ):
-        ingest_guard(ingest_store.run_book_id, run_id)
-        return queued(
-            "ingest",
-            "match_review",
-            run_id=run_id,
-            action=action,
-            expected=b.basis,
-            **(dict(defer_continuation=True) if b.defer_continuation else {}),
-        )
-
-    @app.get("/api/identify/queue")
-    def identify_queue(limit: int = Query(default=10, ge=1, le=50), after: str | None = None):
-        from app.identify import service
-
-        return service.page(limit, after)
-
-    @app.post("/api/identify/decisions")
-    def identify_decide(b: IdentifyDecisionIn):
-        """Record a confirm/reject for a queued group as a training label, then (in the ingest worker, with the other approvals) carry it into the pipeline: an approve approves the book as the model's work. The job's result says what happened to the pipeline. `retrain` also queues a retrain + rescore."""
-        from app.identify import queue, service
-
-        item = service.find(b.group)
-        if item is None:
-            raise HTTPException(404, "no such queued group; refresh the queue")
-        work = b.work or item["work"]
-        queue.decide(item["item"], b.decision, work, item["files"], item["title"], ", ".join(item["authors"]))
-        if b.retrain:
-            jobs.submit("system", "identify", train=True)
-        return queued(
-            "ingest",
-            "identify_decision",
-            item=item,
-            decision=b.decision,
-            work=work,
-            **({"run_id": item["item"]["run_id"]} if item["item"].get("run_id") else {}),
-        )  # run_id at the top level scopes the job's lock to that run, like the Pipeline reviews
-
-    @app.post("/api/identify/refresh")
-    def identify_refresh(train: bool = False):
-        return queued("system", "identify", train=train)
 
     @app.get("/api/operations")
     def get_operations(completed: bool = False):

@@ -5,14 +5,12 @@ import { Navigate, Route, Routes, useParams } from 'react-router'
 import { AppShell, PageHeader, Tabs } from 'strata-react'
 import { BookOpen, FolderTree, Headphones, ListChecks, Settings, SlidersHorizontal } from 'lucide-react'
 import { api } from './api'
-import ReviewPage from './components/ReviewPage'
 import MatchQueuePage from './components/MatchQueuePage'
 import LibraryPage from './components/LibraryPage'
 import BookPage from './components/BookPage'
 import ProcessPage from './components/ProcessPage'
 import FinishedPage from './components/FinishedPage'
 import IngestPage from './components/IngestPage'
-import MatchReviewPage from './components/MatchReviewPage'
 import SettingsPage from './components/SettingsPage'
 import FilesPage from './components/FilesPage'
 import ListensPage from './components/ListensPage'
@@ -32,9 +30,8 @@ function Pipeline() {
   return (
     <div className="space-y-5">
       <PageHeader title="Pipeline" scope="Per-book approval stages" finding={{ text: 'Identification decisions made in Review are saved as training labels. These stages still move each book through the ingest pipeline.' }} />
-      <Tabs param="tab" label="Pipeline stage" items={[{ value: 'book', label: 'Book' }, { value: 'audiobook', label: 'Audiobook' }, { value: 'quality', label: 'Quality' }, { value: 'automatic', label: 'Automatic approvals' }, { value: 'shortlist', label: 'Match shortlist' }, { value: 'review', label: 'Old review' }]}>
-        {tab => tab === 'review' ? <ReviewPage /> : tab === 'automatic' || tab === 'shortlist' ? <MatchReviewPage key={tab} mode={tab} />
-          : <IngestPage key={tab} phase={tab === 'audiobook' || tab === 'quality' ? tab : 'metadata'} />}
+      <Tabs param="tab" label="Pipeline stage" items={[{ value: 'book', label: 'Book' }, { value: 'audiobook', label: 'Audiobook' }, { value: 'quality', label: 'Quality' }]}>
+        {tab => <IngestPage key={tab} phase={tab === 'audiobook' || tab === 'quality' ? tab : 'metadata'} />}
       </Tabs>
     </div>
   )
@@ -52,7 +49,7 @@ function Processing() {
 }
 
 // Paths from before the redesign keep working.
-const legacy: [string, string][] = [['automatic-approvals', '/pipeline?tab=automatic'], ['match-shortlist', '/pipeline?tab=shortlist'], ['audiobook-identification', '/pipeline?tab=audiobook'], ['metadata', '/pipeline?tab=book'], ['ingest', '/pipeline?tab=book'], ['book-identification', '/pipeline?tab=book'], ['quality', '/pipeline?tab=quality'], ['process', '/processing'], ['proposed', '/processing?tab=plans'], ['finished', '/processing?tab=finished']]
+const legacy: [string, string][] = [['automatic-approvals', '/pipeline?tab=book'], ['match-shortlist', '/pipeline?tab=book'], ['audiobook-identification', '/pipeline?tab=audiobook'], ['metadata', '/pipeline?tab=book'], ['ingest', '/pipeline?tab=book'], ['book-identification', '/pipeline?tab=book'], ['quality', '/pipeline?tab=quality'], ['process', '/processing'], ['proposed', '/processing?tab=plans'], ['finished', '/processing?tab=finished']]
 
 export default function App() {
   const health = useQuery({ queryKey: ['health'], queryFn: api.health, staleTime: Infinity })

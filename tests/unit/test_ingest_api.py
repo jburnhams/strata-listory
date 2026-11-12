@@ -343,20 +343,3 @@ def test_json_asset_reads_use_database_records_without_directory_traversal(clien
     assert client.get("/api/library/covers").json() == dict(ids=[book["id"]])
     assert client.get(f"/api/books/{book['id']}/output").json() == dict(chapters=[])
     assert client.get(f"/api/books/{book['id']}/details").status_code == 200
-
-
-def test_match_review_http_reads_are_saved_and_decisions_enqueue(client, monkeypatch):
-    from app.ingest import match_review
-
-    calls = []
-    monkeypatch.setattr(match_review, "page", lambda *args: dict(rows=[], total=0, offset=args[1], limit=10))
-    monkeypatch.setattr(match_review, "detail", lambda rid: dict(id=rid))
-    assert client.get("/api/match-reviews?mode=shortlist&offset=10&q=title").json()["offset"] == 10
-    assert client.get("/api/match-reviews/saved").json() == dict(id="saved")
-    assert client.get("/api/match-reviews?mode=bad").status_code == 422
-    assert client.get("/api/match-reviews?offset=-1").status_code == 422
-    monkeypatch.setattr(store, "run_book_id", lambda rid: 1)
-    monkeypatch.setattr(match_review, "accept", lambda **kw: calls.append(kw) or dict(changed=False))
-    assert client.post("/api/match-reviews/saved/accept", json=dict(basis="a" * 64)).json() == dict(changed=False)
-    assert calls == [dict(run_id="saved", expected="a" * 64)]
-    assert client.post("/api/match-reviews/saved/unapprove", json={}).status_code == 422

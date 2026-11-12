@@ -87,19 +87,6 @@ def cmd_list(args):
     return 0
 
 
-def cmd_evidence_report(args):
-    from app import evidence
-
-    try:
-        result = evidence.report(
-            args.ids, args.limit, args.stride, **({"fresh_openlibrary": True} if args.fresh_openlibrary else {})
-        )
-    except (ValueError, OSError) as e:
-        sys.exit(str(e))
-    print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
-    return 0
-
-
 def cmd_show(args):
     print(json.dumps(_run(catalogue.get_book, args.id), indent=1))
     return 0
@@ -366,28 +353,17 @@ def cmd_listens_kinds(args):
 
 
 def cmd_listens_identify_prepare(args):
-    """Find candidate works for every book listen in the local Open Library and Audible indexes and cache their comparison vectors (data/linkage/vectors.json; unchanged listens are reused). With --old-catalogue, also carry that SQLite catalogue's approvals over as labels."""
-    import json as _json
+    """Find candidate works for every book listen in the local Open Library and Audible indexes and cache their comparison vectors (data/linkage/vectors.json; unchanged listens are reused)."""
 
     from omarchy_db import connect
     from sqlalchemy.orm import Session
 
     from app.identify import audibleindex
     from app.identify import candidates as olc
-    from app.linkage import dataset, files, query
+    from app.linkage import dataset, query
 
     with Session(connect("listory")) as s:
         queries = query.load(s, kinds=tuple(args.kinds.split(",")))
-        if args.old_catalogue:
-            from app.identify import dataset as old
-
-            fs, paths = files.listen_files(s)
-            labels = dataset.old_labels(old.labelled_runs(args.old_catalogue), fs, paths)
-            dataset.folder().mkdir(parents=True, exist_ok=True)
-            (dataset.folder() / "old-labels.json").write_text(
-                _json.dumps({str(k): v for k, v in labels.items()}), encoding="utf8"
-            )
-            print(f"{len(labels)} listens labelled from the old catalogue")
     try:
         oc = olc.connect()
     except FileNotFoundError:
@@ -877,37 +853,6 @@ def cmd_openlibrary(args):
     return 0
 
 
-def cmd_identify(args):
-    from app import settings
-    from app.identify import queue, service
-
-    db = os.path.join(settings.data_dir(), "catalogue.db")
-    try:
-        if args.cmd == "identify-train":
-            result = service.train(db)
-        elif args.cmd == "identify-refresh":
-            result = service.refresh(db)
-        elif args.cmd == "identify-queue":
-            result = service.page(args.limit)
-        else:
-            item = next((s for s in service.page(50)["items"] if s["group"] == args.group), None)
-            if item is None:
-                sys.exit("no such queued group (refresh the queue?)")
-            queue.decide(
-                item["item"],
-                args.decision,
-                args.work or item["work"],
-                item["files"],
-                item["title"],
-                ", ".join(item["authors"]),
-            )
-            result = dict(recorded=args.decision, group=args.group)
-    except (ValueError, OSError, FileNotFoundError, ImportError) as e:
-        sys.exit(str(e))
-    print(json.dumps(result, indent=2, default=str))
-    return 0
-
-
 def cmd_serve(args):
     from app.server import app as server_app
 
@@ -942,21 +887,6 @@ def main(argv=None):
     ip.add_argument("phase", choices=("metadata", "audiobook", "quality"))
     ip.set_defaults(fn=cmd_ingest)
     sub.add_parser("ingest-status", help="stage metrics, runs and current thresholds").set_defaults(fn=cmd_ingest)
-    sub.add_parser(
-        "identify-train",
-        help="train the identification model from approvals and stored review decisions (needs requirements-model.txt)",
-    ).set_defaults(fn=cmd_identify)
-    sub.add_parser("identify-refresh", help="score the library and cache the review queue").set_defaults(
-        fn=cmd_identify
-    )
-    iq = sub.add_parser("identify-queue", help="next uncertain books by impact")
-    iq.add_argument("--limit", type=int, default=10)
-    iq.set_defaults(fn=cmd_identify)
-    idc = sub.add_parser("identify-decide", help="confirm or reject the suggested work for a queued group")
-    idc.add_argument("group")
-    idc.add_argument("decision", choices=("approve", "reject"))
-    idc.add_argument("--work", help="OpenLibrary work key (default: the suggestion)")
-    idc.set_defaults(fn=cmd_identify)
     check = sub.add_parser("doctor", help="check the environment")
     check.add_argument("--audio", action="store_true", help="also check NumPy, SciPy and native audio tools")
     check.set_defaults(fn=doctor)
@@ -985,19 +915,6 @@ def main(argv=None):
     ls.add_argument("--kind", choices=catalogue.KINDS)
     ls.add_argument("--json", action="store_true")
     ls.set_defaults(fn=cmd_list)
-    er = sub.add_parser(
-        "evidence-report",
-        help="read-only JSON identity report using stored metadata and every audio file; never approves processing",
-    )
-    er.add_argument("ids", nargs="*", type=int)
-    er.add_argument("--limit", type=int, default=20)
-    er.add_argument("--stride", type=int, default=1)
-    er.add_argument(
-        "--fresh-openlibrary",
-        action="store_true",
-        help="fetch and archive fresh Open Library search, work details and ratings; catalogue stays read-only",
-    )
-    er.set_defaults(fn=cmd_evidence_report)
     sh = sub.add_parser("show", help="show one book as JSON")
     sh.add_argument("id", type=int)
     sh.set_defaults(fn=cmd_show)
@@ -1086,9 +1003,6 @@ def main(argv=None):
         "--no-radio-details",
         action="store_true",
         help="do not fetch the BBC programme record of each candidate radio programme",
-    )
-    lip.add_argument(
-        "--old-catalogue", help="also take labels from the approvals in this old SQLite catalogue (data/catalogue.db)"
     )
     lip.add_argument(
         "--kinds",

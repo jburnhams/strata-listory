@@ -1,5 +1,7 @@
 # Frontend (strata-react)
 
+> **Retired 2026-11-12.** The code this document describes (the old per-book identification model and review queue, `match_review`, `training_cache`, `evidence-report`) was removed; identification now lives in `src/app/linkage/` and the Matches page ([listen-identification.md](listen-identification.md)). Kept as history.
+
 The web app (`web/`) is built on [strata-react](https://github.com/jburnhams/strata-react): its components, token contract and TanStack Query bridge, with a product theme (`web/src/theme.generated.css` from `palette.mjs` with the seed `#8a4b2a`, a book-cloth brown; `web/src/theme.css` for the status roles). Design rules come from [ux-research](https://github.com/jburnhams/ux-research): one question and one finding per screen, states in the types, one filled button per view, filters and tabs in the URL, reversible actions with Undo.
 
 ## The user journey
