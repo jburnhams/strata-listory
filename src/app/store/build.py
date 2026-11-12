@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 from app.store import listens as L
 from app.store.filegroups import finish_run, new_run
 from app.store.models import (
+    CoverCandidate,
+    CoverRun,
     Listen,
     ListenChoice,
     ListenEvent,
@@ -29,7 +31,14 @@ KIND_OF_GROUP = {"book": "book", "programme": "radio_series"}
 
 def clear(s: Session) -> None:
     """Remove every listen and what hangs off it (events, choices, parts); runs stay, detached."""
-    for model in (ListenEvent, ListenChoice, ListenPart, ListenKind):
+    for model in (
+        CoverCandidate,
+        CoverRun,
+        ListenEvent,
+        ListenChoice,
+        ListenPart,
+        ListenKind,
+    ):  # cover searches belong to a listen; the downloaded pictures stay and are found again by address
         s.execute(
             delete(model)
         )  # verdicts too: a rebuild starts the book / radio call afresh (a person's choices are labels again once `listens-kinds` runs; none survive the listens they were about)

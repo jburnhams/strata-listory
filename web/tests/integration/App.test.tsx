@@ -23,7 +23,7 @@ describe('App shell', () => {
 
   it('lists the flow from Files and moves between sections from the side navigation', async () => {
     const { user } = open('/')
-    expect(within(nav()).getAllByRole('link').map(a => a.textContent)).toEqual(['Files', 'Matches', 'Listens', 'Processing', 'Settings'])
+    expect(within(nav()).getAllByRole('link').map(a => a.textContent)).toEqual(['Files', 'Matches', 'Listens', 'Covers', 'Processing', 'Settings'])
     await user.click(within(nav()).getByRole('link', { name: 'Listens' }))
     expect(await screen.findByRole('heading', { name: 'Listens' })).toBeInTheDocument()
     await user.click(within(nav()).getByRole('link', { name: 'Settings' }))

@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Navigate, Route, Routes, useParams } from 'react-router'
 import { AppShell, PageHeader, Tabs } from 'strata-react'
-import { BookOpen, FolderTree, Headphones, ListChecks, Settings, SlidersHorizontal } from 'lucide-react'
+import { BookOpen, Image, FolderTree, Headphones, ListChecks, Settings, SlidersHorizontal } from 'lucide-react'
 import { api } from './api'
 import MatchQueuePage from './components/MatchQueuePage'
 import LibraryPage from './components/LibraryPage'
@@ -14,12 +14,14 @@ import IngestPage from './components/IngestPage'
 import SettingsPage from './components/SettingsPage'
 import FilesPage from './components/FilesPage'
 import ListensPage from './components/ListensPage'
+import CoversPage from './components/CoversPage'
 
-// The flow, top to bottom: raw files on disk, matches (what links file groups to works), listens (confirmed or accepted matches), processing; Library and Pipeline are the older per-book flow, kept at their paths until retired.
+// The flow, top to bottom: raw files on disk, matches (what links file groups to works), listens (confirmed or accepted matches), covers (a picture per listen), processing; Library and Pipeline are the older per-book flow, kept at their paths until retired.
 const nav = [
   { to: '/files', label: 'Files', icon: FolderTree },
   { to: '/', label: 'Matches', icon: ListChecks, end: true },
   { to: '/listens', label: 'Listens', icon: Headphones },
+  { to: '/covers', label: 'Covers', icon: Image },
   { to: '/processing', label: 'Processing', icon: SlidersHorizontal },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
@@ -60,6 +62,7 @@ export default function App() {
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/listens" element={<ListensPage />} />
         <Route path="/files" element={<FilesPage />} />
+        <Route path="/covers" element={<CoversPage />} />
         <Route path="/book/:id" element={<Book />} />
         <Route path="/pipeline" element={<Pipeline />} />
         <Route path="/processing" element={<Processing />} />

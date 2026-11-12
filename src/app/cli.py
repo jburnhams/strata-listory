@@ -215,6 +215,29 @@ def cmd_filegroups(args):
         return 0
 
 
+def cmd_covers(args):
+    """Search for covers: every confirmed or accepted book listen that has no chosen cover and was not searched since it last changed (or the listens given, or all with --force). Downloads each source's largest picture into data/covers/; choose the preferred one on the Covers page."""
+    from omarchy_db import connect
+    from sqlalchemy.orm import Session
+
+    from app.covers import run as R
+    from app.store.models import Listen
+
+    with Session(connect("listory")) as s:
+        todo = R.pending(s, listen_ids=args.ids or None, force=args.force or bool(args.ids), limit=args.limit)
+        print(f"{len(todo)} listens to search")
+        for n, lid in enumerate(todo, 1):
+            listen = s.get(Listen, lid)
+            run = R.search(s, listen)
+            s.commit()
+            found = len(R.distinct(s, run.id))
+            print(
+                f"{n}/{len(todo)} {listen.label}: {found} distinct cover{'s' if found != 1 else ''}"
+                + ("" if found else " (" + "; ".join(f"{x['source']} {x['status']}" for x in run.sources) + ")")
+            )
+    return 0
+
+
 def cmd_filegroups_structure(args):
     """Infer books, discs and series from the newest folder grouping and store them as a new grouping run (the folder grouping is untouched)."""
     from omarchy_db import connect
@@ -990,6 +1013,14 @@ def main(argv=None):
     fgp.add_argument("folder", nargs="?")
     fgp.add_argument("--workers", type=int, default=4)
     fgp.set_defaults(fn=cmd_filegroups)
+    cvp = sub.add_parser(
+        "covers",
+        help="search for covers of confirmed and accepted listens (every source, largest picture) into data/covers/",
+    )
+    cvp.add_argument("ids", nargs="*", type=int, help="listen ids (default: every listen that needs a search)")
+    cvp.add_argument("--force", action="store_true", help="search again even if searched since the listen last changed")
+    cvp.add_argument("--limit", type=int, help="stop after this many listens")
+    cvp.set_defaults(fn=cmd_covers)
     fgs = sub.add_parser(
         "filegroups-structure",
         help="infer books, discs and series from the newest folder grouping into a new grouping run",
