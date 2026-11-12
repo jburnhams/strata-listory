@@ -624,3 +624,13 @@ def test_peel_keeps_a_one_word_or_generic_remainder_out():
     assert Q.peel("Pat Author the book", ["Pat Author"]) == "Pat Author the book"
     assert Q.peel("Pat Author RW01 Echo", ["Pat Author"]) == "Echo"  # a series code vouches for a one-word title
     assert Q.peel("Pat Author RW01 The Invented Echo", ["Pat Author"]) == "The Invented Echo"
+
+
+def test_peel_keeps_a_title_that_merely_starts_with_a_label_word():
+    assert Q.peel("RW01 Book of the Dead", []) == "Book of the Dead"
+    assert Q.peel("Pat Author Part of the Machine", ["Pat Author"]) == "Part of the Machine"
+    assert Q.peel("Pat Author Season of Mists", ["Pat Author"]) == "Season of Mists"
+    assert Q.peel("Pat Author Part 2", ["Pat Author"]) == "Pat Author Part 2"  # a numbered label is not a title
+    assert Q.peel("RW01 Book 3", []) == "RW01 Book 3"
+    rs = Q.make_readings(dict(title="RW01 Book of the Dead", author="Pat Author"), {}, {})
+    assert any(r.title == "Book of the Dead" for r in rs)

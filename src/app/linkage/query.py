@@ -108,7 +108,9 @@ SERIES_CODE = re.compile(
     r"^[A-Za-z]{1,5}\d{1,3}(?=[\s._:-]+\S)[\s._:-]*"
 )  # 'RW01 ', 'HB04: ', 'MH2 - ' in front of a title
 
-NUMBERED = re.compile(r"^(?:series|season|episode|ep|part|pt|vol|volume|book|chapter|disc|cd|collection|\d)\b", re.I)
+NUMBERED = re.compile(
+    r"^(?:(?:series|season|episode|ep|part|pt|vol|volume|book|chapter|disc|disk|cd|collection)\.?\s*\d+\b|\d)", re.I
+)  # a numbered label ('Series 3', 'Part 2') or a bare number; a title that merely starts with one of these words ('Book of the Dead') is a title
 
 
 def peel(title: str, authors: list[str]) -> str:
