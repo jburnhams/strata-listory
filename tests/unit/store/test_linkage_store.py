@@ -412,6 +412,46 @@ def test_match_queue_carries_each_listens_kind_verdict_and_filters_by_it(s, list
     assert c.get("/api/matches?sort=bogus").status_code == 400
 
 
+def test_an_answer_on_a_candidate_a_relearn_replaced_follows_the_work_to_its_new_link(s, listens):
+    """The queue is not redrawn when the model relearns, so a card can still carry the id of a link the relearn unlinked and re-created: the answer is about the work, so it lands on the current link (a vanished work: reject is a no-op, approve is refused)."""
+    from datetime import datetime
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.linkage import api as A
+
+    apply.apply(s, data_for(listens, sure=False), params())
+    app = FastAPI()
+    app.include_router(A.router)
+    app.dependency_overrides[A.get_session] = lambda: s
+    c = TestClient(app)
+    a, b = c.get("/api/matches").json()["items"][:2]
+    ca, cb = a["candidates"][0]["part_id"], b["candidates"][0]["part_id"]
+    old = s.get(ListenPart, ca)
+    old.unlinked_at = datetime.now()
+    s.flush()
+    fresh = ListenPart(
+        listen_id=old.listen_id, role="candidate", work_id=old.work_id, ordinal=99, state="candidate", score=old.score
+    )
+    s.add(fresh)
+    gone = s.get(ListenPart, cb)
+    gone.unlinked_at = datetime.now()
+    s.flush()
+    assert (
+        c.post("/api/matches/decide", json=dict(listen_id=a["listen_id"], action="approve", part_id=ca)).json()[
+            "status"
+        ]
+        == "identified"
+    )
+    assert fresh.state == "accepted"
+    assert c.post("/api/matches/decide", json=dict(listen_id=b["listen_id"], action="reject", part_id=cb)).json()["ok"]
+    assert (
+        c.post("/api/matches/decide", json=dict(listen_id=b["listen_id"], action="approve", part_id=cb)).status_code
+        == 409
+    )
+
+
 def test_rerun_after_a_rejected_first_candidate_numbers_the_new_candidates_past_it(s, listens):
     """A person rejects the top review candidate; the rejection stays linked (it is the record of the decision) and keeps its ordinal, so the next run's candidates must not reuse it (`listen_part_active_ordinal`)."""
     p = params()

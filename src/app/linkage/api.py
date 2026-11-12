@@ -1,4 +1,4 @@
-"""The match queue (`/api/matches`): every book listen whose work the model has proposed and no person has decided yet, easiest first (highest probability), with everything known about the listen and each candidate work so one look is enough; and the decisions (approve / not this / none of these), which become labels for the next fit. Every `AUTO_RETRAIN` decisions the model is refitted and re-applied in the background, so confirming easy matches lets it accept more on its own."""
+"""The match queue (`/api/matches`): every book listen whose work the model has proposed and no person has decided yet, easiest first (highest probability), with everything known about the listen and each candidate work so one look is enough; and the decisions (approve / not this / none of these), which become labels for the next fit. Every `AUTO_RETRAIN` decisions the model is refitted and re-applied in the background (the page shows a Refresh button when it is done and never redraws the list itself), so confirming easy matches lets it accept more on its own."""
 
 from __future__ import annotations
 
@@ -278,8 +278,30 @@ def decide(d: Decision, s: Session = Depends(get_session)):
     if listen is None or listen.merged_into_id is not None:
         raise HTTPException(404, "no such listen")
     part = s.get(ListenPart, d.part_id) if d.part_id else None
-    if part is not None and part.unlinked_at is not None and d.action == "approve":
-        raise HTTPException(409, "that candidate was replaced by a newer identification; reload")
+    if part is not None and part.unlinked_at is not None:
+        # a relearn replaced this candidate's link while the page kept showing it (the list is not redrawn under the pointer): the answer is about the work, so follow it to the listen's current link to the same work
+        target = (
+            (ListenPart.work_id == part.work_id)
+            if part.work_id is not None
+            else (ListenPart.record_id == part.record_id)
+        )
+        current = s.scalar(
+            select(ListenPart)
+            .where(
+                ListenPart.listen_id == part.listen_id,
+                target,
+                ListenPart.role.in_(("match", "candidate")),
+                ListenPart.unlinked_at.is_(None),
+            )
+            .order_by(ListenPart.id.desc())
+        )
+        if current is None and d.action == "approve":
+            raise HTTPException(409, "that candidate was replaced by a newer identification; reload")
+        if current is None and d.action == "reject":
+            return dict(
+                ok=True, status=listen.status, retraining=False
+            )  # already gone from the candidates: nothing left to exclude
+        part = current
     try:
         apply.decide(s, listen, part, d.action)
     except ValueError as e:
