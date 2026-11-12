@@ -278,6 +278,29 @@ def sibling_names(full: str, others: list[str]) -> bool:
     return len(stem) >= 4 and sum(len(share(o)) >= 0.8 * len(stem) for o in others) >= 0.8 * len(others)
 
 
+BOOK_MINUTES = 150  # every file at least this long: a chapter file is rarely more than two hours, a book is
+CODE = re.compile(r"\b[a-z]{0,4}\d+[a-z]?\b")  # numbering and series codes: 01, 1x01, HB04, MH02
+NUMBERING_WORDS = re.compile(
+    r"\b(?:part|pt|chapter|chap|ch|disc|disk|cd|track|episode|ep|vol|volume|book|unabridged|abridged)\b"
+)
+
+
+def titled_books(files: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """The files themselves when they are several book-length files each named by a title of its own ('Author - Title One.mp3', 'Author - Title Two.mp3'...), or []. Needs durations for every file. Chapter files fail it: they are shorter than `BOOK_MINUTES`, or what differs between their names is only a number ('Part 1', '01', '1x04'), or the same words ('01 Title', '02 Title')."""
+    if len(files) < 2 or not all(f[0] in DURATIONS and DURATIONS[f[0]] / 60 >= BOOK_MINUTES for f in files):
+        return []
+    stems = [os.path.splitext(f[1])[0].lower() for f in files]
+    prefix = os.path.commonprefix(stems)
+    prefix = (
+        prefix[: len(re.match(r".*?(?=[^a-z0-9]*[a-z0-9]*$)", prefix).group(0))] if prefix else ""
+    )  # whole words only
+    left = [NUMBERING_WORDS.sub(" ", CODE.sub(" ", s[len(prefix) :])) for s in stems]
+    keys = [re.sub(r"[^a-z]", "", x) for x in left]
+    if any(len(k) < 4 for k in keys) or len(set(keys)) != len(keys):
+        return []
+    return list(files)
+
+
 def named_files(
     folder: str | None, file_ids: list[int], names: dict[tuple[str, int], list[str]]
 ) -> list[tuple[int, str]]:
@@ -324,6 +347,12 @@ def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[in
     if full:  # the same book twice in one folder: whole, and split into chapters; two groups, which the copies step then joins as copies
         out.append(("book", [full], {"reason": "a whole-book file with its split chapters beside it"}))
         rest = [f for f in rest if f is not full]
+    books = titled_books(rest)
+    if (
+        books
+    ):  # several long files, each with a title of its own: a folder of one author's books, not the chapters of one
+        out += [("book", [f], {"reason": "a long file with a title of its own among several"}) for f in books]
+        rest = []
     by_season = split_by_season(rest) if rest else []
     parts = by_season if len(by_season) > 1 else (split_by_shape(rest) if rest else [])
     judged = [judge(p) for p in parts]
