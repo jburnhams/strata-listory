@@ -131,7 +131,29 @@ def peel(title: str, authors: list[str]) -> str:
     return t
 
 
-def make_readings(choices: dict, tags: dict, folder: dict, file: dict | None = None, prefix: str = "") -> list[Reading]:
+PART_WORDS = re.compile(
+    r"part|pt|chapter|chap|ch|disc|disk|cd|track|episode|ep"
+)  # not "book" or "volume": those end real titles
+
+
+def shared_title(titles: list[str]) -> str:
+    """The title the parts of one listen share ('The Invented Book-01 The Start', 'The Invented Book-02 Next' -> 'The Invented Book'): whole words in common at the start, taken apart at every separator, trailing numbers and Part/Chapter words dropped. '' unless two or more titles share at least two words (or a long one)."""
+    toks = [re.findall(r"[^\W_]+(?:'[^\W_]+)?", t) for t in titles if t]
+    if len(toks) < 2:
+        return ""
+    n = 0
+    while n < min(map(len, toks)) and len({w[n].lower() for w in toks}) == 1:
+        n += 1
+    words = toks[0][:n]
+    while words and (words[-1].isdigit() or PART_WORDS.fullmatch(words[-1].lower())):
+        words.pop()
+    cut = " ".join(words)
+    return cut if cut and not GENERIC.match(cut) and (len(words) >= 2 or len(cut) >= 8) else ""
+
+
+def make_readings(
+    choices: dict, tags: dict, folder: dict, file: dict | None = None, prefix: str = "", parts_title: str = ""
+) -> list[Reading]:
     """Readings in order of trust (`file`: the parsed name of a single-file listen's file, which is the title itself, not a chapter name, and is read even when tags give a different title), duplicates (same title and author key) removed. Each yields its own numbered/stripped variants via `identify.local`."""
 
     def tag(f, minimum=0.5):
@@ -145,6 +167,10 @@ def make_readings(choices: dict, tags: dict, folder: dict, file: dict | None = N
     ):  # a placeholder ("Album") chosen from tags says nothing
         author = str(choices.get("author") or "")
         raw.append(Reading(str(choices["title"]), "" if GENERIC.match(author) else author, "chosen"))
+    if (
+        parts_title
+    ):  # the numbered parts of one listen share a title, which none of the parts' own tags and names say alone
+        raw.append(Reading(parts_title, str(choices.get("author") or ""), "parts"))
     for title_field in ("album", "title"):
         if (t := tag(title_field)) and (title_field == "album" or (tags.get("tagged") or 0) <= 3):
             raw.append(Reading(t, tag("album_artist") or tag("artist"), "tags"))
@@ -205,6 +231,7 @@ def from_parts(
     band: str = "",
     filename: str = "",
     names: list[str] | None = None,
+    part_titles: list[str] | None = None,
 ) -> Query:
     """A Query from the listen's pieces (kept separate from the database read so tests can build one directly)."""
     narr = choices.get("narrator") or (tags.get("narratedby") or {}).get("value") or folder.get("narrator") or ""
@@ -222,7 +249,12 @@ def from_parts(
         kind,
         label,
         make_readings(
-            choices, tags, folder, scan.parse_name(filename) if filename else None, common_title(names or [])
+            choices,
+            tags,
+            folder,
+            scan.parse_name(filename) if filename else None,
+            common_title(names or []),
+            shared_title([label, *(part_titles or [])]) if any(i.get("relation") == "part" for i in inputs) else "",
         ),
         tk.people(narr),
         asin,
@@ -264,11 +296,12 @@ def load(
           where p.listen_id = l.id and p.role = 'input' and p.unlinked_at is null order by p.ordinal limit 1) as file_path,
         (select array_agg(regexp_replace(loc.path, '^.*/', '') order by loc.path) from (select p.filegroup_id from listen_part p where p.listen_id = l.id and p.role = 'input' and p.unlinked_at is null and p.filegroup_id is not null order by p.ordinal limit 1) f
           join part_filegroup_member m on m.group_id = f.filegroup_id and m.file_id is not null join part_file_location loc on loc.file_id = m.file_id and loc.gone_at is null) as names
+        , (select array_agg(a.label order by a.id) from listen a where a.merged_into_id = l.id) as absorbed
         from listen l where {where} order by l.id"""),
         dict(kinds=list(kinds), ids=list(ids or [])),
     ).all()
     out = []
-    for lid, kind, label, choices, records, inputs, band, file_path, names in rows:
+    for lid, kind, label, choices, records, inputs, band, file_path, names, absorbed in rows:
         records = records or {}
         out.append(
             from_parts(
@@ -282,6 +315,7 @@ def load(
                 band or "",
                 os.path.basename(file_path or ""),
                 names or [],
+                absorbed or [],
             )
         )
     return out
