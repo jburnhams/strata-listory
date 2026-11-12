@@ -6,7 +6,7 @@ import { mock, server } from '../utils/server'
 
 /** Operations are filtered by state chips (toggles); this sets exactly the given ones on. */
 async function only(user: ReturnType<typeof setup>['user'], ...names: string[]) {
-  for (const name of ['Failed', 'In progress', 'Pending', 'Completed']) {
+  for (const name of ['Failed', 'In progress', 'Pending', 'Awaiting approval', 'Completed']) {
     const chip = await screen.findByRole('button', { name: new RegExp(`^${name} \\(`) })
     if ((chip.getAttribute('aria-pressed') === 'true') !== names.includes(name)) await user.click(chip)
   }
@@ -118,6 +118,10 @@ it('shows ingest queues and failures by default and completed operations on requ
   expect(screen.getByText('Audio analysis')).toBeInTheDocument()
   expect(screen.getByText('Provider unavailable')).toBeInTheDocument()
   expect(screen.queryByText('Earlier operation')).toBeNull()
+  expect(screen.queryByText('Metadata to approve')).toBeNull()                           // an old ingest approval waiting for a person is not queued work
+  await user.click(screen.getByRole('button', { name: /^Awaiting approval \(1\)/ }))
+  expect(await screen.findByText('Metadata to approve')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: /^Awaiting approval/ }))
   expect(screen.getByRole('link', { name: 'Review quality' })).toHaveAttribute('href', '#/pipeline?tab=quality')
   await user.click(screen.getByRole('button', { name: 'Retry analysis' }))
   expect(retried).toBe(1)
