@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Navigate, Route, Routes, useParams } from 'react-router'
 import { AppShell, PageHeader, Tabs } from 'strata-react'
-import { BookOpen, FolderTree, Headphones, Library as LibraryIcon, ListChecks, Settings, SlidersHorizontal, Workflow } from 'lucide-react'
+import { BookOpen, FolderTree, Headphones, ListChecks, Settings, SlidersHorizontal } from 'lucide-react'
 import { api } from './api'
 import ReviewPage from './components/ReviewPage'
 import MatchQueuePage from './components/MatchQueuePage'
@@ -17,12 +17,11 @@ import SettingsPage from './components/SettingsPage'
 import FilesPage from './components/FilesPage'
 import ListensPage from './components/ListensPage'
 
+// The flow, top to bottom: raw files on disk, matches (what links file groups to works), listens (confirmed or accepted matches), processing; Library and Pipeline are the older per-book flow, kept at their paths until retired.
 const nav = [
-  { to: '/', label: 'Matches', icon: ListChecks, end: true },
-  { to: '/library', label: 'Library', icon: LibraryIcon },
-  { to: '/listens', label: 'Listens', icon: Headphones },
   { to: '/files', label: 'Files', icon: FolderTree },
-  { to: '/pipeline', label: 'Pipeline', icon: Workflow },
+  { to: '/', label: 'Matches', icon: ListChecks, end: true },
+  { to: '/listens', label: 'Listens', icon: Headphones },
   { to: '/processing', label: 'Processing', icon: SlidersHorizontal },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]

@@ -13,7 +13,7 @@ export const hours = (minutes: number) => minutes >= 60 ? `${Math.floor(minutes 
 
 export default function ListensPage() {
   const [params, setParams] = useSearchParams()
-  const q = params.get('q') ?? '', kind = params.get('kind') ?? ''
+  const q = params.get('q') ?? '', kind = params.get('kind') ?? '', matchTab = params.get('match') ?? '', match = matchTab === '' ? 'matched' : matchTab === 'all' ? '' : matchTab
   const [typed, setTyped] = useState(q)
   useEffect(() => { setTyped(q) }, [q])
   const setParam = (k: string, v: string) => setParams(p => { const n = new URLSearchParams(p); if (v) n.set(k, v); else n.delete(k); return n }, { replace: true })
@@ -22,7 +22,7 @@ export default function ListensPage() {
     const t = setTimeout(() => setParam('q', typed.trim()), 250)
     return () => clearTimeout(t)
   }, [typed]) // eslint-disable-line react-hooks/exhaustive-deps
-  const load = useLoad({ queryKey: ['listens', q, kind], queryFn: () => listenApi.list(q, kind) })
+  const load = useLoad({ queryKey: ['listens', q, kind, match], queryFn: () => listenApi.list(q, kind, '', match) })
   const columns: Column<ListenRow>[] = [
     { key: 'label', header: 'Listen', sort: (a, b) => a.label.localeCompare(b.label), cell: l => <div className="min-w-0"><p>{l.group_id ? <Link className="underline" to={`/files?group=${l.group_id}`}>{l.label}</Link> : l.label}</p><p className="type-body-sm text-muted-foreground">{[l.author, l.narrator && `read by ${l.narrator}`, l.year].filter(Boolean).join(' · ')}</p><p className="type-caption text-muted-foreground break-all">{l.path}</p></div> },
     { key: 'kind', header: 'Kind', cell: l => <KindInfo listenId={l.id} kind={l.kind} info={l.kind_info} /> },
@@ -39,6 +39,7 @@ export default function ListensPage() {
       <Field label="Search listens" hint="Every word must appear in the title, author, narrator or folder path">
         <Input type="search" value={typed} onChange={e => setTyped(e.target.value)} placeholder="e.g. lee child" />
       </Field>
+      <Tabs param="match" label="Match state" items={[{ value: '', label: 'Confirmed and accepted' }, { value: 'confirmed', label: 'Confirmed by you' }, { value: 'accepted', label: 'Accepted by the model' }, { value: 'unmatched', label: 'Not matched yet' }, { value: 'all', label: 'All' }]}>{() => null}</Tabs>
       <Tabs param="kind" label="Kind of listen" items={[{ value: '', label: 'All' }, ...Object.keys(tabs).map(k => ({ value: k, label: `${KIND_LABEL[k] ?? k} (${tabs[k]})` })), ...(load.status === 'ready' && load.data.not_book > 0 ? [{ value: 'not-book', label: `${KIND_LABEL['not-book']} (${load.data.not_book})` }] : []), ...(load.status === 'ready' && load.data.review > 0 ? [{ value: 'review', label: `${KIND_LABEL.review} (${load.data.review})` }] : [])]}>
         {() => (
           <DataView state={load} isEmpty={d => d.rows.length === 0} skeleton={<div className="space-y-3">{[0, 1, 2].map(i => <Skeleton key={i} className="h-10 w-full" />)}</div>}

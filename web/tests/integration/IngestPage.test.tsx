@@ -259,8 +259,8 @@ it('moves through book, audiobook and quality pages with distinct approvals', as
   await user.click(await screen.findByRole('button', { name: 'Approve quality and propose processing' }))
   expect(await screen.findByText('No books awaiting review.')).toBeInTheDocument()
   expect(screen.queryByRole('searchbox')).toBeNull()
-  await user.click(screen.getByRole('link', { name: 'Library' }))
-  expect(await screen.findByRole('heading', { name: 'Library' })).toBeInTheDocument()
+  await user.click(screen.getByRole('link', { name: 'Listens' }))
+  expect(await screen.findByRole('heading', { name: 'Listens' })).toBeInTheDocument()
 })
 
 it('keeps incomplete or unsupported metadata unapprovable and shows unknown recording fields', async () => {

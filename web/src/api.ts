@@ -183,7 +183,7 @@ export interface KindInfoData { kind: string; guess: string; band: 'broadcast' |
 export interface ListenRow { id: number; label: string; kind: 'book' | 'radio_series' | 'radio_show' | 'play' | 'other'; kind_info: KindInfoData | null; status: string; files: number; bytes: number; minutes: number; group_id: number | null; path: string | null; copies: number; parts: number; author: string | null; narrator: string | null; year: number | null }
 export interface ListenList { total: number; kinds: Record<string, number>; review: number; not_book: number; rows: ListenRow[] }
 export const listenApi = {
-  list: (q = '', kind = '', status = '', limit = 500) => req<ListenList>(`/api/listens?${new URLSearchParams({ q, kind, status, limit: String(limit) })}`),
+  list: (q = '', kind = '', status = '', match = '', limit = 500) => req<ListenList>(`/api/listens?${new URLSearchParams({ q, kind, status, match, limit: String(limit) })}`),
   setKind: (id: number, kind: string) => req<{ ok: boolean; retraining: boolean; reidentified?: boolean; kind_info: KindInfoData | null }>(`/api/listens/${id}/kind`, send('POST', { kind })),
 }
 
