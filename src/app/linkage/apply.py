@@ -8,6 +8,9 @@ A listen with a match a person linked or decided is left alone. Rerunning replac
 
 from __future__ import annotations
 
+import os
+import re
+
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -409,6 +412,9 @@ def merge_parts(
     out = []
     for work_id, ids in by_work.items():
         keyed: dict[str, list[tuple[tuple[str, ...], int, ListenPart, float]]] = {}
+        chapters: dict[
+            str, list[tuple[tuple[str, ...], int, ListenPart, float]]
+        ] = {}  # numbered folders with titles of their own under one parent: 01 The Arrest, 02 Sorry...
         for lid in sorted(ids):
             inputs = list(
                 s.scalars(
@@ -422,6 +428,11 @@ def merge_parts(
             labels = [
                 s.scalar(select(PartFilegroup.label).where(PartFilegroup.id == x.filegroup_id)) or "" for x in inputs
             ]
+            if len(inputs) == 1 and (lead := re.match(r"\s*(\d{1,3})\b", labels[0])) and inputs[0].detail:
+                path = s.scalar(select(PartFilegroup.path).where(PartFilegroup.id == inputs[0].filegroup_id)) or ""
+                chapters.setdefault(os.path.dirname(path), []).append(
+                    ((str(int(lead.group(1))),), lid, inputs[0], float(inputs[0].detail.get("minutes") or 0))
+                )
             keys = {part_key(label) for label in labels}
             if len(keys) != 1 or "" in keys or not all(numbering(label) for label in labels):
                 continue  # a listen of several inputs is looked at as a whole: all of them numbered, all one name (merged as copies earlier, they are converted in place)
@@ -429,7 +440,14 @@ def merge_parts(
                 keyed.setdefault(part_key(label), []).append(
                     (numbering(label), lid, x, float((x.detail or {}).get("minutes") or 0))
                 )
-        for items in keyed.values():
+        sequences = [
+            g
+            for g in chapters.values()
+            if len(g) >= 3
+            and sorted(int(n[0]) for n, *_ in g)
+            == list(range(int(min(n[0] for n, *_ in g)), int(min(n[0] for n, *_ in g)) + len(g)))
+        ]  # at least three, numbered one after the other, in one folder: the chapters of one book, if the runtimes below agree
+        for items in [*keyed.values(), *sequences]:
             if len(items) < 2 or len({n for n, *_ in items}) != len(items):
                 continue
             total = sum(m for *_, m in items)
@@ -452,7 +470,7 @@ def merge_parts(
                     actor_kind="model",
                     actor_ref=actor_ref,
                     run_id=run.id,
-                    reason=f"parts of one recording of work {work_id}: group names differ only by number, runtimes add up to {total:.0f} min",
+                    reason=f"parts of one recording of work {work_id}: numbered like parts, runtimes add up to {total:.0f} min",
                 )
                 out.append((survivor.id, lid))
             if not any(lid != survivor.id for _, lid, _, _ in items):
