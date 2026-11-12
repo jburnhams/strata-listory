@@ -44,7 +44,7 @@ export default function ListensPage() {
         {() => (
           <DataView state={load} isEmpty={d => d.rows.length === 0} skeleton={<div className="space-y-3">{[0, 1, 2].map(i => <Skeleton key={i} className="h-10 w-full" />)}</div>}
             empty={<EmptyState title={q || kind ? 'No listens match' : 'No listens yet'}>{q || kind ? 'Try fewer words or another kind.' : <>Run <code>./app listens-build</code> after <code>./app filegroups</code> and <code>./app filegroups-structure</code>.</>}</EmptyState>}>
-            {d => <><DataTable caption="Listens" rows={d.rows} columns={columns} rowKey={l => String(l.id)} />{d.total > d.rows.length && <p className="type-caption text-muted-foreground">Showing {d.rows.length} of {d.total}; search to narrow it.</p>}</>}
+            {d => <><DataTable caption="Listens" virtualizeFrom={2000} rows={d.rows} columns={columns} rowKey={l => String(l.id)} />{d.total > d.rows.length && <p className="type-caption text-muted-foreground">Showing {d.rows.length} of {d.total}; search to narrow it.</p>}</>}
           </DataView>
         )}
       </Tabs>
