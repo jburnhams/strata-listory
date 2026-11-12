@@ -1,9 +1,10 @@
 // The one question: "How were my audio files grouped?" The finding: how many files and folders the newest grouping covers.
 // Why it is shaped this way: grouping files into listens is the first step to get right, so this page only browses the groups (folder, disc, book...) and the files in them, with the group in the URL so any level can be linked.
 import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
-import { Button, DataTable, DataView, EmptyState, Field, Input, PageHeader, Skeleton, Status, format, useLoad, type Column } from 'strata-react'
-import { fileGroupApi, type FileGroup, type FileGroupDetail, type FileSearch } from '../api'
+import { AsyncButton, Button, DataTable, DataView, EmptyState, Field, Input, PageHeader, Skeleton, Status, format, useAsyncAction, useLoad, type Column } from 'strata-react'
+import { api, fileGroupApi, type FileGroup, type FileGroupDetail, type FileSearch } from '../api'
 
 export const length = (sec: number | null) => sec == null ? '' : `${Math.floor(sec / 3600) ? `${Math.floor(sec / 3600)}:` : ''}${String(Math.floor((sec % 3600) / 60)).padStart(Math.floor(sec / 3600) ? 2 : 1, '0')}:${String(Math.floor(sec % 60)).padStart(2, '0')}`
 export const size = (bytes: number) => bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes >= 1e6 ? `${Math.round(bytes / 1e6)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} KB`
@@ -31,6 +32,7 @@ export default function FilesPage() {
   return (
     <div className="space-y-5">
       <PageHeader title="Files" scope="How the audio files are grouped" finding={load.status === 'ready' && load.data.detail ? { text: `${format.count(load.data.detail.group.file_count, 'file')} in ${format.count(load.data.detail.group.group_count, 'group')}, ${size(load.data.detail.group.total_bytes)}` } : undefined} />
+      {!wanted && !q && <Roots />}
       <Field label="Search files and folders" hint="Every word must appear in the name or folder path">
         <Input type="search" value={typed} onChange={e => setTyped(e.target.value)} placeholder="e.g. lee child persuader" />
       </Field>
@@ -40,6 +42,33 @@ export default function FilesPage() {
         {d => <Group detail={d.detail!} />}
       </DataView>)}
     </div>
+  )
+}
+
+/** The folders the app reads audio from. The first one is the library folder in Settings; more can be added here. A rescan (`./app filegroups`) groups every folder into one listing, so a root is a top-level row of this page. */
+function Roots() {
+  const qc = useQueryClient()
+  const load = useLoad({ queryKey: ['settings'], queryFn: api.settings })
+  const [adding, setAdding] = useState(''), [open, setOpen] = useState(false)
+  const save = useAsyncAction(async (dirs: string[]) => {
+    await api.saveSettings({ library_dirs: dirs })
+    setAdding(''); await qc.invalidateQueries({ queryKey: ['settings'] })
+  }, { settleMs: 1500 })
+  const roots = load.status === 'ready' ? load.data.library_dirs : []
+  const primary = load.status === 'ready' ? load.data.library_dir : ''
+  const extra = roots.filter(r => r !== primary)
+  return (
+    <section aria-label="Folders scanned" className="rounded-surface border border-border bg-card p-3">
+      <Button variant="ghost" aria-expanded={open} onClick={() => setOpen(!open)}>Folders scanned ({roots.length || 'none yet'})</Button>
+      {open && <div className="mt-3 space-y-3">
+        <ul className="space-y-1">{roots.map(r => <li key={r} className="flex items-center gap-3"><span className="font-mono type-body-sm break-all">{r}</span>{r === primary ? <Status tone="neutral">library folder</Status> : <Button variant="ghost" onClick={() => void save.run(extra.filter(x => x !== r))}>Remove<span className="sr-only"> {r}</span></Button>}</li>)}</ul>
+        <form className="flex items-end gap-3" onSubmit={e => { e.preventDefault(); if (adding.trim()) void save.run([...extra, adding.trim()]) }}>
+          <Field label="Add a folder" hint="An absolute path; run ./app filegroups to scan it"><Input value={adding} onChange={e => setAdding(e.target.value)} placeholder="/path/to/more/audio" /></Field>
+          <AsyncButton type="submit" variant="default" phase={save.phase} error={save.error} labels={{ idle: 'Add folder', pending: 'Saving…', done: 'Saved' }} />
+        </form>
+        {save.error && <p role="alert" className="type-body-sm text-danger">{save.error}</p>}
+      </div>}
+    </section>
   )
 }
 

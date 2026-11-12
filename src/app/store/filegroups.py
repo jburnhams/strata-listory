@@ -183,7 +183,12 @@ def scan_files(
 
 
 def group_by_folder(
-    s: Session, root: str, ids: dict[str, int], sizes: dict[str, int] | None = None, run: Run | None = None
+    s: Session,
+    root: str,
+    ids: dict[str, int],
+    sizes: dict[str, int] | None = None,
+    run: Run | None = None,
+    top_kind: str = "root",
 ) -> PartFilegroup:
     """One group per folder that has audio anywhere below it: its members are its audio files then its sub-folders, both in natural name order (ordinals 1..n). The root folder's group has kind 'root'."""
     root = root.rstrip(os.sep) or os.sep
@@ -211,7 +216,7 @@ def group_by_folder(
         files = sorted(by_dir.get(d, []), key=lambda p: natural_key(os.path.basename(p)))
         g = PartFilegroup(
             run_id=run.id,
-            kind="root" if d == root else "folder",
+            kind=top_kind if d == root else "folder",
             label=os.path.basename(d) or d,
             path=d,
             file_count=len(files) + sum(c.file_count for c in subs),
@@ -231,6 +236,33 @@ def group_by_folder(
         return g
 
     top = build(root)
+    finish_run(s, run, "done")
+    return top
+
+
+def group_roots(s: Session, roots: list[str], ids: dict[str, int]) -> PartFilegroup:
+    """One grouping run over several library roots. One root is exactly `group_by_folder`; several become folder groups under a top group of kind 'root' with no path (label 'Folders'), so everything downstream (structure, the Files page) still sees one root. `ids` holds the files of all roots."""
+    roots = [r.rstrip(os.sep) or os.sep for r in roots]
+    if len(roots) == 1:
+        return group_by_folder(s, roots[0], ids)
+    run = new_run(s, "group_folders", {"roots": roots})
+    tops = []
+    for r in roots:
+        under = {p: i for p, i in ids.items() if p.startswith(r.rstrip(os.sep) + os.sep)}
+        tops.append(group_by_folder(s, r, under, run=run, top_kind="folder"))
+    top = PartFilegroup(
+        run_id=run.id,
+        kind="root",
+        label="Folders",
+        path=None,
+        file_count=sum(t.file_count for t in tops),
+        total_bytes=sum(t.total_bytes for t in tops),
+        group_count=len(tops) + sum(t.group_count for t in tops),
+    )
+    s.add(top)
+    s.flush()
+    for n, t in enumerate(tops, 1):
+        s.add(PartFilegroupMember(group_id=top.id, ordinal=n, child_group_id=t.id))
     finish_run(s, run, "done")
     return top
 

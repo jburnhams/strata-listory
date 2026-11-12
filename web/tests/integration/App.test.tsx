@@ -26,11 +26,11 @@ describe('App shell', () => {
     expect(await screen.findByRole('heading', { name: 'Review' })).toBeInTheDocument()
   })
 
-  it('lists Matches first and moves between sections from the side navigation', async () => {
+  it('lists the flow from Files and moves between sections from the side navigation', async () => {
     const { user } = open('/')
-    expect(within(nav()).getAllByRole('link').map(a => a.textContent)).toEqual(['Matches', 'Library', 'Listens', 'Files', 'Pipeline', 'Processing', 'Settings'])
-    await user.click(within(nav()).getByRole('link', { name: 'Library' }))
-    expect(await screen.findByRole('heading', { name: 'Library' })).toBeInTheDocument()
+    expect(within(nav()).getAllByRole('link').map(a => a.textContent)).toEqual(['Files', 'Matches', 'Listens', 'Processing', 'Settings'])
+    await user.click(within(nav()).getByRole('link', { name: 'Listens' }))
+    expect(await screen.findByRole('heading', { name: 'Listens' })).toBeInTheDocument()
     await user.click(within(nav()).getByRole('link', { name: 'Settings' }))
     expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument()
   })

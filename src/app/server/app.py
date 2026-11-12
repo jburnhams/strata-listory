@@ -34,6 +34,7 @@ class IngestIn(BaseModel):
 class SettingsIn(BaseModel):
     data_dir: str | None = None
     library_dir: str | None = None
+    library_dirs: list[str] | None = None
     backup_dir: str | None = None
 
 
@@ -173,6 +174,10 @@ def create_app():
         for label, v in (("data", s.data_dir), ("library", s.library_dir), ("backup", s.backup_dir)):
             if v and not os.path.isabs(os.path.expanduser(v)):
                 raise HTTPException(400, f"the {label} folder must be an absolute path")
+        extra = [x.strip() for x in s.library_dirs or [] if x.strip()]
+        for x in extra:
+            if not os.path.isabs(os.path.expanduser(x)):
+                raise HTTPException(400, f"the library folder {x} must be an absolute path")
         changes = {
             k: v
             for k, v in (("data_dir", s.data_dir), ("library_dir", s.library_dir), ("backup_dir", s.backup_dir))
@@ -187,6 +192,8 @@ def create_app():
                 raise HTTPException(409, "wait for queued and running jobs to finish before changing the data folder")
             if changes:
                 settings.save({k: v or None for k, v in changes.items()})  # an empty value resets the setting
+            if s.library_dirs is not None:
+                settings.save({"library_dirs": extra or None})
             value = settings.all_settings()
             read_models.save("settings", "current", value)
             return value

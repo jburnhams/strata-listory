@@ -32,7 +32,7 @@ describe('SettingsPage', () => {
   })
 
   it('says "not set" and offers path placeholders when folders are empty', async () => {
-    mock.settings = { data_dir: '', library_dir: '', backup_dir: '' }
+    mock.settings = { data_dir: '', library_dir: '', library_dirs: [], backup_dir: '' }
     setup(<SettingsPage />)
     expect(await screen.findByText(/\(not set\)/)).toBeInTheDocument()
     expect(screen.getByPlaceholderText('/path/to/audiobooks')).toBeInTheDocument()

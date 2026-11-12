@@ -1,7 +1,8 @@
 """User settings: one JSON file, `~/.app/settings.json` (the folder can be moved with the APP_HOME environment variable).
 
   data_dir   where application data files live. Default: `data/` in this repository (gitignored) until configured.
-  library_dir  the folder the audiobook files live in (optional; not used yet, reserved for scanning). Default: unset.
+  library_dir  the folder the audiobook files live in (optional). Default: unset.
+  library_dirs  more folders to scan alongside library_dir (a list; the Files page edits it). `library_roots()` is library_dir then these, without duplicates or folders inside another.
   backup_dir   where the catalogue database backups go (default: `backups/` inside data_dir). May be a network share (SMB): backups are built on the local disk and copied there.
   match_providers  comma separated metadata providers in the order to try them (default: audnexus,audible,audiobookdb).
   audible_region   which Audible store to search: uk (default), us, de, fr, ca or au.
@@ -14,7 +15,7 @@ import os
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_DATA_DIR = os.path.join(REPO, "data")
-KNOWN = ("data_dir", "library_dir", "backup_dir", "match_providers", "audible_region", "final_dir")
+KNOWN = ("data_dir", "library_dir", "library_dirs", "backup_dir", "match_providers", "audible_region", "final_dir")
 
 
 def home():
@@ -43,7 +44,7 @@ def save(changes):
         if v is None:
             d.pop(k, None)
         else:
-            d[k] = str(v)
+            d[k] = [str(x) for x in v] if isinstance(v, list | tuple) else str(v)
     os.makedirs(home(), exist_ok=True)
     tmp = _path() + ".tmp"
     with open(tmp, "w", encoding="utf8") as f:
@@ -66,6 +67,18 @@ def library_dir():
     return os.path.abspath(os.path.expanduser(p)) if p else ""
 
 
+def library_roots():
+    """Every folder that holds audiobooks: library_dir first, then the extra library_dirs. Duplicates and folders inside another root are left out (a file would be in two roots)."""
+    extra = load().get("library_dirs")
+    extra = extra if isinstance(extra, list) else []
+    out: list[str] = []
+    for p in [library_dir(), *extra]:
+        p = os.path.abspath(os.path.expanduser(str(p))) if str(p).strip() else ""
+        if p and not any(p == r or p.startswith(r.rstrip(os.sep) + os.sep) for r in out):
+            out = [r for r in out if not r.startswith(p.rstrip(os.sep) + os.sep)] + [p]
+    return out
+
+
 def backup_dir():
     """The folder for database backups (not created here; backup.py makes it when it writes)."""
     p = (os.environ.get("APP_BACKUP") or load().get("backup_dir") or "").strip()
@@ -84,4 +97,4 @@ def audible_region():
 
 
 def all_settings():
-    return dict(data_dir=data_dir(), library_dir=library_dir(), backup_dir=backup_dir())
+    return dict(data_dir=data_dir(), library_dir=library_dir(), library_dirs=library_roots(), backup_dir=backup_dir())

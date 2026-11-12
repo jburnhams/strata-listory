@@ -1,6 +1,6 @@
 // Typed client for the FastAPI server (src/app/server/app.py). Same-origin.
 export interface Health { ok: boolean; version: string }
-export interface Settings { data_dir: string; library_dir: string; backup_dir: string }
+export interface Settings { data_dir: string; library_dir: string; library_dirs: string[]; backup_dir: string }
 export interface SourceFilesInfo { grouping?: string[]; folder: string; files: string[]; count: number | null; available: boolean }
 export type Status = 'unlistened' | 'listening' | 'finished'
 export const STATUSES: Status[] = ['unlistened', 'listening', 'finished']
@@ -47,7 +47,7 @@ const send = (method: string, body: unknown): RequestInit => ({ method, headers:
 export const api = {
   health: () => req<Health>('/api/health'),
   settings: () => req<Settings>('/api/settings'),
-  saveSettings: (s: Partial<Settings>) => req<Settings>('/api/settings', send('PUT', s)),
+  saveSettings: (s: Partial<Omit<Settings, 'library_dirs'>> & { library_dirs?: string[] }) => req<Settings>('/api/settings', send('PUT', s)),
   books: (f: Filters = {}) => req<Book[]>(booksUrl(f).slice(BASE.length)),
   libraryWorkflow: () => req<{ books: Record<string, LibraryStage[]> }>('/api/library/workflow'),
   addBook: (b: NewBook) => req<Book>('/api/books', send('POST', b)),
@@ -183,7 +183,7 @@ export interface KindInfoData { kind: string; guess: string; band: 'broadcast' |
 export interface ListenRow { id: number; label: string; kind: 'book' | 'radio_series' | 'radio_show' | 'play' | 'other'; kind_info: KindInfoData | null; status: string; files: number; bytes: number; minutes: number; group_id: number | null; path: string | null; copies: number; parts: number; author: string | null; narrator: string | null; year: number | null }
 export interface ListenList { total: number; kinds: Record<string, number>; review: number; not_book: number; rows: ListenRow[] }
 export const listenApi = {
-  list: (q = '', kind = '', status = '', limit = 500) => req<ListenList>(`/api/listens?${new URLSearchParams({ q, kind, status, limit: String(limit) })}`),
+  list: (q = '', kind = '', status = '', match = '', limit = 500) => req<ListenList>(`/api/listens?${new URLSearchParams({ q, kind, status, match, limit: String(limit) })}`),
   setKind: (id: number, kind: string) => req<{ ok: boolean; retraining: boolean; reidentified?: boolean; kind_info: KindInfoData | null }>(`/api/listens/${id}/kind`, send('POST', { kind })),
 }
 

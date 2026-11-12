@@ -55,3 +55,21 @@ def test_backup_dir_defaults_to_the_data_folder_and_can_be_moved(tmp_path, monke
     assert settings.backup_dir() == str(tmp_path / "share")
     monkeypatch.setenv("APP_BACKUP", str(tmp_path / "env"))
     assert settings.backup_dir() == str(tmp_path / "env")
+
+
+def test_library_roots_are_library_dir_then_extra_folders_without_overlaps(monkeypatch, tmp_path):
+    monkeypatch.delenv("APP_LIBRARY", raising=False)
+    assert settings.library_roots() == []
+    audio, more, inside = (
+        str(tmp_path / "a" / "audio"),
+        str(tmp_path / "b" / "more"),
+        str(tmp_path / "a" / "audio" / "inside"),
+    )
+    settings.save(dict(library_dir=audio, library_dirs=[more, audio, inside, more]))
+    assert settings.library_roots() == [audio, more]
+    settings.save(
+        dict(library_dirs=[str(tmp_path / "a")])
+    )  # a folder holding the library_dir replaces it: a file may be in one root only
+    assert settings.library_roots() == [str(tmp_path / "a")]
+    settings.save(dict(library_dirs=None))
+    assert settings.library_roots() == [audio]

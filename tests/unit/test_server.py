@@ -54,7 +54,13 @@ def test_settings_roundtrip_and_server_main(client, tmp_path, monkeypatch):
     new_dir, lib = str(tmp_path / "custom_data"), str(tmp_path / "books")
     monkeypatch.delenv("APP_DATA", raising=False)
     res = client.put("/api/settings", json=dict(data_dir=new_dir, library_dir=lib)).json()
-    assert res == dict(data_dir=new_dir, library_dir=lib, backup_dir=os.path.join(new_dir, "backups"))
+    assert res == dict(
+        data_dir=new_dir, library_dir=lib, library_dirs=[lib], backup_dir=os.path.join(new_dir, "backups")
+    )
+    more = str(tmp_path / "more")
+    assert client.put("/api/settings", json=dict(library_dirs=[more])).json()["library_dirs"] == [lib, more]
+    assert client.put("/api/settings", json=dict(library_dirs=["relative"])).status_code == 400
+    assert client.put("/api/settings", json=dict(library_dirs=[])).json()["library_dirs"] == [lib]
     assert client.get("/api/settings").json() == res
     assert client.put("/api/settings", json=dict(library_dir="")).json()["library_dir"] == ""  # empty resets
     elsewhere = str(tmp_path / "share" / "backups")

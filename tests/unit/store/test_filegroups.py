@@ -222,3 +222,23 @@ def test_api_search_finds_groups_and_files_and_names_the_group_to_jump_to(s, lib
     assert c.get("/api/filegroups/search?q=100%25").json()["files"] == []  # % is not a wildcard
     assert c.get("/api/filegroups/search?q=a").status_code == 422
     assert c.get("/api/filegroups/search?q=track&limit=1").json()["more"]["files"] == 2
+
+
+def test_group_roots_puts_several_roots_under_one_top_group(s, tmp_path):
+    for rel in ("one/A/x.mp3", "two/B/y.mp3", "two/B/z.mp3"):
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(rel.encode())
+    one, two = str(tmp_path / "one"), str(tmp_path / "two")
+    ids = {**fg.scan_files(s, one), **fg.scan_files(s, two)}
+    top = fg.group_roots(s, [one, two], ids)
+    assert (top.kind, top.path, top.file_count, top.group_count) == ("root", None, 3, 4)
+    roots = s.scalars(
+        select(PartFilegroup).where(PartFilegroup.run_id == top.run_id, PartFilegroup.path.in_([one, two]))
+    ).all()
+    assert sorted((g.kind, g.file_count) for g in roots) == [("folder", 1), ("folder", 2)]
+    assert s.scalars(
+        select(PartFilegroup).where(PartFilegroup.run_id == top.run_id, PartFilegroup.kind == "root")
+    ).all() == [top]
+    single = fg.group_roots(s, [one], {p: i for p, i in ids.items() if p.startswith(one)})
+    assert (single.kind, single.path) == ("root", one)  # one root is unchanged from before

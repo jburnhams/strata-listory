@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import Text as sa_text
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.store import kinds_db
 from app.store.models import (
@@ -244,11 +244,43 @@ def _listen_row(l: Listen, p: ListenPart | None) -> dict:
     )
 
 
+def _match_clause(match: str):
+    """SQL condition on a listen for the match filter of the listens list (see `list_listens`)."""
+    mp = aliased(
+        ListenPart
+    )  # not ListenPart itself: the list query already joins it, and the subquery would correlate to it
+    accepted_part = select(mp.id).where(
+        mp.listen_id == Listen.id, mp.role.in_(("match", "candidate")), mp.state == "accepted", mp.unlinked_at.is_(None)
+    )
+    confirmed = accepted_part.where(
+        select(ListenEvent.id)
+        .where(
+            ListenEvent.listen_part_id == mp.id,
+            ListenEvent.actor_kind == "user",
+            ListenEvent.action == "accept",
+        )
+        .exists()
+    ).exists()
+    if match == "confirmed":
+        return confirmed
+    if match == "accepted":
+        return accepted_part.exists() & ~confirmed
+    if match == "unmatched":
+        return ~accepted_part.exists()
+    return accepted_part.exists()  # matched: accepted by the model or confirmed by a person
+
+
 @listens_router.get("")
 def list_listens(
-    q: str = "", kind: str = "", status: str = "", limit: int = 100, offset: int = 0, s: Session = Depends(get_session)
+    q: str = "",
+    kind: str = "",
+    status: str = "",
+    match: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    s: Session = Depends(get_session),
 ):
-    """Listens (newest build first order is by label), filtered by words in the label or folder path, kind and status."""
+    """Listens (ordered by label), filtered by words in the label or folder path, kind, status and match: `matched` (the model accepted a work or a person confirmed one), `confirmed` (a person did), `accepted` (the model did, no person yet), `unmatched` (no work accepted yet); empty = no filter."""
     limit = max(1, min(limit, 500))
     stmt = (
         select(Listen, ListenPart)
@@ -265,6 +297,8 @@ def list_listens(
         stmt = stmt.where(Listen.kind == kind)
     if status:
         stmt = stmt.where(Listen.status == status)
+    if match:
+        stmt = stmt.where(_match_clause(match))
     if kind == "review":
         stmt = stmt.where(
             select(ListenKind.listen_id).where(ListenKind.listen_id == Listen.id, ListenKind.band == "review").exists()
