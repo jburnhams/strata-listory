@@ -295,3 +295,55 @@ def test_the_job_runs_in_the_background_and_refuses_a_second_start(s, monkeypatc
     capi._lock.acquire()
     capi.run_job(None, False, None)
     assert "no database" in capi.STATE["error"]
+
+
+def test_a_second_source_offering_the_same_address_keeps_its_candidate_without_a_second_download(s, monkeypatch):
+    a = make_listen(s)
+    fetched = []
+
+    def get(url, **k):
+        fetched.append(url)
+        return R.net.Reply(200, png(900, 900))
+
+    monkeypatch.setattr(R.net, "get", get)
+    same = "https://m.media-amazon.com/images/I/x.jpg"
+
+    def one(name):
+        return (name, lambda ctx: ([S.Item(name, "B0A", "", same)], S.record(name, [S.Item(name, "B0A")], [])))
+
+    run = R.search(s, a, run_sources=[one("audible"), one("audnexus")])
+    assert fetched == [same]
+    assert {x["source"]: x["status"] for x in run.sources} == {"audible": "found", "audnexus": "found"}
+    assert sorted(c.source for c in s.scalars(select(CoverCandidate))) == ["audible", "audnexus"]
+
+
+def test_the_first_file_is_found_through_disc_folders(s, tmp_path):
+    from app.store import filegroups as fg
+
+    for rel in ("Book/CD2/02.mp3", "Book/CD1/01.mp3", "Book/CD1/02.mp3"):
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(rel.encode())
+    ids = fg.scan_files(s, str(tmp_path))
+    top = fg.group_by_folder(s, str(tmp_path), ids)
+    book = s.scalars(select(fg.PartFilegroup).where(fg.PartFilegroup.label == "Book")).one()
+    fid = R.first_file(s, book.id)
+    assert fid == ids[str(tmp_path / "Book/CD1/01.mp3")]  # CD1 before CD2, track 1 first
+    listen = make_listen(s)
+    L.link(s, listen, "input", filegroup_id=top.id, ordinal=1, detail={"path": str(tmp_path / "Book")})
+    ctx = R.context(s, listen)
+    assert ctx.folder == str(tmp_path / "Book") and ctx.files == [str(tmp_path / "Book/CD1/01.mp3")]
+    empty = fg.PartFilegroup(run_id=top.run_id, kind="folder", label="Empty")
+    s.add(empty)
+    s.flush()
+    assert R.first_file(s, empty.id) is None
+
+
+def test_rebuilding_listens_clears_their_cover_searches_and_keeps_the_pictures(s):
+    from app.store import build
+
+    a = make_listen(s)
+    R.search(s, a, run_sources=fake_sources(("apple", "1", png(700, 700))))
+    s.flush()
+    build.clear(s)
+    assert s.scalars(select(CoverCandidate)).all() == [] and len(s.scalars(select(CoverImage)).all()) == 1

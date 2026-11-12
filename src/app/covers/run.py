@@ -100,6 +100,20 @@ def pending(
     return out
 
 
+def first_file(s: Session, group_id: int) -> int | None:
+    """The first file in listening order of a group, looking down through its discs and folders."""
+    for m in s.scalars(
+        select(PartFilegroupMember)
+        .where(PartFilegroupMember.group_id == group_id)
+        .order_by(PartFilegroupMember.ordinal)
+    ):
+        if m.file_id:
+            return m.file_id
+        if m.child_group_id and (found := first_file(s, m.child_group_id)):
+            return found
+    return None
+
+
 def context(s: Session, listen: Listen) -> sources.Context:
     """What the listen is known to be: the identifiers of its accepted work and the folder and files it was made from."""
     ctx = sources.Context(title=listen.label)
@@ -122,11 +136,7 @@ def context(s: Session, listen: Listen) -> sources.Context:
     if inp:
         ctx.folder = (inp.detail or {}).get("path") or ""
         if inp.filegroup_id:
-            fid = s.scalar(
-                select(PartFilegroupMember.file_id)
-                .where(PartFilegroupMember.group_id == inp.filegroup_id, PartFilegroupMember.file_id.is_not(None))
-                .order_by(PartFilegroupMember.ordinal)
-            )
+            fid = first_file(s, inp.filegroup_id)
             if fid:
                 ctx.files = list(
                     s.scalars(
@@ -164,7 +174,11 @@ def search(s: Session, listen: Listen, *, run_sources=None) -> CoverRun:
     run = CoverRun(listen_id=listen.id, listen_changed_at=changed_at(s, listen.id), sources=[])
     s.add(run)
     s.flush()
-    statuses, seen = [], set()
+    statuses, seen, recorded = (
+        [],
+        {},
+        set(),
+    )  # seen: where each address or picture was first met -> its image, so a second source offering the same one keeps its candidate without a second download
     for name, fn in sources.SOURCES if run_sources is None else run_sources:
         try:
             items, status = fn(ctx)
@@ -173,11 +187,11 @@ def search(s: Session, listen: Listen, *, run_sources=None) -> CoverRun:
         kept, failed = 0, []
         for it in items:
             key = it.url or f"{it.source}:{it.ref}"
-            if key in seen:
+            if (it.source, key) in recorded:
                 continue
-            seen.add(key)
-            data = it.data
-            if data is None and it.url:
+            recorded.add((it.source, key))
+            data, img = it.data, seen.get(key)
+            if img is None and data is None and it.url:
                 known = s.scalars(
                     select(CoverCandidate).where(CoverCandidate.url == it.url).order_by(CoverCandidate.id.desc())
                 ).first()
@@ -191,13 +205,12 @@ def search(s: Session, listen: Listen, *, run_sources=None) -> CoverRun:
                         failed.append(f"{it.ref}: {r.error or r.status}")
                         continue
                     data = r.body
-            else:
-                img = None
             if img is None:
                 img = store_image(s, data or b"")
                 if img is None:
                     failed.append(f"{it.ref}: not a usable picture")
                     continue
+            seen[key] = img
             s.add(
                 CoverCandidate(run_id=run.id, image_id=img.id, source=it.source, ref=it.ref, label=it.label, url=it.url)
             )
