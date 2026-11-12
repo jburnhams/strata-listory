@@ -40,3 +40,12 @@ Rewritten on Strata components: shell, Review, Library, Settings, Finished, Book
 ## Running it
 
 `cd web && npm run dev` (proxies `/api` to `./app serve` on 8360). Tests: `npm run test:integration`; gate: `npm run test:coverage:gate`. `renderWithStrata` (via `tests/utils/render.tsx`) supplies the router and query client; every endpoint the app calls needs an msw handler in `tests/utils/server.ts`, including `/api/identify/*`.
+
+## strata-react 1.0 (2026-11-12)
+
+The app now depends on the published `strata-react@^1.0.15` from npm instead of `github:...#main`. What changed for this app:
+
+* React Aria is the primitives layer, so `DataTable` and `InfiniteList` are a `grid` of `row`s (tests query `getByRole('grid', { name })`, a sortable header is the `columnheader` itself) and `tests/utils/setup.ts` calls `installLayoutShims()`.
+* Raw `<details>` became `Disclosure` (the body mounts when opened, so tests open it first); raw `<button>`, `<input>`, `<select>`, `<textarea>` and checkboxes became `Button`, `Input`, `NativeSelect`, `Textarea` and `Checkbox`; the `btn`/`input` class strings are gone.
+* Polling is `useJob`: the Pipeline and Processing pages poll every 3 s only while the worker is busy or has work queued, the match queue summary only while the model relearns. A failed refresh keeps the page under a `StaleNotice`. The old `setInterval` loader in `route.ts` is gone (`readOf` bridges a `Load` to the `{ data, error }` the older pages read).
+* Not adopted: the media components (`Transport`, `SeekBar`) for `Player`/`QualitySamples` (the native `<audio controls>` still does chapter chaining and sample playback with less code), `Workspace`, `Timeline`, `FileIntake` and the rest have no screen here yet.

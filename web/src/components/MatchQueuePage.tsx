@@ -6,10 +6,10 @@
 // The order and the filters (skip what the model already accepted, hardest or newest first, a kind of listen, a certainty, with or without an Audible recording, words) live in the URL,
 // so a way of working the queue can be bookmarked; the keys work on whatever the filters leave, and each filter says how many cards it holds so a choice never leads to nothing.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
 import { Ban, Check, X } from 'lucide-react'
-import { AsyncButton, Button, Done, EmptyState, Field, InfiniteList, Input, KeysLegend, Metric, MetricStrip, NativeSelect, PageHeader, Skeleton, Status, UndoBar, format, useActiveItem, useAsyncAction, useHotkeys, useInfiniteLoad, useUndoable, type ActiveItem, type Tone } from 'strata-react'
+import { AsyncButton, Button, Done, EmptyState, Field, InfiniteList, Input, KeysLegend, Metric, MetricStrip, NativeSelect, PageHeader, Skeleton, Status, UndoBar, format, useActiveItem, useAsyncAction, useHotkeys, useInfiniteLoad, useJob, useUndoable, type ActiveItem, type Tone } from 'strata-react'
 import { matchApi, type QueueAction, type QueueCandidate, type QueueFacets, type QueueFilters, type QueueItem, type QueueRecording } from '../api'
 import { hours } from './ListensPage'
 import KindInfo, { KIND_LABEL } from './KindInfo'
@@ -284,11 +284,12 @@ export default function MatchQueuePage() {
     isRemoved: undoable.isRemoved,
     staleTime: 0,
   })
-  const summaryQuery = useQuery({             // the whole queue's summary and facets, and how many cards the filters leave
+  const summaryJob = useJob({                // the whole queue's summary and facets, and how many cards the filters leave; polled while the model relearns (the list itself is left alone until the person refreshes it)
     queryKey: ['match-summary', filters], queryFn: () => matchApi.queue(undefined, 1, filters), staleTime: 0, placeholderData: previous => previous,
-    refetchInterval: q => (q.state.data?.summary.training.running ? 3000 : false),          // while the model relearns, watch for it to finish
+    isRunning: page => page.summary.training.running, every: 3000,
   })
-  const summary = summaryQuery.data?.summary, facets = summaryQuery.data?.facets, total = summaryQuery.data?.total
+  const summaryData = summaryJob.status === 'ready' ? summaryJob.data : undefined
+  const summary = summaryData?.summary, facets = summaryData?.facets, total = summaryData?.total
   const items = useMemo(() => (load.status === 'ready' ? load.data : []), [load])
   const active = useActiveItem(items, i => String(i.listen_id), { noun: 'match' })
 

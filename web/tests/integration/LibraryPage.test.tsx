@@ -4,7 +4,7 @@ import LibraryPage from '../../src/components/LibraryPage'
 import { setup, screen, within } from '../utils/render'
 import { server, mock, initialBooks } from '../utils/server'
 
-const table = () => screen.findByRole('table', { name: 'Library' })
+const table = () => screen.findByRole('grid', { name: 'Library' })
 
 describe('LibraryPage', () => {
   it('lists books with their series, length and link, and says how many are shown', async () => {
@@ -94,11 +94,11 @@ describe('LibraryPage table', () => {
   it('sorts by title and by length from the column headers and adds a book with an author', async () => {
     mock.books = [{ ...initialBooks[0], id: 40, title: 'Zebra', duration_seconds: 3600 }, { ...initialBooks[0], id: 41, title: 'Apple', duration_seconds: 7200 }]
     const { user } = setup(<LibraryPage />)
-    const titles = () => within(screen.getByRole('table', { name: 'Library' })).getAllByRole('link').map(a => a.textContent)
+    const titles = () => within(screen.getByRole('grid', { name: 'Library' })).getAllByRole('link').map(a => a.textContent)
     await screen.findByRole('link', { name: 'Zebra' })
-    await user.click(screen.getByRole('button', { name: 'Book' }))
+    await user.click(screen.getByRole('columnheader', { name: 'Book' }))
     expect(titles()).toEqual(['Apple', 'Zebra'])
-    await user.click(screen.getByRole('button', { name: 'Length' }))
+    await user.click(screen.getByRole('columnheader', { name: 'Length' }))
     expect(titles()).toEqual(['Zebra', 'Apple'])
     await user.type(screen.getByLabelText('Title'), 'Emma'); await user.type(screen.getByLabelText('Author'), 'Jane Austen')
     await user.click(screen.getByRole('button', { name: 'Add book' }))

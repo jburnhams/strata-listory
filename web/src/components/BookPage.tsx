@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api, coverUrl, type AudibleInfo, type BookDetails, type Extras, type HardcoverInfo, type OpenLibraryInfo, type Processed } from '../api'
-import { Breadcrumb, DataView, Skeleton, useLoad as useStrataLoad } from 'strata-react'
+import { Breadcrumb, Button, DataView, Disclosure, Skeleton, useLoad as useStrataLoad } from 'strata-react'
 import { Card, Err } from './ui'
 import { formatDuration, matchLabel } from './LibraryPage'
 import Player from './Player'
@@ -34,9 +34,9 @@ function AudibleSection({ a }: { a: AudibleInfo }) {
       ]} />
       {a.summary && <p className="type-body-sm mt-3 text-muted-foreground">{a.summary}</p>}
       {a.chapters.length > 0 && (
-        <details className="mt-3 type-body-sm"><summary className="cursor-pointer">{a.chapters.length} chapters</summary>
+        <Disclosure className="mt-3 type-body-sm" summary={<>{a.chapters.length} chapters</>}>
           <ol className="mt-1 space-y-0.5">{a.chapters.map((c, i) => <li key={i} className="flex justify-between gap-2"><span>{c.title}</span><span className="text-muted-foreground font-mono">{formatDuration(c.length_sec) || `${c.length_sec}s`}</span></li>)}</ol>
-        </details>
+        </Disclosure>
       )}
     </Section>
   )
@@ -84,19 +84,19 @@ function Community({ id, extras, onChange }: { id: number; extras: Extras; onCha
             ['Series', h.series?.map(s => `${s.name}${s.position != null ? ` #${s.position}` : ''}`).join(', ')], ['Audiobook editions', h.audiobook_editions?.map(e => [e.publisher, e.hours ? `${e.hours} h` : ''].filter(Boolean).join(' ')).filter(Boolean).join(' · ')]]} />
           {h.description && <p className="type-body-sm mt-3 text-muted-foreground">{h.description}</p>}
           {h.reviews && h.reviews.length > 0 && (
-            <details className="mt-3 type-body-sm"><summary className="cursor-pointer">{h.reviews.length} top reviews</summary>
+            <Disclosure className="mt-3 type-body-sm" summary={<>{h.reviews.length} top reviews</>}>
               <ul className="mt-2 space-y-3">{h.reviews.map((r, i) => (
                 <li key={i}>
                   <div className="text-muted-foreground">{r.user}{r.rating != null ? ` · ${r.rating}★` : ''}{r.date ? ` · ${r.date}` : ''} · {r.likes} likes</div>
-                  {r.spoilers ? <details><summary className="cursor-pointer text-muted-foreground">Contains spoilers</summary><p className="whitespace-pre-line">{r.text}</p></details> : <p className="whitespace-pre-line">{r.text.length > 700 ? r.text.slice(0, 700) + '…' : r.text}</p>}
+                  {r.spoilers ? <Disclosure summary="Contains spoilers"><p className="whitespace-pre-line">{r.text}</p></Disclosure> : <p className="whitespace-pre-line">{r.text.length > 700 ? r.text.slice(0, 700) + '…' : r.text}</p>}
                 </li>))}
               </ul>
-            </details>
+            </Disclosure>
           )}
         </>
       )}
       <div className="flex flex-wrap items-center gap-3 mt-3">
-        <button type="button" className="rounded-control border border-border px-2 py-0.5 type-caption hover:border-ring disabled:opacity-50" disabled={busy} onClick={refresh}>{hc ? 'Refresh from Hardcover' : 'Fetch from Hardcover'}</button>
+        <Button variant="outline" size="sm" disabled={busy} onClick={refresh}>{hc ? 'Refresh from Hardcover' : 'Fetch from Hardcover'}</Button>
         {hc && <span className="type-caption text-muted-foreground">fetched {hc.fetched.slice(0, 10)}</span>}
         <span className="type-caption text-muted-foreground">Data from <a className="underline" href={h?.url || 'https://hardcover.app'}>hardcover.app</a></span>
       </div>
@@ -134,9 +134,9 @@ export function Details({ d, onExtras }: { d: BookDetails; onExtras?: (e: Extras
           <Rows rows={[['Title', sug.title], ['Author', sug.author], ['Narrators', sug.narrators?.join(', ')], ['Series', sug.series ? `${sug.series}${sug.series_position != null ? ` #${sug.series_position}` : ''}` : ''], ['Runtime', sug.runtime_minutes ? formatDuration(sug.runtime_minutes * 60) : ''], ['ASIN', sug.asin],
             ['Matched by', sug.matched_by], ['Found by', sug.sources?.join(' + ')], ['Score', matchLabel(b.match_score)]]} />
           {sug.alternatives && sug.alternatives.length > 0 && (
-            <details className="mt-2 type-body-sm"><summary className="cursor-pointer">{sug.alternatives.length} other candidate{sug.alternatives.length === 1 ? '' : 's'}</summary>
+            <Disclosure className="mt-2 type-body-sm" summary={<>{sug.alternatives.length} other candidate{sug.alternatives.length === 1 ? '' : 's'}</>}>
               <ul className="mt-1 space-y-0.5">{sug.alternatives.map((a, i) => <li key={i}>{a.title} <span className="text-muted-foreground">by {a.author || 'unknown'} · {a.source} · {Math.round(a.score * 100)}%</span></li>)}</ul>
-            </details>
+            </Disclosure>
           )}
           <p className="type-caption text-muted-foreground mt-2">Data from Audible, Audnexus and <a className="underline" href="https://audiobookdb.org">audiobookdb.org</a>.</p>
         </Section>
@@ -149,9 +149,9 @@ export function Details({ d, onExtras }: { d: BookDetails; onExtras?: (e: Extras
           {p?.available && p.files_probed ? (
             <Rows rows={[['Audio length', p.duration_seconds ? `${formatDuration(p.duration_seconds)}${p.complete ? '' : ` (first ${p.files_probed} files)`}` : ''], ['Codec', p.codec ? `${p.codec}${p.bitrate_kbps ? `, ${p.bitrate_kbps} kbps` : ''}` : ''], ['Embedded chapters', p.chapters ? String(p.chapters) : ''], ['Embedded cover art', p.has_cover_art ? 'yes' : '']]} />
           ) : p && !p.available ? <p className="type-body-sm text-muted-foreground">Install ffmpeg to read tags and durations.</p> : null}
-          <details className="mt-2 type-body-sm"><summary className="cursor-pointer">File list</summary>
+          <Disclosure className="mt-2 type-body-sm" summary="File list">
             <ul className="mt-1 space-y-0.5">{d.files.list.map(f => <li key={f.name} className="flex justify-between gap-2"><span className="font-mono type-caption break-all">{f.name}</span><span className="text-muted-foreground">{formatBytes(f.bytes)}</span></li>)}</ul>
-          </details>
+          </Disclosure>
         </Section>
       )}
       {p?.tags && Object.keys(p.tags).length > 0 && (

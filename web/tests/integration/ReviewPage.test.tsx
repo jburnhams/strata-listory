@@ -14,7 +14,7 @@ const scrollToEnd = () => act(() => { io.scrollToEnd() })
 // Leaving the page saves an answer still inside its undo window; let that request land before the next test resets the fake server.
 afterEach(async () => { io.uninstall(); uninstallLayout(); cleanup(); await new Promise(r => setTimeout(r, 40)) })
 
-const cards = () => within(screen.getByRole('list', { name: 'Matches to review' })).getAllByRole('article')
+const cards = () => within(screen.getByRole('grid', { name: 'Matches to review' })).getAllByRole('article')
 
 describe('ReviewPage', () => {
   it('lists the doubtful matches most impactful first, with the model\'s match and how sure it is', async () => {
@@ -33,7 +33,7 @@ describe('ReviewPage', () => {
 
   it('accepts with the button: the card folds away at once and the answer is saved when the next one is given', async () => {
     const { user } = setup(<ReviewPage />)
-    await screen.findByRole('list', { name: 'Matches to review' })
+    await screen.findByRole('grid', { name: 'Matches to review' })
     await user.click(screen.getByRole('button', { name: 'Accept Title 1' }))
     expect(cards()).toHaveLength(2)
     expect(screen.getByText('Accepted Title 1 for 40 files.')).toBeInTheDocument()
@@ -45,7 +45,7 @@ describe('ReviewPage', () => {
 
   it('does not bring an answered card back after leaving and returning', async () => {
     const { user, unmount, client } = setup(<ReviewPage />)
-    await screen.findByRole('list', { name: 'Matches to review' })
+    await screen.findByRole('grid', { name: 'Matches to review' })
     await user.click(screen.getByRole('button', { name: 'Accept Title 1' }))
     unmount()
     await waitFor(() => expect(identifyState.decided).toHaveLength(1))
@@ -56,7 +56,7 @@ describe('ReviewPage', () => {
 
   it('brings the card back on undo and saves nothing', async () => {
     const { user } = setup(<ReviewPage />)
-    await screen.findByRole('list', { name: 'Matches to review' })
+    await screen.findByRole('grid', { name: 'Matches to review' })
     await user.click(screen.getByRole('button', { name: 'Not Title 1' }))
     expect(cards()).toHaveLength(2)
     await user.click(screen.getByRole('button', { name: 'Undo' }))
@@ -67,7 +67,7 @@ describe('ReviewPage', () => {
 
   it('works from the keyboard: A accepts, R rejects, J and K move, U undoes', async () => {
     const { user } = setup(<ReviewPage />)
-    await screen.findByRole('list', { name: 'Matches to review' })
+    await screen.findByRole('grid', { name: 'Matches to review' })
     expect(cards()[0]).toHaveAttribute('aria-current', 'true')
     await user.keyboard('j')
     expect(cards()[1]).toHaveAttribute('aria-current', 'true')
@@ -86,14 +86,14 @@ describe('ReviewPage', () => {
 
   it('ignores the shortcuts while typing in a field', async () => {
     const { user } = setup(<><input aria-label="Notes" /><ReviewPage /></>)
-    await screen.findByRole('list', { name: 'Matches to review' })
+    await screen.findByRole('grid', { name: 'Matches to review' })
     await user.type(screen.getByLabelText('Notes'), 'arj')
     expect(cards()).toHaveLength(3)
   })
 
   it('moves the highlight to the card that was clicked', async () => {
     const { user } = setup(<ReviewPage />)
-    await screen.findByRole('list', { name: 'Matches to review' })
+    await screen.findByRole('grid', { name: 'Matches to review' })
     await user.click(within(cards()[2]).getByText('Title 3'))
     expect(cards()[2]).toHaveAttribute('aria-current', 'true')
   })
@@ -103,7 +103,7 @@ describe('ReviewPage', () => {
     const seen: (string | null)[] = []
     server.use(http.get('/api/identify/queue', ({ request }) => { const u = new URL(request.url); if (u.searchParams.get('limit') === '20') seen.push(u.searchParams.get('after')); return undefined }))
     setup(<ReviewPage />)
-    await screen.findByRole('list', { name: 'Matches to review' })
+    await screen.findByRole('grid', { name: 'Matches to review' })
     expect(cards()).toHaveLength(20)
     await scrollToEnd()
     await waitFor(() => expect(cards()).toHaveLength(40))
@@ -118,7 +118,7 @@ describe('ReviewPage', () => {
     let release: () => void = () => {}
     const gate = new Promise<void>(r => { release = r })
     setup(<ReviewPage />)
-    await screen.findByRole('list', { name: 'Matches to review' })
+    await screen.findByRole('grid', { name: 'Matches to review' })
     server.use(http.get('/api/identify/queue', async () => { await gate; return undefined }))
     await scrollToEnd()
     await waitFor(() => expect(document.querySelectorAll('[aria-hidden="true"]').length).toBeGreaterThan(2))
@@ -129,11 +129,10 @@ describe('ReviewPage', () => {
   it('does not shift the next page when answers were saved in between', async () => {
     identifyState.queue = identifyQueue(45)
     const { user } = setup(<ReviewPage />)
-    await screen.findByRole('list', { name: 'Matches to review' })
+    await screen.findByRole('grid', { name: 'Matches to review' })
     await user.keyboard('a'); await user.keyboard('a')              // the first answer is saved at once, the second after the undo window
     await waitFor(() => expect(identifyState.decided).toHaveLength(1))
-    await scrollToEnd()
-    await waitFor(() => expect(cards().length).toBeGreaterThan(38))   // everything after the two answered cards arrives, nothing skipped or repeated
+    await waitFor(async () => { await scrollToEnd(); expect(cards().length).toBeGreaterThan(38) })   // everything after the two answered cards arrives, nothing skipped or repeated
     const titles = cards().map(c => c.getAttribute('aria-label'))
     expect(new Set(titles).size).toBe(titles.length)
     expect(titles.slice(0, 20)).toEqual(Array.from({ length: 20 }, (_, i) => `Title ${i + 3}`))
@@ -153,7 +152,7 @@ describe('ReviewPage', () => {
   it('says when an answer was saved for training but the book could not be approved in the pipeline', async () => {
     identifyState.pipeline = () => ({ status: 'skipped', note: 'the files are not grouped into one book yet, so there is no single book to approve' })
     const { user } = setup(<ReviewPage />)
-    await screen.findByRole('list', { name: 'Matches to review' })
+    await screen.findByRole('grid', { name: 'Matches to review' })
     await user.keyboard('a'); await user.keyboard('a')
     expect(await screen.findByText(/Saved for training, but Title 1 was not approved in the pipeline: the files are not grouped/)).toBeInTheDocument()
     await user.keyboard('u')
@@ -167,7 +166,7 @@ describe('ReviewPage', () => {
       return HttpResponse.json({ recorded: b.decision, pipeline: { status: 'approved', note: '' } })
     }))
     const { user } = setup(<ReviewPage />)
-    await screen.findByRole('list', { name: 'Matches to review' })
+    await screen.findByRole('grid', { name: 'Matches to review' })
     await user.keyboard('a'); await user.keyboard('a')
     await waitFor(() => expect(identifyState.decided).toHaveLength(1), { timeout: 4000 })
     expect(calls).toBe(2)
@@ -177,7 +176,7 @@ describe('ReviewPage', () => {
   it('puts a card back and says why when the answer could not be saved', async () => {
     server.use(http.post('/api/identify/decisions', () => HttpResponse.json({ detail: 'no such queued group; refresh the queue' }, { status: 404 })))
     const { user } = setup(<ReviewPage />)
-    await screen.findByRole('list', { name: 'Matches to review' })
+    await screen.findByRole('grid', { name: 'Matches to review' })
     await user.keyboard('a'); await user.keyboard('a'); await user.keyboard('u')       // the first answer fails when the second is given; undoing the second leaves the failure showing
     expect(await screen.findByText(/Title 1 is back in the list: the answer was not saved/)).toBeInTheDocument()
     expect(cards()).toHaveLength(3)
@@ -195,7 +194,8 @@ describe('ReviewPage', () => {
   it('copes with a match that has no title, authors, edition count, Open Library work or path', async () => {
     identifyState.queue = [{ ...identifyQueue(1)[0], title: undefined, authors: undefined, editions: undefined, work: null, candidates: 1, item: { title: 'Loose file', author: 'Someone', path: '' } }]
     setup(<ReviewPage />)
-    const card = (await screen.findAllByRole('listitem'))[0]
+    await screen.findByRole('grid', { name: 'Matches to review' })
+    const card = cards()[0]
     expect(within(card).getByText('No title')).toBeInTheDocument()
     expect(within(card).getByText(/by unknown author/)).toBeInTheDocument()
     expect(within(card).getByText(/1 candidate considered/)).toBeInTheDocument()
@@ -206,7 +206,7 @@ describe('ReviewPage', () => {
   it('says so when a retrain fails', async () => {
     server.use(http.post('/api/identify/refresh', () => HttpResponse.json({ detail: 'no trained model' }, { status: 500 })))
     const { user } = setup(<ReviewPage />)
-    await screen.findByRole('list', { name: 'Matches to review' })
+    await screen.findByRole('grid', { name: 'Matches to review' })
     await user.click(screen.getByRole('button', { name: 'Retrain with my answers' }))
     expect(await screen.findByRole('button', { name: 'Retrain failed' })).toBeInTheDocument()
   })
@@ -216,7 +216,7 @@ describe('ReviewPage', () => {
     const { user } = setup(<ReviewPage />)
     expect(await screen.findByRole('alert')).toHaveTextContent('queue unavailable')
     await user.click(screen.getByRole('button', { name: 'Try again' }))
-    expect(await screen.findByRole('list', { name: 'Matches to review' })).toBeInTheDocument()
+    expect(await screen.findByRole('grid', { name: 'Matches to review' })).toBeInTheDocument()
   })
 })
 

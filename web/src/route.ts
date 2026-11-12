@@ -1,6 +1,5 @@
-// Links between pages (the app uses hash routing so it works behind a reverse proxy at any path) and the small loader the older pages still use.
-// New screens use strata-react's `useLoad` (TanStack Query) instead; this one stays until the Pipeline pages move over.
-import { useEffect, useState } from 'react'
+// Links between pages (the app uses hash routing so it works behind a reverse proxy at any path), and the bridge from strata-react's `Load` to the {data, error, loading} the older pages read.
+import type { Load } from 'strata-react'
 
 export const href = {
   library: () => '#/library',
@@ -19,15 +18,7 @@ export const href = {
   review: () => '#/',
 }
 
-/** Run an async loader when `deps` change; gives {data, error, reload}. A newer call wins over an older one still in flight. */
-export function useLoad<T>(load: () => Promise<T>, deps: unknown[]) {
-  const [loading, setLoading] = useState(true)
-  const [data, setData] = useState<T | null>(null), [error, setError] = useState<string | null>(null), [n, setN] = useState(0)
-  useEffect(() => {
-    let live = true; setError(null); setLoading(true)
-    load().then(d => { if (live) { setData(d); setLoading(false) } }, e => { if (live) { setError(String(e.message || e)); setLoading(false) } })
-    return () => { live = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, n])
-  return { data, error, loading, reload: () => setN(x => x + 1) }
+/** What a page that shows `data`, `error` and a `loading` flag (and no stale notice or skeleton of its own) reads from a strata-react `Load`. */
+export function readOf<T>(load: Load<T>) {
+  return { data: load.status === 'ready' ? load.data : null, error: load.status === 'error' ? load.message : null, loading: load.status === 'loading' }
 }

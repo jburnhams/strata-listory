@@ -11,7 +11,7 @@ let uninstallLayout: () => void
 beforeEach(() => { io = installFakeIntersectionObserver(); uninstallLayout = installLayoutShims({ width: 800, height: 5000 }) })
 afterEach(async () => { io.uninstall(); uninstallLayout(); cleanup(); await new Promise(r => setTimeout(r, 40)) })
 
-const cards = () => within(screen.getByRole('list', { name: 'Matches to check' })).getAllByRole('article')
+const cards = () => within(screen.getByRole('grid', { name: 'Matches to check' })).getAllByRole('article')
 
 describe('subtitleOf', () => {
   const rec = (asin: string, title: string) => ({ asin, title, narrators: [], minutes: 565, fmt: 'unabridged', year: 2012 })
@@ -97,7 +97,7 @@ describe('MatchQueuePage', () => {
 
   it('approves with the keyboard, approves another candidate, and says none of these', async () => {
     const { user } = setup(<MatchQueuePage />)
-    await screen.findByRole('list', { name: 'Matches to check' })
+    await screen.findByRole('grid', { name: 'Matches to check' })
     await user.keyboard('a')
     expect(screen.getByText('Approved Glass Orchard.')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Approve Salt Roads Again' }))
@@ -109,7 +109,7 @@ describe('MatchQueuePage', () => {
 
   it('rejects and gives up on a card from the keyboard', async () => {
     const { user } = setup(<MatchQueuePage />)
-    await screen.findByRole('list', { name: 'Matches to check' })
+    await screen.findByRole('grid', { name: 'Matches to check' })
     await user.keyboard('r')
     expect(screen.getByText('Not Glass Orchard: the next candidate comes back after the model relearns.')).toBeInTheDocument()
     await user.keyboard('n')
@@ -118,7 +118,7 @@ describe('MatchQueuePage', () => {
 
   it('rejects, can undo, and learns from the answers on request', async () => {
     const { user } = setup(<MatchQueuePage />)
-    await screen.findByRole('list', { name: 'Matches to check' })
+    await screen.findByRole('grid', { name: 'Matches to check' })
     await user.click(screen.getByRole('button', { name: 'Not Glass Orchard' }))
     expect(cards()).toHaveLength(3)
     await user.keyboard('u')
@@ -168,7 +168,7 @@ describe('MatchQueuePage', () => {
 
   it('searches the files and the proposed works after a short pause', async () => {
     const { user } = setup(<MatchQueuePage />)
-    await screen.findByRole('list', { name: 'Matches to check' })
+    await screen.findByRole('grid', { name: 'Matches to check' })
     await user.type(screen.getByRole('searchbox', { name: 'Search matches' }), 'salt again')        // words from another candidate's title
     await waitFor(() => expect(cards().map(c => c.getAttribute('aria-label'))).toEqual(['Salt Roads']))
     await user.clear(screen.getByRole('searchbox', { name: 'Search matches' }))
@@ -177,7 +177,7 @@ describe('MatchQueuePage', () => {
 
   it('keeps a choice made while a search is still pausing', async () => {
     const { user } = setup(<MatchQueuePage />)
-    await screen.findByRole('list', { name: 'Matches to check' })
+    await screen.findByRole('grid', { name: 'Matches to check' })
     await user.type(screen.getByRole('searchbox', { name: 'Search matches' }), 'mara')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Accepted by the model' }), 'skip')      // before the search reaches the URL
     await waitFor(() => expect(cards().map(c => c.getAttribute('aria-label'))).toEqual(['Salt Roads', 'Lune']))
@@ -238,7 +238,7 @@ describe('match helpers', () => {
 
   it('filters by radio, plays and programmes through the one kind filter, and shows why a listen is not a book', async () => {
     setup(<MatchQueuePage />, { route: '/?kind=not-book' })
-    const list = await screen.findByRole('list', { name: 'Matches to check' })
+    const list = await screen.findByRole('grid', { name: 'Matches to check' })
     expect(within(list).getAllByRole('article')).toHaveLength(1)
     expect(within(list).getByRole('article', { name: 'Untagged folder' })).toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: 'Kind of listen' })).toHaveValue('not-book')
@@ -255,7 +255,7 @@ describe('match helpers', () => {
     setup(<MatchQueuePage />, { route: '/?sort=kind-uncertain' })
     expect(await screen.findByRole('combobox', { name: 'Order' })).toHaveValue('kind-uncertain')
     expect(screen.getByRole('option', { name: 'Kind least sure first' })).toBeInTheDocument()
-    await waitFor(() => expect(within(screen.getByRole('list', { name: 'Matches to check' })).getAllByRole('article')[0]).toHaveAccessibleName('Untagged folder'))      // the one with a verdict, 97% sure, before the unclassified (read as sure books)
+    await waitFor(() => expect(within(screen.getByRole('grid', { name: 'Matches to check' })).getAllByRole('article')[0]).toHaveAccessibleName('Untagged folder'))      // the one with a verdict, 97% sure, before the unclassified (read as sure books)
   })
 
   it('shows a proposed radio programme with its channel, first broadcast, catalogue links and evidence', async () => {

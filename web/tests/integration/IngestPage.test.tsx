@@ -39,27 +39,21 @@ describe('staged ingest', () => {
     expect(screen.getByText('Missing book metadata (informational): Publisher.')).toBeInTheDocument()
   })
 
-  it('waits for a slow initial page before polling again', async () => {
-    let poll = () => {}; let finish!: () => void; let requests = 0
-    const ready = new Promise<void>(resolve => { finish = resolve })
-    const realInterval = window.setInterval.bind(window)
-    // Testing Library also uses intervals: only capture the app's polling timer.
-    vi.spyOn(window, 'setInterval').mockImplementation((cb, delay, ...args) => {
-      if (delay !== 3000) return realInterval(cb, delay, ...args) as unknown as ReturnType<typeof window.setInterval>
-      poll = cb as () => void; return {} as ReturnType<typeof window.setInterval>
-    })
-    server.use(http.get('/api/ingest', async () => { requests++; await ready; return HttpResponse.json(ingestFixture()) }))
-    try {
-      setup(<IngestPage />)
-      await waitFor(() => expect(requests).toBe(1))
-      act(() => { poll(); poll(); poll() })
-      expect(requests).toBe(1)
-      finish()
-      expect(await screen.findByRole('button', { name: 'Approve book and identify audiobook' })).toBeEnabled()
-      // The page re-creates its polling timer in an effect once `loading` turns false, and `poll` is reassigned only then; a call before that runs the old closure (still `loading`) and does nothing. So keep polling until the new timer's callback takes effect instead of assuming it already has (this raced under CI load).
-      await waitFor(() => { act(() => poll()); expect(requests).toBeGreaterThanOrEqual(2) })
-    } finally { finish() }
-  })
+  it('polls while the worker is busy, and not while it is idle', async () => {
+    let requests = 0
+    const busy = ingestFixture(); busy.worker.busy = 'run'
+    server.use(http.get('/api/ingest', () => { requests++; return HttpResponse.json(busy) }))
+    const first = setup(<IngestPage />)
+    await screen.findByText('Dune · review')
+    await waitFor(() => expect(requests).toBeGreaterThanOrEqual(2), { timeout: 6000 })      // strata-react's useJob polls every 3 s while the worker has work
+    first.unmount()
+    requests = 0
+    server.use(http.get('/api/ingest', () => { requests++; return HttpResponse.json(ingestFixture()) }))
+    setup(<IngestPage />)
+    await screen.findByText('Dune · review')
+    await new Promise(r => setTimeout(r, 3500))
+    expect(requests).toBe(1)                                           // idle: one read, no timer
+  }, 15000)
 
   it('toggles metadata automation without changing quality or processing approval', async () => {
     const f = ingestFixture(); let body: Record<string, unknown> = {}
@@ -170,10 +164,11 @@ describe('staged ingest', () => {
     expect(screen.getByText(/not a quality rating/)).toBeInTheDocument()
   })
   it('shows stage timings, unknown metrics and review thresholds', async () => {
-    setup(<IngestPage />)
+    const { user } = setup(<IngestPage />)
     expect(screen.getByText('Loading reviews…')).toBeInTheDocument()
     expect(await screen.findByText('Dune · review')).toBeInTheDocument()
     expect(screen.getByText(/Book approval manual/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Analysis history and timings' })); await user.click(screen.getByRole('button', { name: 'Metrics and thresholds' }))
     expect(screen.getByText('unknown')).toBeInTheDocument()
     expect(screen.getByText('missing measurement')).toBeInTheDocument()
     expect(screen.getByText(/1.3s/)).toBeInTheDocument()
@@ -189,7 +184,7 @@ describe('staged ingest', () => {
     expect(await screen.findByText('No books awaiting review.')).toBeInTheDocument()
     server.use(http.get('/api/ingest', () => HttpResponse.json({ detail: 'offline' }, { status: 503 })))
     await user.click(screen.getByRole('button', { name: 'Refresh' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('offline')
+    expect(await screen.findByRole('status')).toHaveTextContent('offline')      // the last good page stays, under a notice
   })
   it('evaluates saved metrics and displays preserved evidence', async () => {
     const { user } = setup(<IngestPage />); await screen.findByText('Dune · review')
@@ -217,13 +212,10 @@ describe('staged ingest', () => {
     const f = ingestFixture(); f.worker.busy = 'run'; f.policy.auto_approve = true; f.policy.auto_process = true
     f.runs[0].state = 'eligible'; f.runs[0].current_evaluation.eligible = true; f.runs[0].current_evaluation.checks[0].value = 1; f.runs[0].current_evaluation.checks[0].passed = true
     f.runs[0].reviews.metadata.eligible = true; f.runs[0].reviews.metadata.checks[0].value = 1; f.runs[0].reviews.metadata.checks[0].passed = true
-    let poll: (() => void) | undefined
-    vi.spyOn(window, 'setInterval').mockImplementation(cb => { poll = cb as () => void; return {} as ReturnType<typeof window.setInterval> })
-    vi.spyOn(window, 'clearInterval').mockImplementation(() => {})
     server.use(http.get('/api/ingest', () => HttpResponse.json(f)))
-    setup(<IngestPage />); await screen.findByText('Dune · eligible')
-    await waitFor(() => expect(poll).toBeDefined()); act(() => poll?.())
+    const { user } = setup(<IngestPage />); await screen.findByText('Dune · eligible')
     expect(screen.getByText(/Current thresholds: pass/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Metrics and thresholds' }))
     expect(screen.getByText('pass', { selector: 'td' })).toBeInTheDocument()
   })
 })
@@ -231,8 +223,8 @@ describe('staged ingest', () => {
 it('shows selected files and measured source alternatives', async () => {
   const f = { ...qualityFixture(), runs: [{ ...qualityFixture().runs[0], selection: { files: ['Part01.mp3', 'Part02.mp3'], reason: 'Complete recording with better measured quality', ranking: [{ id: 'source1', reasons: { coverage: 1, true_peak: -1, band4k_relative_db: -20 } }, { id: 'source2', reasons: { coverage: .5, true_peak: null, band4k_relative_db: null } }] } }] }
   server.use(http.get('/api/ingest', () => HttpResponse.json(f)))
-  setup(<IngestPage phase="quality" />)
-  expect(await screen.findByText('Selected source: 2 files')).toBeInTheDocument()
+  const { user } = setup(<IngestPage phase="quality" />)
+  await user.click(await screen.findByRole('button', { name: 'Selected source: 2 files' }))
   expect(screen.getByText('Part01.mp3')).toBeInTheDocument()
   expect(screen.getByText(/source2: coverage 0.5/)).toHaveTextContent('unknown')
 })
@@ -240,7 +232,8 @@ it('shows selected files and measured source alternatives', async () => {
 it('shows numeric and unknown measurements for each stage', async () => {
   const f = ingestFixture(); f.runs[0].stages[0].metrics = { 'inventory.files': 16, 'quality.noise_estimate': null }
   server.use(http.get('/api/ingest', () => HttpResponse.json(f)))
-  setup(<IngestPage />)
+  const { user } = setup(<IngestPage />)
+  await user.click(await screen.findByRole('button', { name: 'Analysis history and timings' }))
   expect(await screen.findByText('inventory.files: 16')).toBeInTheDocument()
   expect(screen.getByText('quality.noise_estimate: unknown')).toBeInTheDocument()
 })
