@@ -4,14 +4,22 @@ from __future__ import annotations
 
 import os
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.store import build, metadata
 from app.store import listens as L
 from app.store import structure as st
 from app.store.filegroups import finish_run, new_run
-from app.store.models import Listen, ListenPart, PartFile, PartFilegroup, PartFilegroupMember, PartFileLocation
+from app.store.models import (
+    Listen,
+    ListenEvent,
+    ListenPart,
+    PartFile,
+    PartFilegroup,
+    PartFilegroupMember,
+    PartFileLocation,
+)
 
 
 def split_input_parts(
@@ -37,8 +45,8 @@ def split_input_parts(
     return new
 
 
-def restructure_listen(s: Session, listen_id: int, *, actor_ref: str = "restructure") -> list[int]:
-    """Re-read one listen's files with the current structure rules, for a rule fixed after the listen was built (a full-length file beside the same book split into chapters, which was one group of double length). The listen, its choices, matches, decisions and events stay; its single input group is replaced by one new group per cluster the rules now see, linked as the listen's inputs (copies, ranked by `build.preference`), and its metadata is read again. Returns the new group ids; raises ValueError when the rules still see one group, or the input is not one group of plain files."""
+def _read_group(s: Session, listen_id: int):
+    """(listen, its single input part, that part's group, the clusters the current rules see in its files, {file: (seconds, bytes)}, folder name)."""
     listen = s.get(Listen, listen_id)
     if listen is None or listen.merged_into_id is not None:
         raise ValueError(f"listen {listen_id} is not a live listen")
@@ -94,7 +102,11 @@ def restructure_listen(s: Session, listen_id: int, *, actor_ref: str = "restruct
     if len(clusters) < 2 or any(kind != "book" for kind, _, _ in clusters):
         raise ValueError("the current rules see this listen's files as one group: nothing to restructure")
     folder = os.path.basename(old.path or "") or old.label
-    run = new_run(s, "restructure", {"listen": listen_id, "from_group": old.id})
+    return listen, inputs[0], old, clusters, durations, folder
+
+
+def _make_groups(s: Session, run, old, clusters, durations, folder) -> list[tuple[PartFilegroup, int]]:
+    """One new group per cluster (files as members), with its runtime in minutes."""
     made: list[tuple[PartFilegroup, int]] = []
     for kind, fl, evidence in clusters:
         label = os.path.splitext(fl[0][1])[0] if len(fl) == 1 else st.cluster_label(folder, fl)
@@ -103,7 +115,11 @@ def restructure_listen(s: Session, listen_id: int, *, actor_ref: str = "restruct
             kind=kind,
             label=label,
             path=old.path,
-            detail={**evidence, "from_group": old.id},
+            detail={
+                **evidence,
+                "from_group": -1 if len(fl) == 1 else old.id,
+                "restructured_from": old.id,
+            },  # a lone file in its container folder is named by the file, as structure.py makes them (-1)
             file_count=len(fl),
             total_bytes=sum(durations[f][1] for f, _ in fl),
             group_count=0,
@@ -114,9 +130,18 @@ def restructure_listen(s: Session, listen_id: int, *, actor_ref: str = "restruct
             s.add(PartFilegroupMember(group_id=g.id, ordinal=i, file_id=fid))
         made.append((g, round(sum(durations[f][0] for f, _ in fl) / 60)))
     s.flush()
+    return made
+
+
+def restructure_listen(s: Session, listen_id: int, *, actor_ref: str = "restructure") -> list[int]:
+    """Re-read one listen's files with the current structure rules, for a rule fixed after the listen was built (a full-length file beside the same book split into chapters, which was one group of double length). The listen, its choices, matches, decisions and events stay; its single input group is replaced by one new group per cluster the rules now see, linked as the listen's inputs (copies, ranked by `build.preference`), and its metadata is read again. Returns the new group ids; raises ValueError when the rules still see one group, or the input is not one group of plain files."""
+    listen, old_part, old, clusters, durations, folder = _read_group(s, listen_id)
+    run = new_run(s, "restructure", {"listen": listen_id, "from_group": old.id})
+    made = _make_groups(s, run, old, clusters, durations, folder)
+    s.flush()
     L.unlink(
         s,
-        inputs[0],
+        old_part,
         actor_kind="rule",
         actor_ref=actor_ref,
         run_id=run.id,
@@ -150,3 +175,76 @@ def restructure_listen(s: Session, listen_id: int, *, actor_ref: str = "restruct
     metadata.add_metadata(s, actor_ref=actor_ref, redo=[listen_id])
     finish_run(s, run, "done")
     return [g.id for g, _ in made]
+
+
+def explode_listen(s: Session, listen_id: int, *, actor_ref: str = "explode") -> list[int]:
+    """A folder of different books was taken for the chapters of one (`structure.titled_books`): give each long file a listen of its own. The existing listen keeps the first book (its id, events, status) and its metadata is read again; every other file gets a new listen, `grouped`, with its metadata. Refuses a listen a person has decided on (a user match, or a chosen field) and a listen whose files the rules still see as one group; model candidates are replaced by the next `listens-identify`. Returns the listen ids, the existing one first."""
+    listen, old_part, old, clusters, durations, folder = _read_group(s, listen_id)
+    if any(kind != "book" or len(fl) != 1 for kind, fl, _ in clusters):
+        raise ValueError("the current rules do not see one book per file here")
+    person = s.scalar(
+        select(func.count())
+        .select_from(ListenEvent)
+        .where(ListenEvent.listen_id == listen_id, ListenEvent.actor_kind == "user")
+    )
+    if person:  # a chosen field, a confirmed or rejected work, a status: anything a person did on the listen belongs to the book it was about
+        raise ValueError("a person has decided on this listen: split it by hand")
+    run = new_run(s, "explode", {"listen": listen_id, "from_group": old.id})
+    made = _make_groups(s, run, old, clusters, durations, folder)
+    L.unlink(
+        s,
+        old_part,
+        actor_kind="rule",
+        actor_ref=actor_ref,
+        run_id=run.id,
+        reason="exploded: each long file is a book of its own",
+    )
+    ids = [listen.id]
+    for n, (g, minutes) in enumerate(made):
+        target = (
+            listen
+            if n == 0
+            else L.create_listen(
+                s,
+                "book",
+                actor_kind="rule",
+                actor_ref=actor_ref,
+                run_id=run.id,
+                reason="a long file with a title of its own, one of several in a folder",
+            )
+        )
+        if n:
+            target.label = g.label
+            ids.append(target.id)
+        L.link(
+            s,
+            target,
+            "input",
+            filegroup_id=g.id,
+            ordinal=1,
+            actor_kind="rule",
+            actor_ref=actor_ref,
+            run_id=run.id,
+            reason="the file of this book",
+            detail={
+                "group_kind": g.kind,
+                "files": g.file_count,
+                "bytes": g.total_bytes,
+                "minutes": minutes,
+                "path": g.path,
+            },
+        )
+        if n:
+            L.set_status(
+                s,
+                target,
+                "grouped",
+                actor_kind="rule",
+                actor_ref=actor_ref,
+                run_id=run.id,
+                reason="made from a folder of several books",
+            )
+    metadata.add_metadata(s, actor_ref=actor_ref, redo=[listen_id])
+    metadata.add_metadata(s, actor_ref=actor_ref)  # the new listens have no metadata yet
+    finish_run(s, run, "done")
+    return ids

@@ -469,6 +469,25 @@ def cmd_listens_restructure(args):
     return 0
 
 
+def cmd_listens_explode(args):
+    """Give each long file of a folder taken for one book's chapters a listen of its own (after the structure rule for folders of different books); the existing listen keeps the first book."""
+    from omarchy_db import connect
+    from sqlalchemy.orm import Session
+
+    from app.store import repair
+
+    with Session(connect("listory")) as s:
+        for lid in args.ids:
+            try:
+                ids = repair.explode_listen(s, lid)
+            except ValueError as e:
+                print(f"listen {lid}: {e}")
+                continue
+            print(f"listen {lid}: now {len(ids)} listens {ids}")
+        s.commit()
+    return 0
+
+
 def cmd_listens_identify_train(args):
     """Fit the record-linkage model on every prepared listen (labelled ones clamped: old catalogue approvals and the match queue's answers), cross-validate on the labelled ones and save data/linkage/model.json and report.json."""
     from omarchy_db import connect
@@ -990,6 +1009,12 @@ def main(argv=None):
     sc.add_argument("folder", nargs="?")
     sc.add_argument("--dry-run", action="store_true")
     sc.set_defaults(fn=cmd_scan)
+    ex = sub.add_parser(
+        "listens-explode",
+        help="give each long file of a folder taken for one book's chapters a listen of its own (decisions on the listen are respected; identify afterwards)",
+    )
+    ex.add_argument("ids", nargs="+", type=int)
+    ex.set_defaults(fn=cmd_listens_explode)
     rs = sub.add_parser(
         "listens-restructure",
         help="re-read these listens' files with the current structure rules (decisions are kept; run listens-identify-prepare and listens-identify afterwards)",
