@@ -104,6 +104,31 @@ def common_title(names: list[str]) -> str:
     return cut
 
 
+SERIES_CODE = re.compile(
+    r"^[A-Za-z]{1,5}\d{1,3}(?=[\s._:-]+\S)[\s._:-]*"
+)  # 'RW01 ', 'HB04: ', 'MH2 - ' in front of a title
+
+NUMBERED = re.compile(r"^(?:series|season|episode|ep|part|pt|vol|volume|book|chapter|disc|cd|collection|\d)\b", re.I)
+
+
+def peel(title: str, authors: list[str]) -> str:
+    """The title without a leading author name and a leading series code: 'Pat Author RW01 The Invented Echo' -> 'The Invented Echo'. Unchanged when nothing sensible is left: the whole title is never peeled away, what remains after taking off only an author must be two words or more ('Pat Author Upload' stays), and a bare number, 'Series 3' or 'Part 2' is not a title."""
+    original = title.strip()
+    t, author_peeled, code_peeled = original, False, False
+    for a in sorted({a.strip() for a in authors if a and a.strip()}, key=len, reverse=True):
+        if len(a) >= 3 and t.lower().startswith(a.lower() + " ") and len(t) - len(a) > 2:
+            t, author_peeled = t[len(a) :].strip(" -._:"), True
+            break
+    if (m := SERIES_CODE.match(t)) and len(re.sub(r"[^A-Za-z]", "", t[m.end() :])) >= 4:
+        t, code_peeled = t[m.end() :].strip(" -._:"), True
+    if t == original:
+        return original
+    words = [w for w in re.findall(r"[A-Za-z']+", re.sub(r"^(?:the|a|an)\s+", "", t, flags=re.I)) if w]
+    if NUMBERED.match(t) or len("".join(words)) < 4 or (author_peeled and not code_peeled and len(words) < 2):
+        return original  # what is left is only a number, 'Series 3', 'the book', or one word taken off an author prefix: not a title
+    return t
+
+
 def make_readings(choices: dict, tags: dict, folder: dict, file: dict | None = None, prefix: str = "") -> list[Reading]:
     """Readings in order of trust (`file`: the parsed name of a single-file listen's file, which is the title itself, not a chapter name, and is read even when tags give a different title), duplicates (same title and author key) removed. Each yields its own numbered/stripped variants via `identify.local`."""
 
@@ -133,6 +158,13 @@ def make_readings(choices: dict, tags: dict, folder: dict, file: dict | None = N
             )  # 'The Secret History - Donna Tartt' parses as author 'The Secret History'
     if folder.get("folder") and folder["folder"].strip().lower() not in scan.GENERIC:
         raw.append(Reading(folder["folder"], "", "split"))
+    known = [str(a) for a in (choices.get("author"), folder.get("author"), tag("album_artist"), tag("artist")) if a]
+    with_peeled: list[Reading] = []
+    for r in raw:  # the title as it would be without the author in front and a series code ('Author RW01 The Title' -> 'The Title'), right after the reading it came from
+        with_peeled.append(r)
+        if r.source != "swapped" and (p := peel(r.title, known)) != r.title:
+            with_peeled.append(Reading(p, r.author or (known[0] if known else ""), "peeled"))
+    raw = with_peeled
     out: list[Reading] = []
     seen = set()
     for r in raw:
