@@ -248,3 +248,27 @@ def explode_listen(s: Session, listen_id: int, *, actor_ref: str = "explode") ->
     metadata.add_metadata(s, actor_ref=actor_ref)  # the new listens have no metadata yet
     finish_run(s, run, "done")
     return ids
+
+
+def discard_listen(s: Session, listen_id: int, into_id: int, *, reason: str, actor_ref: str = "discard") -> None:
+    """Retire a listen that is not a book of its own (a second copy of one chapter of another listen's set, a stray duplicate file): it is merged into `into_id`, which keeps its own inputs, and the files it brought are unlinked again, so no listen carries them. Refuses a listen a person did anything on."""
+    loser, survivor = s.get(Listen, listen_id), s.get(Listen, into_id)
+    if loser is None or survivor is None or loser.merged_into_id is not None or survivor.merged_into_id is not None:
+        raise ValueError("both must be live listens")
+    if s.scalar(
+        select(func.count())
+        .select_from(ListenEvent)
+        .where(ListenEvent.listen_id == listen_id, ListenEvent.actor_kind == "user")
+    ):
+        raise ValueError("a person has decided on this listen: handle it by hand")
+    brought = [
+        p.id
+        for p in s.scalars(
+            select(ListenPart).where(
+                ListenPart.listen_id == listen_id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None)
+            )
+        )
+    ]
+    L.merge(s, survivor, loser, actor_kind="user", actor_ref=actor_ref, reason=reason)
+    for p in s.scalars(select(ListenPart).where(ListenPart.id.in_(brought))):
+        L.unlink(s, p, actor_kind="user", actor_ref=actor_ref, reason=reason)
