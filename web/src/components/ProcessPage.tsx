@@ -7,13 +7,19 @@ import { Card, Err } from './ui'
 import { formatBytes } from './BookPage'
 
 const TABS: { id: string; label: string; states: PlanState[] }[] = [
-  { id: 'all', label: 'All operations', states: ['planning','proposed','approved','running','failed'] },
   { id: 'proposed', label: 'To review', states: ['proposed'] },
-  { id: 'queued', label: 'Queued / running', states: ['approved', 'running','planning'] },
-  { id: 'done', label: 'Done', states: ['done'] },
   { id: 'rejected', label: 'Rejected', states: ['rejected'] },
-  { id: 'failed', label: 'Failed', states: ['failed'] },
 ]
+
+// Operations are filtered by what state they are in: failures, work in progress and pending work show by default; completed work and anything else is a toggle away.
+const GROUPS = [
+  { id: 'failed', label: 'Failed', states: ['failed'] },
+  { id: 'running', label: 'In progress', states: ['running', 'planning'] },
+  { id: 'pending', label: 'Pending', states: ['queued', 'approved', 'waiting'] },
+  { id: 'done', label: 'Completed', states: ['done', 'completed'] },
+] as const
+const DEFAULT_GROUPS = ['failed', 'running', 'pending']
+const inGroups = (shown: string[], state: string) => { const g = GROUPS.find(x => (x.states as readonly string[]).includes(state)); return !g || shown.includes(g.id) }  // an unknown state is never hidden
 
 function FailureReason({ error, failed }: { error: string; failed: boolean }) {
   return error || failed ? <p className="mt-2 type-body-sm text-danger whitespace-pre-wrap break-words"><strong>{failed ? 'Failure reason: ' : ''}</strong>{error || 'No failure reason was recorded.'}</p> : null
@@ -61,7 +67,8 @@ function Row({ r, selected, onToggle, result }: { r: QueueRow; selected: boolean
 }
 
 export default function ProcessPage({ pollMs = 3000, mode = 'operations' }: { pollMs?: number; mode?: 'operations' | 'proposed' }) {
-  const [showCompleted, setShowCompleted] = useState(false)
+  const [shown, setShown] = useState<string[]>(DEFAULT_GROUPS)
+  const showCompleted = shown.includes('done')
   const operationsJob = useJob({ queryKey: ['operations', mode, showCompleted], queryFn: () => mode === 'operations' ? api.operations(showCompleted) : Promise.resolve({ rows: [], busy: false }), staleTime: 0, every: pollMs, isRunning: o => o.busy })
   // Both reads are polled while either worker (processing or ingest) has something running or queued, and left alone otherwise: an ingest job ends by creating the plan the queue shows.
   const queueJob = useJob({ queryKey: ['queue'], queryFn: () => api.queue(), staleTime: 0, every: pollMs, isRunning: q => operationsJob.running || !!q.worker.busy || !!q.worker.queued || q.rows.some(r => r.state === 'running' || r.state === 'planning') })
@@ -70,8 +77,7 @@ export default function ProcessPage({ pollMs = 3000, mode = 'operations' }: { po
   const matches = (...values: (string | number | null | undefined)[]) => query.toLocaleLowerCase().trim().split(/\s+/).every(term => values.join(' ').toLocaleLowerCase().includes(term))
   const { data: operations, error: operationsError } = readOf(operationsJob)
   const reload = queueJob.poll, reloadOperations = operationsJob.poll
-  const [tab, setTab] = useState(mode === 'proposed' ? 'proposed' : 'all')
-  const tabs = TABS.filter(t => mode === 'proposed' ? ['proposed','rejected'].includes(t.id) : !['proposed','rejected'].includes(t.id))
+  const [tab, setTab] = useState('proposed')
   const [sel, setSel] = useState<number[]>([])
   const [err, setErr] = useState<string | null>(null)
   const busy = !!data?.worker.busy || !!data?.worker.queued || !!operations?.busy || (data?.rows ?? []).some(r => r.state === 'running' || r.state === 'planning')
@@ -82,10 +88,12 @@ export default function ProcessPage({ pollMs = 3000, mode = 'operations' }: { po
   }
   const states = TABS.find(t => t.id === tab)!.states
   const allowed = (r: QueueRow) => mode === 'proposed' ? ['proposed','rejected'].includes(r.state) : !['proposed','rejected'].includes(r.state)
-  const rows = (data?.rows ?? []).filter(r => matches(r.title, r.author, r.book_id, r.state, r.error) && allowed(r) && (states.includes(r.state) || tab === 'all' && showCompleted && r.state === 'done'))
-  const tasks = (operations?.rows ?? []).filter(r => matches(r.title, r.book_id, r.stage, r.current_step, r.state, r.error, ...(r.logs ?? []).map(entry => entry.message))).filter(r => tab === 'all' ? showCompleted || r.state !== 'completed' : tab === 'failed' ? r.state === 'failed' : tab === 'queued' ? ['running','queued'].includes(r.state) : tab === 'done' && r.state === 'completed')
+  const rows = (data?.rows ?? []).filter(r => matches(r.title, r.author, r.book_id, r.state, r.error) && allowed(r) && (mode === 'operations' ? inGroups(shown, r.state) : states.includes(r.state)))
+  const tasks = (operations?.rows ?? []).filter(r => matches(r.title, r.book_id, r.stage, r.current_step, r.state, r.error, ...(r.logs ?? []).map(entry => entry.message))).filter(r => inGroups(shown, r.state))
   const selectable = rows.filter(r => r.state === 'proposed' || r.state === 'rejected')
   const count = (states: PlanState[]) => (data?.rows ?? []).filter(r => allowed(r) && states.includes(r.state)).length
+  const groupCount = (id: string) => { const states = GROUPS.find(g => g.id === id)!.states as readonly string[]; return (data?.rows ?? []).filter(r => allowed(r) && states.includes(r.state)).length + (operations?.rows ?? []).filter(r => states.includes(r.state)).length }
+  const failedOnly = mode === 'operations' && shown.length === 1 && shown[0] === 'failed'
   const approved = count(['approved'])
   const toggle = (id: number) => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
 
@@ -98,20 +106,24 @@ export default function ProcessPage({ pollMs = 3000, mode = 'operations' }: { po
           {mode === 'operations' && <Button disabled={approved === 0} onClick={() => act(() => api.runApproved())}>Process approved ({approved})</Button>}
           {mode === 'proposed' && <a className="rounded-control border border-border px-2 py-0.5 type-caption hover:border-ring" href={href.process()}>Open processing queue</a>}
           <Button variant="outline" size="sm" onClick={() => { reload(); reloadOperations() }}>Refresh</Button>
-          {mode === 'operations' && <Checkbox label="Show completed" checked={showCompleted} onCheckedChange={on => { setShowCompleted(on); setTab('all'); setSel([]) }} />}
           {busy && <span className="type-body-sm text-muted-foreground">Working… {data?.worker.busy ?? ''}</span>}
         </div>
         <Err msg={err || error || operationsError} />
         {queueJob.status === 'ready' && queueJob.stale && <StaleNotice stale={queueJob.stale} />}
       </Card>
 
-      <div className="flex flex-wrap gap-1 mb-3 type-body-sm" role="tablist" aria-label="Operation status">
-        {tabs.map(t => <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={`rounded-control border px-2 py-0.5 type-caption transition-state hover:border-ring ${tab === t.id ? 'border-ring bg-muted' : 'border-border'}`} onClick={() => { setTab(t.id); setSel([]); if (t.id === 'done') setShowCompleted(true) }}>{t.label} ({count(t.states) + (operations?.rows ?? []).filter(r => t.id === 'all' ? showCompleted || r.state !== 'completed' : t.id === 'failed' ? r.state === 'failed' : t.id === 'queued' ? ['running','queued'].includes(r.state) : t.id === 'done' && r.state === 'completed').length + (t.id === 'all' && showCompleted ? count(['done']) : 0)})</button>)}
-      </div>
+      {mode === 'operations' && <div className="flex flex-wrap items-center gap-1 mb-3 type-body-sm" role="group" aria-label="Show operations that are">
+        {GROUPS.map(g => <button key={g.id} type="button" aria-pressed={shown.includes(g.id)} className={`rounded-control border px-2 py-0.5 type-caption transition-state hover:border-ring ${shown.includes(g.id) ? 'border-ring bg-muted' : 'border-border text-muted-foreground'}`} onClick={() => { setShown(cur => cur.includes(g.id) ? cur.filter(x => x !== g.id) : [...cur, g.id]); setSel([]) }}>{g.label} ({groupCount(g.id)})</button>)}
+        <button type="button" className="ml-1 type-caption underline" onClick={() => setShown(GROUPS.map(g => g.id))}>Show all</button>
+        <button type="button" className="type-caption underline" onClick={() => setShown(DEFAULT_GROUPS)}>Reset</button>
+      </div>}
+      {mode === 'proposed' && <div className="flex flex-wrap gap-1 mb-3 type-body-sm" role="tablist" aria-label="Operation status">
+        {TABS.map(t => <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} className={`rounded-control border px-2 py-0.5 type-caption transition-state hover:border-ring ${tab === t.id ? 'border-ring bg-muted' : 'border-border'}`} onClick={() => { setTab(t.id); setSel([]) }}>{t.label} ({count(t.states)})</button>)}
+      </div>}
 
       {mode === 'operations' && <div className="mb-3 space-y-2">
         <Input type="search" aria-label="Search operations" className="w-full max-w-lg" placeholder="Search title, book ID, stage or failure reason" value={query} onChange={e => setQuery(e.target.value)} />
-        {tab === 'failed' && <p className="type-body-sm text-muted-foreground">Failed work stays stopped until you choose to retry. Each entry shows its last step and recorded failure reason.</p>}
+        {failedOnly && <p className="type-body-sm text-muted-foreground">Failed work stays stopped until you choose to retry. Each entry shows its last step and recorded failure reason.</p>}
       </div>}
 
       {selectable.length > 0 && (
@@ -122,7 +134,7 @@ export default function ProcessPage({ pollMs = 3000, mode = 'operations' }: { po
           <Button variant="outline" size="sm" disabled={sel.length === 0} onClick={() => act(() => api.repropose(sel))}>Plan again</Button>
         </div>
       )}
-      {tab === 'failed' && rows.length > 0 && <div className="mb-3"><Button variant="outline" size="sm" onClick={() => act(() => api.repropose(rows.map(r => r.book_id)))}>Plan these again</Button></div>}
+      {failedOnly && rows.length > 0 && <div className="mb-3"><Button variant="outline" size="sm" onClick={() => act(() => api.repropose(rows.map(r => r.book_id)))}>Plan these again</Button></div>}
 
       <div className="space-y-2">
         {rows.length === 0 && tasks.length === 0 && <p className="type-body-sm text-muted-foreground">No operations in this view.</p>}

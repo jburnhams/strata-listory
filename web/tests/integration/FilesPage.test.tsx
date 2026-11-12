@@ -5,6 +5,17 @@ import { setup, screen, within } from '../utils/render'
 import { mock, server } from '../utils/server'
 
 describe('FilesPage', () => {
+  it('ignores a blank folder, says when none is set, and shows a refused one', async () => {
+    mock.settings = { ...mock.settings, library_dir: '', library_dirs: [] }
+    const { user } = setup(<FilesPage />, { route: '/files' })
+    await user.click(await screen.findByRole('button', { name: /Folders scanned \(none yet\)/ }))
+    await user.type(screen.getByLabelText('Add a folder'), '   {Enter}')
+    expect(mock.settings.library_dirs).toEqual([])
+    server.use(http.put('/api/settings', () => HttpResponse.json({ detail: 'the library folder relative must be an absolute path' }, { status: 400 })))
+    await user.type(screen.getByLabelText('Add a folder'), 'relative{Enter}')
+    expect(await screen.findByRole('alert')).toHaveTextContent('must be an absolute path')
+  })
+
   it('lists the folders scanned and adds or removes an extra one', async () => {
     mock.settings = { ...mock.settings, library_dir: '/audio', library_dirs: ['/audio', '/more'] }
     const { user } = setup(<FilesPage />, { route: '/files' })

@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import ProcessPage from '../../src/components/ProcessPage'
-import { setup, screen, within } from '../utils/render'
+import { setup, screen, waitFor, within } from '../utils/render'
 import { mock, server } from '../utils/server'
+
+/** Operations are filtered by state chips (toggles); this sets exactly the given ones on. */
+async function only(user: ReturnType<typeof setup>['user'], ...names: string[]) {
+  for (const name of ['Failed', 'In progress', 'Pending', 'Completed']) {
+    const chip = await screen.findByRole('button', { name: new RegExp(`^${name} \\(`) })
+    if ((chip.getAttribute('aria-pressed') === 'true') !== names.includes(name)) await user.click(chip)
+  }
+}
 
 describe('ProcessPage', () => {
   it('shows retained date notes alongside the plan', async () => {
@@ -42,8 +50,8 @@ describe('ProcessPage', () => {
 
     rerender(<ProcessPage key="operations" />)
     await user.click(await screen.findByRole('button', { name: 'Process approved (1)' }))
-    expect(await screen.findByRole('tab', { name: 'Done (1)' })).toBeInTheDocument()
-    await user.click(screen.getByRole('tab', { name: 'Done (1)' }))
+    expect(await screen.findByRole('button', { name: 'Completed (1)' })).toBeInTheDocument()
+    await only(user, 'Completed')
     expect(screen.getByRole('link', { name: 'Dune' })).toBeInTheDocument()
   })
 
@@ -64,12 +72,12 @@ describe('ProcessPage', () => {
     ]
     const { user } = setup(<ProcessPage />)
     expect(await screen.findByText('its files are not available')).toBeInTheDocument(); expect(screen.queryByRole('link', { name: 'Finished' })).toBeNull()
-    await user.click(screen.getByRole('tab', { name: 'Done (1)' }))
+    await only(user, 'Completed')
     expect(screen.getByText(/Finished: 286 MB → 134 MB · -18.1 LUFS · peak -1.6 dBTP/)).toBeInTheDocument()
-    await user.click(screen.getByRole('tab', { name: 'Failed (1)' }))
+    await only(user, 'Failed')
     expect(screen.getByText('its files are not available')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Plan these again' }))
-    expect(await within(screen.getByRole('tablist')).findByRole('tab', { name: 'Failed (0)' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Failed (0)' })).toBeInTheDocument()
   })
 })
 
@@ -79,17 +87,17 @@ describe('ProcessPage progress', () => {
     mock.queue = [{ book_id: 5, title: 'Running book', author: 'R', state: 'running', error: '', updated: '2026-10-30T12:00:00+00:00', summary: null }]
     const { user } = setup(<ProcessPage pollMs={30} />)
     expect(await screen.findByText(/Working… run/)).toBeInTheDocument()
-    await user.click(screen.getByRole('tab', { name: 'Queued / running (1)' }))
+    await only(user, 'In progress')
     expect(screen.getByText('Running book')).toBeInTheDocument()
     mock.queue = [{ ...mock.queue[0], state: 'done' }]
-    expect(await screen.findByRole('tab', { name: 'Done (1)' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Completed (1)' })).toBeInTheDocument()
     expect(screen.queryByText(/Working…/)).toBeNull()
   })
 
   it('refuses to run when nothing is approved', async () => {
     mock.queue = [{ book_id: 6, title: 'Pending', author: 'P', state: 'approved', error: '', updated: '2026-10-30T12:00:00+00:00', summary: null }]
     const { user } = setup(<ProcessPage />)
-    await screen.findByRole('tab', { name: 'Queued / running (1)' })
+    await screen.findByRole('button', { name: 'Pending (1)' })
     mock.queue = []
     await user.click(screen.getByRole('button', { name: 'Process approved (1)' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('nothing is approved yet')
@@ -113,12 +121,12 @@ it('shows ingest queues and failures by default and completed operations on requ
   expect(screen.getByRole('link', { name: 'Review quality' })).toHaveAttribute('href', '#/pipeline?tab=quality')
   await user.click(screen.getByRole('button', { name: 'Retry analysis' }))
   expect(retried).toBe(1)
-  await user.click(screen.getByRole('checkbox', { name: 'Show completed' }))
+  await user.click(screen.getByRole('button', { name: /^Completed/ }))
   expect(await screen.findByText('Earlier operation')).toBeInTheDocument()
-  await user.click(screen.getByRole('tab', { name: 'Failed (1)' }))
+  await only(user, 'Failed')
   expect(screen.getByText('Failed metadata')).toBeInTheDocument()
   expect(screen.queryByText('Next book')).toBeNull()
-  await user.click(screen.getByRole('tab', { name: 'Queued / running (2)' }))
+  await only(user, 'Pending')
   expect(screen.getByText('Next book')).toBeInTheDocument()
   expect(screen.queryByText('Failed metadata')).toBeNull()
 })
@@ -169,7 +177,7 @@ it('filters failed work and searches failure reasons without showing queued work
     { id: 'logged', book_id: 6, title: 'Logged failure', stage: 'inventory', state: 'failed', error: '', logs: [{ created: '2026-11-04T00:00:00Z', status: 'failed', message: 'Decoder could not open audio' }] },
   ] })))
   const { user } = setup(<ProcessPage />)
-  await user.click(await screen.findByRole('tab', { name: 'Failed (4)' }))
+  await only(user, 'Failed')
   expect(screen.queryByText('Queued book')).toBeNull()
   expect(screen.getByText('Source files missing')).toBeInTheDocument()
   expect(screen.getByText('No failure reason was recorded.')).toBeInTheDocument()
@@ -185,4 +193,40 @@ it('filters failed work and searches failure reasons without showing queued work
   expect(screen.getByText('No operations in this view.')).toBeInTheDocument()
   await user.clear(search)
   expect(screen.getByText('Broken plan')).toBeInTheDocument()
+})
+
+it('shows everything with Show all and goes back to failed, in progress and pending with Reset', async () => {
+  mock.queue = [
+    { book_id: 3, title: 'Finished', author: 'A', state: 'done', error: '', updated: '', summary: null },
+    { book_id: 4, title: 'Broken', author: 'B', state: 'failed', error: 'its files are not available', updated: '', summary: null },
+  ]
+  const { user } = setup(<ProcessPage />)
+  await screen.findByText('its files are not available')
+  expect(screen.getByRole('button', { name: 'Completed (1)', pressed: false })).toBeInTheDocument()
+  expect(screen.queryByRole('link', { name: 'Finished' })).toBeNull()
+  await user.click(screen.getByRole('button', { name: 'Refresh' }))
+  await user.click(screen.getByRole('button', { name: 'Show all' }))
+  expect(await screen.findByRole('link', { name: 'Finished' })).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Reset' }))
+  await waitFor(() => expect(screen.queryByRole('link', { name: 'Finished' })).toBeNull())
+})
+
+it('toggles each state on and off, counts operations with the plans, and never hides a state it does not know', async () => {
+  mock.queue = [{ book_id: 4, title: 'Broken plan', author: 'B', state: 'failed', error: 'files missing', updated: '', summary: null }]
+  server.use(http.get('/api/operations', () => HttpResponse.json({ busy: false, rows: [
+    { id: 'a', book_id: 8, run_id: null, title: 'Odd state', stage: 'inventory', state: 'paused', error: '' },
+    { id: 'b', book_id: 9, run_id: null, title: 'Queued op', stage: 'inventory', state: 'queued', error: '' },
+  ] })))
+  const { user } = setup(<ProcessPage />)
+  expect(await screen.findByText('Odd state')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Failed (1)', pressed: true })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Pending (1)', pressed: true })).toBeInTheDocument()
+  for (const name of [/^Failed/, /^Pending/]) {
+    await user.click(screen.getByRole('button', { name }))
+    expect(screen.getByRole('button', { name, pressed: false })).toBeInTheDocument()
+  }
+  expect(screen.queryByText('Queued op')).toBeNull(); expect(screen.queryByText('Broken plan')).toBeNull()
+  expect(screen.getByText('Odd state')).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: /^Pending/ }))
+  expect(await screen.findByText('Queued op')).toBeInTheDocument()
 })

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import ListensPage, { hours } from '../../src/components/ListensPage'
+import { http, HttpResponse } from 'msw'
 import { setup, screen, waitFor, within } from '../utils/render'
+import { server } from '../utils/server'
 
 describe('ListensPage', () => {
   it('lists listens with a finding by kind, and links each to its files', async () => {
@@ -14,6 +16,18 @@ describe('ListensPage', () => {
     expect(screen.getByText('2 parts')).toBeInTheDocument()                          // numbered parts of one recording, not copies
     expect(screen.getByText('Dead Ringers (season 11)')).toBeInTheDocument()      // no files group: plain text, not a link
     expect(screen.queryByRole('link', { name: 'Dead Ringers (season 11)' })).toBeNull()
+  })
+
+  it('shows confirmed and accepted matches by default and asks for the other match states on request', async () => {
+    const asked: string[] = []
+    server.use(http.get('/api/listens', ({ request }) => { asked.push(new URL(request.url).searchParams.get('match') ?? 'none'); return HttpResponse.json({ total: 0, kinds: {}, review: 0, not_book: 0, rows: [] }) }))
+    const { user } = setup(<ListensPage />, { route: '/listens' })
+    await waitFor(() => expect(asked).toEqual(['matched']))
+    expect(screen.getByRole('tab', { name: 'Confirmed and accepted', selected: true })).toBeInTheDocument()
+    for (const [tab, match] of [['Confirmed by you', 'confirmed'], ['Accepted by the model', 'accepted'], ['Not matched yet', 'unmatched'], ['Any match state', '']]) {
+      await user.click(screen.getByRole('tab', { name: tab }))
+      await waitFor(() => expect(asked.at(-1)).toBe(match))
+    }
   })
 
   it('searches and filters by kind', async () => {
