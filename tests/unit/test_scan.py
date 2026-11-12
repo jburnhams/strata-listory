@@ -56,6 +56,14 @@ def found(root):
         ("01 Witch Hunt", "Ian Rankin", dict(author="Ian Rankin", title="Witch Hunt", series_position=1.0)),
         ("Frankie_Boyle_Prometheus.mp3", "", dict(title="Frankie Boyle Prometheus")),
         ("Little Women", "Audible", dict(author="", title="Little Women")),
+        (
+            "Pat Author HB01 The Invented Echo.mp3",
+            "Pat Author",
+            dict(author="Pat Author", title="HB01 The Invented Echo"),
+        ),
+        ("Pat Author Invented Road.mp3", "Pat Author", dict(author="Pat Author", title="Invented Road")),
+        ("Pat Author.mp3", "Pat Author", dict(author="Pat Author", title="Pat Author")),
+        ("Pat Authority Rules.mp3", "Pat Author", dict(author="Pat Author", title="Pat Authority Rules")),
     ],
 )
 def test_parse_name(name, parent, expect):
