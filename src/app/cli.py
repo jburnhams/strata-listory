@@ -188,36 +188,42 @@ def cmd_match(args):
 
 
 def cmd_filegroups(args):
-    """Scan the library into the listory Postgres schema (files by sha256) and group it by folder. Rerunnable: only changed files are hashed, and each run adds a new grouping."""
-    root = (
-        args.folder
-        or settings.library_dir()
+    """Scan the library roots (the folder given, else library_dir and library_dirs) into the listory Postgres schema (files by sha256) and group them by folder. Rerunnable: only changed files are hashed, and each run adds a new grouping."""
+    roots = (
+        [os.path.abspath(os.path.expanduser(args.folder))]
+        if args.folder
+        else settings.library_roots()
         or sys.exit("no audiobook folder: ./app filegroups /path/to/audio, or ./app set library_dir /path/to/audio")
     )
-    if not os.path.isdir(root):
-        sys.exit(f"not a folder: {root}")
+    for root in roots:
+        if not os.path.isdir(root):
+            sys.exit(f"not a folder: {root}")
     from omarchy_db import connect
     from sqlalchemy.orm import Session
 
     from app.store import filegroups as fg
 
     with Session(connect("listory")) as s:
-        run = fg.new_run(s, "scan", {"root": root})
+        run = fg.new_run(s, "scan", {"roots": roots})
         s.commit()
-        ids = fg.scan_files(
-            s,
-            root,
-            workers=args.workers,
-            progress=lambda d, n: print(f"  hashed {d}/{n}", end="\r", flush=True) if d % 50 == 0 else None,
-        )
-        s.commit()
+        ids: dict[str, int] = {}
+        for root in roots:
+            ids.update(
+                fg.scan_files(
+                    s,
+                    root,
+                    workers=args.workers,
+                    progress=lambda d, n: print(f"  hashed {d}/{n}", end="\r", flush=True) if d % 50 == 0 else None,
+                )
+            )
+            s.commit()
         print(f"\n  probed {fg.probe_missing(s, ids, workers=args.workers)} new files")
         s.commit()
-        top = fg.group_by_folder(s, root, ids)
+        top = fg.group_roots(s, roots, ids)
         fg.finish_run(s, run, "done")
         s.commit()
         print(
-            f"{len(ids)} files, {top.group_count} folders below the root, {top.total_bytes / 1e9:,.1f} GB (grouping #{top.id})"
+            f"{len(ids)} files in {len(roots)} folder{'s' if len(roots) != 1 else ''}, {top.group_count} folders below the root, {top.total_bytes / 1e9:,.1f} GB (grouping #{top.id})"
         )
         return 0
 

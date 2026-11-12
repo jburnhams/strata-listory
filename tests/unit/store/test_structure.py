@@ -474,3 +474,21 @@ def test_the_same_book_twice_under_two_naming_schemes_is_two_groups(s, tmp_path)
     folders = fg.group_by_folder(s, str(tmp_path), ids)
     top, totals = st.infer(s, folders)
     assert totals.get("book") == 2  # two copies of the book, not one book of twelve chapters
+
+
+def test_structure_runs_over_a_top_group_of_several_roots(s, tmp_path):
+    from app.store import filegroups as fg
+
+    for rel in (
+        "one/Author A/Book One/01.mp3",
+        "one/Author A/Book One/02.mp3",
+        "two/Book Two/01.mp3",
+        "two/Book Two/02.mp3",
+    ):
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(rel.encode())
+    one, two = str(tmp_path / "one"), str(tmp_path / "two")
+    ids = {**fg.scan_files(s, one), **fg.scan_files(s, two)}
+    top, totals = st.infer(s, fg.group_roots(s, [one, two], ids))
+    assert top.kind == "root" and totals.get("book") == 2

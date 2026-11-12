@@ -2,7 +2,7 @@ import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { STATUSES, type Book, type Settings } from '../../src/api'
 
-export const defaultSettings: Settings = { data_dir: '/tmp/appdata', library_dir: '', backup_dir: '/tmp/appdata/backups' }
+export const defaultSettings: Settings = { data_dir: '/tmp/appdata', library_dir: '/audio', library_dirs: ['/audio'], backup_dir: '/tmp/appdata/backups' }
 export const initialBooks: Book[] = [
   { id: 1, title: 'Dune', author: 'Frank Herbert', narrator: '', series: 'Dune', series_position: 1, duration_seconds: 75600, path: '', status: 'unlistened', added: '2026-10-29T12:00:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null, year: null, year_source: '' },
 ]
@@ -125,6 +125,7 @@ export const handlers = [
     const body = (await request.json()) as Partial<Settings>
     if (body.data_dir && !body.data_dir.startsWith('/')) return HttpResponse.json({ detail: 'the data folder must be an absolute path' }, { status: 400 })
     mock.settings = { ...mock.settings, ...body }
+    if (body.library_dirs) mock.settings.library_dirs = [mock.settings.library_dir, ...body.library_dirs].filter(Boolean)   // the server returns library_dir first, then the extra folders
     return HttpResponse.json(mock.settings)
   }),
   http.get('/api/books', ({ request }) => {

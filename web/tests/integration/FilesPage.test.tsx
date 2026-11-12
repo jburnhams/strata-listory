@@ -2,9 +2,21 @@ import { describe, expect, it } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import FilesPage, { length, size } from '../../src/components/FilesPage'
 import { setup, screen, within } from '../utils/render'
-import { server } from '../utils/server'
+import { mock, server } from '../utils/server'
 
 describe('FilesPage', () => {
+  it('lists the folders scanned and adds or removes an extra one', async () => {
+    mock.settings = { ...mock.settings, library_dir: '/audio', library_dirs: ['/audio', '/more'] }
+    const { user } = setup(<FilesPage />, { route: '/files' })
+    await user.click(await screen.findByRole('button', { name: /Folders scanned \(2\)/ }))
+    expect(screen.getByText('library folder')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Remove.*more/ }))
+    expect(await screen.findByText(/Folders scanned \(1\)/)).toBeInTheDocument()
+    await user.type(screen.getByLabelText('Add a folder'), '/third{Enter}')
+    expect(await screen.findByText(/Folders scanned \(2\)/)).toBeInTheDocument()
+    expect(mock.settings.library_dirs).toEqual(['/audio', '/third'])
+  })
+
   it('opens on the newest grouping and walks down and back up the tree', async () => {
     const { user } = setup(<FilesPage />, { route: '/files' })
     expect(await screen.findByText('3 files in 1 group, 3.0 GB')).toBeInTheDocument()

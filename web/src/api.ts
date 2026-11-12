@@ -1,6 +1,6 @@
 // Typed client for the FastAPI server (src/app/server/app.py). Same-origin.
 export interface Health { ok: boolean; version: string }
-export interface Settings { data_dir: string; library_dir: string; backup_dir: string }
+export interface Settings { data_dir: string; library_dir: string; library_dirs: string[]; backup_dir: string }
 export interface SourceFilesInfo { grouping?: string[]; folder: string; files: string[]; count: number | null; available: boolean }
 export type Status = 'unlistened' | 'listening' | 'finished'
 export const STATUSES: Status[] = ['unlistened', 'listening', 'finished']
@@ -47,7 +47,7 @@ const send = (method: string, body: unknown): RequestInit => ({ method, headers:
 export const api = {
   health: () => req<Health>('/api/health'),
   settings: () => req<Settings>('/api/settings'),
-  saveSettings: (s: Partial<Settings>) => req<Settings>('/api/settings', send('PUT', s)),
+  saveSettings: (s: Partial<Omit<Settings, 'library_dirs'>> & { library_dirs?: string[] }) => req<Settings>('/api/settings', send('PUT', s)),
   books: (f: Filters = {}) => req<Book[]>(booksUrl(f).slice(BASE.length)),
   libraryWorkflow: () => req<{ books: Record<string, LibraryStage[]> }>('/api/library/workflow'),
   addBook: (b: NewBook) => req<Book>('/api/books', send('POST', b)),
