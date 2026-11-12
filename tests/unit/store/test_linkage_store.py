@@ -827,3 +827,92 @@ def test_the_listens_api_counts_parts_apart_from_copies(s, tmp_path):
     app.dependency_overrides[api.get_session] = lambda: s
     rows = TestClient(app).get("/api/listens").json()["rows"]
     assert len(rows) == 1 and rows[0]["parts"] == 2 and rows[0]["copies"] == 1
+
+
+def _chapter_folders(s, tmp_path, folders):
+    """A book folder holding numbered sub-folders with titles of their own ('01 The Arrest'), each a few mp3s; {folder: minutes}."""
+    for folder in folders:
+        for i in range(1, 4):
+            p = tmp_path / "Pat Author - Delta Title - Chapterized" / folder / f"{i:02d}.mp3"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(f"{folder}{i}".encode())
+    ids = fg.scan_files(s, str(tmp_path))
+    for path, fid in ids.items():
+        s.get(fg.PartFile, fid).duration_s = folders[path[len(str(tmp_path)) + 1 :].split("/")[1]] * 60 / 3
+    s.flush()
+    top, _ = st.infer(s, fg.group_by_folder(s, str(tmp_path), ids))
+    build.build_listens(s, top)
+    md.add_metadata(s)
+    return {l.label: l for l in s.scalars(select(Listen).where(Listen.merged_into_id.is_(None)))}
+
+
+def _decide_all(s, listens):
+    good = dict(
+        title="exact_rare",
+        author="all",
+        runtime="far",
+        sources="audible",
+        _alias="delta title",
+        _asin="B0DELTA0001",
+        _reading="chosen",
+    )
+    apply.apply(
+        s,
+        {str(l.id): dict(clusters={DELTA["key"]: DELTA}, vectors={DELTA["key"]: [good]}) for l in listens.values()},
+        params(),
+    )
+
+
+def test_numbered_chapter_folders_of_one_book_become_one_listen(s, tmp_path):
+    listens = _chapter_folders(
+        s, tmp_path, {"01 The Arrest": 150, "02 Sorry": 140, "03 The Arraignment": 130, "04 Yellow": 145}
+    )  # 565 minutes, the recording's length
+    assert len(listens) == 4
+    _decide_all(s, listens)
+    assert len(apply.merge_parts(s)) == 3
+    live = s.scalars(select(Listen).where(Listen.merged_into_id.is_(None))).all()
+    assert len(live) == 1
+    parts = s.scalars(
+        select(ListenPart)
+        .where(ListenPart.listen_id == live[0].id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+        .order_by(ListenPart.ordinal)
+    ).all()
+    assert [p.detail["minutes"] for p in parts] == [150, 140, 130, 145] and {p.detail["relation"] for p in parts} == {
+        "part"
+    }
+    assert next(q for q in Q.load(s) if q.listen_id == live[0].id).minutes == [565.0]
+
+
+def test_numbered_folders_that_are_not_a_whole_book_are_left_alone(s, tmp_path):
+    listens = _chapter_folders(
+        s, tmp_path, {"01 The Arrest": 150, "02 Sorry": 140, "03 The Arraignment": 130}
+    )  # 420 minutes: not the recording
+    _decide_all(s, listens)
+    assert apply.merge_parts(s) == []
+    s.rollback()
+
+
+def test_numbered_folders_with_gaps_or_only_two_are_left_alone(s, tmp_path):
+    listens = _chapter_folders(s, tmp_path, {"01 The Arrest": 280, "03 Sorry": 285})  # a gap, and two only
+    _decide_all(s, listens)
+    assert apply.merge_parts(s) == []
+
+
+def test_a_set_found_by_both_groupings_is_joined_once(s, tmp_path, monkeypatch):
+    from app.store import build as B
+
+    monkeypatch.setattr(
+        B, "part_key", lambda label: "deltatitle"
+    )  # as if the folder names also gave one part key: the same listens are a keyed group and a chapter sequence
+    listens = _chapter_folders(
+        s, tmp_path, {"01 The Arrest": 150, "02 Sorry": 140, "03 The Arraignment": 130, "04 Yellow": 145}
+    )
+    _decide_all(s, listens)
+    assert len(apply.merge_parts(s)) == 3
+    assert len(s.scalars(select(Listen).where(Listen.merged_into_id.is_(None))).all()) == 1
+
+
+def test_numbered_folders_crossing_a_decimal_boundary_are_joined(s, tmp_path):
+    listens = _chapter_folders(s, tmp_path, {"08 The Arrest": 190, "09 Sorry": 190, "10 Yellow": 185})
+    _decide_all(s, listens)
+    assert len(apply.merge_parts(s)) == 2
