@@ -492,3 +492,27 @@ def test_structure_runs_over_a_top_group_of_several_roots(s, tmp_path):
     ids = {**fg.scan_files(s, one), **fg.scan_files(s, two)}
     top, totals = st.infer(s, fg.group_roots(s, [one, two], ids))
     assert top.kind == "root" and totals.get("book") == 2
+
+
+def test_a_chapter_kept_again_in_another_format_is_not_a_book_of_its_own(monkeypatch):
+    chapters = [f"Invented Show Title {i:03d}.aac" for i in range(1, 7)]
+    extra = "03 Invented Show Title 003.mp3"
+    for i in range(6):
+        monkeypatch.setitem(st.DURATIONS, i, (20 + i) * 60.0)
+    monkeypatch.setitem(st.DURATIONS, 6, 22 * 60.0)  # as long as chapter 3
+    clusters = st.cluster_files([(i, n) for i, n in enumerate(chapters)] + [(6, extra)])
+    kinds = {c[1][0][1]: c[0] for c in clusters}
+    assert kinds[chapters[0]] == "book" and kinds[extra] == "loose"
+    assert "second copy of one chapter" in next(e["reason"] for k, f, e in clusters if k == "loose")
+
+
+def test_a_different_file_beside_numbered_chapters_stays_a_book(monkeypatch):
+    chapters = [f"Invented Show Title {i:03d}.aac" for i in range(1, 7)]
+    for i in range(6):
+        monkeypatch.setitem(st.DURATIONS, i, (20 + i) * 60.0)
+    monkeypatch.setitem(st.DURATIONS, 6, 300.0 * 60)
+    same_name_other_length = (6, "03 Invented Show Title 003.mp3")  # the name matches, the length does not
+    other_name = (7, "Another Invented Book.mp3")
+    monkeypatch.setitem(st.DURATIONS, 7, 300.0 * 60)
+    got = st.cluster_files([(i, n) for i, n in enumerate(chapters)] + [same_name_other_length, other_name])
+    assert not any(k == "loose" and "second copy" in e.get("reason", "") for k, f, e in got)
