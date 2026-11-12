@@ -411,6 +411,54 @@ def set_listen_kind(listen_id: int, body: KindChoice, s: Session = Depends(get_s
     )
 
 
+@listens_router.get("/{listen_id}/config")
+def get_listen_config(listen_id: int, s: Session = Depends(get_session)):
+    """The listen's output configuration: each field with every source's value and the one chosen (`store.config`), the chosen cover, and the files it is made from."""
+    from app.store import config
+
+    l = s.get(Listen, listen_id)
+    if l is None:
+        raise HTTPException(404, "no such listen")
+    out = config.config(s, l)
+    inputs = [
+        dict(
+            part_id=p.id,
+            group_id=p.filegroup_id,
+            path=(p.detail or {}).get("path"),
+            files=(p.detail or {}).get("files", 0),
+            minutes=(p.detail or {}).get("minutes", 0),
+            relation=(p.detail or {}).get("relation") or "copy",
+        )
+        for p in s.scalars(
+            select(ListenPart)
+            .where(ListenPart.listen_id == l.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+            .order_by(ListenPart.ordinal)
+        )
+    ]
+    return dict(out, inputs=inputs)
+
+
+class FieldChoice(BaseModel):
+    value: str | int | None = None
+    source: str = ""
+
+
+@listens_router.post("/{listen_id}/config/{field}")
+def choose_listen_field(listen_id: int, field: str, b: FieldChoice, s: Session = Depends(get_session)):
+    """A person's pick for one field: a source's value or a typed one; empty clears it."""
+    from app.store import config
+
+    l = s.get(Listen, listen_id)
+    if l is None:
+        raise HTTPException(404, "no such listen")
+    try:
+        config.choose_field(s, l, field, b.value, source=b.source)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    s.commit()
+    return config.config(s, l)
+
+
 @listens_router.get("/{listen_id}")
 def get_listen(listen_id: int, s: Session = Depends(get_session)):
     l = s.get(Listen, listen_id)
