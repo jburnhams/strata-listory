@@ -401,3 +401,44 @@ def test_explicitly_numbered_parts_are_never_split_into_a_full_copy(monkeypatch)
     assert st.full_beside_its_parts([(i, n) for i, n in enumerate(names)]) is None
     n = st.classify(leaf("Invented", *names))
     assert n.kind == "book" and not n.subs
+
+
+def _long(monkeypatch, n, minutes=400):
+    for i in range(n):
+        monkeypatch.setitem(st.DURATIONS, i, minutes * 60.0)
+
+
+def test_long_files_with_titles_of_their_own_are_separate_books(monkeypatch):
+    names = [
+        f"Pat Author - {t}.mp3" for t in ("The Invented Road", "Blood Orchard", "Child of Nowhere", "Cities of Glass")
+    ]
+    _long(monkeypatch, 4)
+    n = st.classify(leaf("Pat Author", *names))
+    assert [c.kind for c in n.subs] == ["book"] * 4 and all(len(c.files) == 1 for c in n.subs)
+    coded = [
+        f"Pat Author HB{i:02d} {t}.mp3" for i, t in enumerate(("The First Case", "The Second Case", "A Third Case"), 1)
+    ]
+    _long(monkeypatch, 3)
+    assert (
+        len(st.classify(leaf("Pat Author", *coded)).subs) == 3
+    )  # a series code in front of each title does not make them chapters
+
+
+def test_numbered_parts_and_chapters_of_long_files_stay_one_book(monkeypatch):
+    for names in (
+        ["Invented Book Part 1.mp3", "Invented Book Part 2.mp3", "Invented Book Part 3.mp3"],
+        ["01 Invented Book.mp3", "02 Invented Book.mp3", "03 Invented Book.mp3"],
+        ["Invented Book - 01.mp3", "Invented Book - 02.mp3"],
+        ["Show - 1x01.mp3", "Show - 1x02.mp3", "Show - 1x03.mp3"],
+    ):
+        _long(monkeypatch, len(names), 420)
+        assert st.titled_books([(i, n) for i, n in enumerate(names)]) == []
+
+
+def test_short_files_with_different_titles_are_not_taken_for_books(monkeypatch):
+    _long(monkeypatch, 3, 45)  # chapter titles can differ too, but chapters are short
+    assert (
+        st.titled_books([(i, f"Chapter title {t}.mp3") for i, t in enumerate(("The Storm", "The Calm", "The End"))])
+        == []
+    )
+    assert st.titled_books([(0, "Only One Long File.mp3")]) == []

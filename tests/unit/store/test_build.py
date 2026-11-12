@@ -371,3 +371,53 @@ def test_restructure_listen_replaces_one_double_group_with_copies_and_keeps_deci
     assert any(e.action == "unlink" for e in s.scalars(select(ListenEvent).where(ListenEvent.listen_id == listen.id)))
     with pytest.raises(ValueError):
         repair.restructure_listen(s, listen.id)  # two inputs now: nothing to do
+
+
+def _folder_of_books(s, tmp_path, monkeypatch):
+    titles = ("The Invented Road", "Blood Orchard", "Child of Nowhere")
+    for t in titles:
+        p = tmp_path / "Pat Author" / f"Pat Author - {t}.mp3"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(t.encode())
+    ids = fg.scan_files(s, str(tmp_path))
+    for fid in ids.values():
+        s.get(fg.PartFile, fid).duration_s = 400 * 60.0
+    s.flush()
+    st.DURATIONS.clear()
+    with monkeypatch.context() as m:
+        m.setattr(st, "titled_books", lambda files: [])  # the rules as they were when the listens were built
+        top, _ = st.infer(s, fg.group_by_folder(s, str(tmp_path), ids))
+        build.build_listens(s, top)
+    md.add_metadata(s)
+    return titles, s.scalars(select(Listen)).one()
+
+
+def test_explode_listen_gives_each_long_file_of_a_folder_of_books_its_own_listen(s, tmp_path, monkeypatch):
+    from app.store import repair
+
+    titles, listen = _folder_of_books(s, tmp_path, monkeypatch)
+    assert listen.label == "Pat Author"
+    out = repair.explode_listen(s, listen.id)
+    assert len(out) == 3 and out[0] == listen.id
+    live = s.scalars(select(Listen).where(Listen.merged_into_id.is_(None)).order_by(Listen.id)).all()
+    assert sorted(l.label for l in live) == sorted(titles) and {l.status for l in live} <= {"grouped", "review"}
+    for l in live:
+        parts = s.scalars(
+            select(ListenPart).where(
+                ListenPart.listen_id == l.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None)
+            )
+        ).all()
+        assert len(parts) == 1 and parts[0].detail["files"] == 1 and parts[0].detail["minutes"] == 400
+    with pytest.raises(ValueError):
+        repair.explode_listen(s, listen.id)  # one file now: nothing to explode
+
+
+def test_explode_listen_leaves_a_listen_a_person_decided_on(s, tmp_path, monkeypatch):
+    from app.store import listens as Ls
+    from app.store import repair
+
+    _, listen = _folder_of_books(s, tmp_path, monkeypatch)
+    Ls.choose(s, listen, "author", "Chosen Person", actor_kind="user")
+    with pytest.raises(ValueError):
+        repair.explode_listen(s, listen.id)
+    assert s.scalar(select(func.count()).select_from(Listen)) == 1
