@@ -320,10 +320,12 @@ export default function MatchQueuePage() {
   }, { settleMs: 3000 })
   const training = summary?.training
   const running = training?.running ?? false, wasRunning = useRef(false)
-  useEffect(() => {                  // relearned: the order and the candidates below have changed
+  const [relearned, setRelearned] = useState(false)
+  useEffect(() => {                  // relearned: the order and candidates have changed on the server, but redrawing the list under a hand that is about to click makes misclicks, so the person chooses when (Refresh)
     if (running) wasRunning.current = true
-    else if (wasRunning.current) { wasRunning.current = false; void qc.invalidateQueries({ queryKey: ['match-queue'] }) }
-  }, [running, qc])
+    else if (wasRunning.current) { wasRunning.current = false; setRelearned(true) }
+  }, [running])
+  const refresh = () => { setRelearned(false); void qc.invalidateQueries({ queryKey: ['match-queue'] }) }
   const retrainButton = (variant: 'outline' | 'default') => <AsyncButton variant={variant} phase={training?.running ? 'pending' : retrain.phase} error={retrain.error} onClick={() => void retrain.run()} labels={{ idle: 'Learn from my answers', pending: 'Learning…', done: 'Learned', error: 'Learning failed' }} />
 
   const pending = undoable.pending ? 1 : 0
@@ -336,7 +338,7 @@ export default function MatchQueuePage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Matches" scope={`Is this the right book? ${order.scope}`} finding={finding} actions={retrainButton('outline')} />
+      <PageHeader title="Matches" scope={`Is this the right book? ${order.scope}`} finding={finding} actions={<>{relearned && <Button variant="default" onClick={refresh}>Refresh the list</Button>}{retrainButton('outline')}</>} />
       {summary && (
         <MetricStrip label="Where identification stands">
           <Metric label="Waiting for you" value={format.integer.format(waiting)} note={`${format.integer.format(summary.auto_unconfirmed)} already accepted by the model`} />

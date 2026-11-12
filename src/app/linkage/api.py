@@ -1,4 +1,4 @@
-"""The match queue (`/api/matches`): every book listen whose work the model has proposed and no person has decided yet, easiest first (highest probability), with everything known about the listen and each candidate work so one look is enough; and the decisions (approve / not this / none of these), which become labels for the next fit. Every `AUTO_RETRAIN` decisions the model is refitted and re-applied in the background, so confirming easy matches lets it accept more on its own."""
+"""The match queue (`/api/matches`): every book listen whose work the model has proposed and no person has decided yet, easiest first (highest probability), with everything known about the listen and each candidate work so one look is enough; and the decisions (approve / not this / none of these), which become labels for the next fit. Every `AUTO_RETRAIN` decisions the model is refitted and re-applied in the background (the page shows a Refresh button when it is done and never redraws the list itself), so confirming easy matches lets it accept more on its own."""
 
 from __future__ import annotations
 

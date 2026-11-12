@@ -205,13 +205,17 @@ describe('MatchQueuePage', () => {
     expect(await screen.findByText('Every proposed match has an answer')).toBeInTheDocument()
   })
 
-  it('shows a relearn in progress, then reloads the list when it is done', async () => {
+  it('shows a relearn in progress, then leaves the list alone until the person refreshes it', async () => {
     matchState.training = true
-    setup(<MatchQueuePage />)
+    const { user } = setup(<MatchQueuePage />)
     expect(await screen.findByRole('button', { name: /Learning/ })).toBeInTheDocument()
     matchState.training = false; matchState.queue = matchState.queue.slice(1)
-    await waitFor(() => expect(cards()).toHaveLength(3), { timeout: 6000 })
-  }, 10000)
+    const refresh = await screen.findByRole('button', { name: 'Refresh the list' }, { timeout: 6000 })
+    expect(cards()).toHaveLength(4)                                 // nothing moved under the pointer
+    await user.click(refresh)
+    await waitFor(() => expect(cards()).toHaveLength(3))
+    expect(screen.queryByRole('button', { name: 'Refresh the list' })).toBeNull()
+  }, 15000)
 
   it('says when relearning failed', async () => {
     server.use(http.get('/api/matches', () => HttpResponse.json({ summary: { waiting: 0, auto_unconfirmed: 0, confirmed: 2, not_found: 0, statuses: {}, decisions: 2, since_train: 2, model: 'fs-x', auto_retrain: 25, training: { running: false, finished: 1, error: 'nothing prepared', counts: null } }, items: [] })))
