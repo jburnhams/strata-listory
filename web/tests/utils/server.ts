@@ -90,7 +90,7 @@ export function resetCovers() {
   coverState.rows = [
     { listen_id: 1, label: 'Glass Orchard', run_id: 1, searched: '2026-11-12T10:00:00', state: 'choose', chosen: null,
       covers: [{ image_id: 11, width: 2400, height: 2400, bytes: 1_500_000, sources: [src('apple', '5', 11), src('audible', 'B0A', 11)], members: [11] }, { image_id: 12, width: 500, height: 750, bytes: 80_000, sources: [src('google', '978', 12)], members: [12] }],
-      sources: [{ source: 'audible', status: 'found', detail: '', count: 1 }, { source: 'openlibrary', status: 'error', detail: 'error: down', count: 0 }] },
+      sources: [{ source: 'audible', status: 'found', detail: '', count: 1 }, { source: 'openlibrary', status: 'error', detail: 'error: down', count: 0 }, { source: 'google', status: 'limited', detail: 'rate limited: 9780000000002: HTTP Error 429', count: 0 }] },
     { listen_id: 2, label: 'Salt Roads', run_id: 2, searched: '2026-11-12T10:05:00', state: 'none', chosen: null, covers: [], sources: [{ source: 'audible', status: 'skipped', detail: 'no ASIN known for this book', count: 0 }, { source: 'apple', status: 'none', detail: '8 results, none with a matching title', count: 0 }] },
     { listen_id: 3, label: 'Third Book', run_id: 3, searched: '2026-11-12T10:09:00Z', state: 'chosen', chosen: 31, covers: [{ image_id: 31, width: 800, height: 800, bytes: 90_000, sources: [src('folder', 'cover.jpg', 31)], members: [31, 32] }], sources: [] },
   ]

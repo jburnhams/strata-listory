@@ -42,6 +42,8 @@ def record(source: str, items: list[Item], notes: list[str], *, skipped: str = "
         return dict(source=source, status="skipped", detail=skipped, count=0)
     if items:
         return dict(source=source, status="found", detail="; ".join(notes[:3]), count=len(items))
+    if notes and any(n.startswith("rate limited") for n in notes):
+        return dict(source=source, status="limited", detail="; ".join(notes[:4]), count=0)
     errors = [n for n in notes if n.startswith("error")]
     return dict(
         source=source,
@@ -49,6 +51,11 @@ def record(source: str, items: list[Item], notes: list[str], *, skipped: str = "
         detail="; ".join(notes[:4]),
         count=0,
     )
+
+
+def failed_note(ref: str, r) -> str:
+    """A note for a failed request: `rate limited` when the host asked us to slow down (the record then says so and the search can be repeated later), else `error`."""
+    return f"rate limited: {ref}: {r.error or r.status}" if r.limited else f"error: {ref}: {r.error or r.status}"
 
 
 # ---- size rewriting: ask each service for its largest picture
@@ -132,7 +139,9 @@ def audnexus(ctx: Context) -> tuple[list[Item], dict]:
         if r.status == 404:
             notes.append(f"{asin}: not on Audnexus")
         elif not r.ok:
-            notes.append(f"error: {asin}: {r.error or r.status}")
+            notes.append(failed_note(asin, r))
+            if r.limited:
+                break
         else:
             try:
                 d = r.json()
@@ -168,7 +177,13 @@ def openlibrary(ctx: Context) -> tuple[list[Item], dict]:
         ):
             r = net.get(url)
             if not r.ok:
-                notes.append(f"{'' if r.status == 404 else 'error: '}{m.group()} {what}: {r.error or r.status}")
+                notes.append(
+                    f"{m.group()} {what}: {r.error or r.status}"
+                    if r.status == 404
+                    else failed_note(f"{m.group()} {what}", r)
+                )
+                if r.limited:
+                    break
                 continue
             try:
                 d = r.json()
@@ -199,7 +214,7 @@ def apple(ctx: Context) -> tuple[list[Item], dict]:
     term = urllib.parse.quote(f"{ctx.title} {ctx.author}".strip())
     r = net.get(f"https://itunes.apple.com/search?term={term}&media=audiobook&entity=audiobook&limit=8")
     if not r.ok:
-        return [], record("apple", [], [f"error: {r.error or r.status}"])
+        return [], record("apple", [], [failed_note("search", r)])
     try:
         results = r.json().get("results") or []
     except ValueError:
@@ -214,15 +229,33 @@ def apple(ctx: Context) -> tuple[list[Item], dict]:
     return items, record("apple", items, [f"{len(results)} results, none with a matching title"] if not items else [])
 
 
+def google_key() -> str:
+    """An optional Google Books API key (a higher request quota): the GOOGLE_BOOKS_API_KEY environment variable or the first line of ~/.config/strata-listory/googlebooks.key. Never logged or stored in the database."""
+    key = os.environ.get("GOOGLE_BOOKS_API_KEY", "").strip()
+    if not key:
+        try:
+            with open(os.path.expanduser("~/.config/strata-listory/googlebooks.key"), encoding="utf8") as f:
+                key = f.readline().strip()
+        except OSError:
+            key = ""
+    return key
+
+
 def google(ctx: Context) -> tuple[list[Item], dict]:
-    """Google Books' cover of each ISBN, the largest size it lists."""
+    """Google Books' cover of each ISBN, the largest size it lists. Without an API key Google allows few requests, so a 429 stops the lookups for this book and the record says it was rate limited."""
     if not ctx.isbns:
         return [], record("google", [], [], skipped="no ISBN known for this book")
     items, notes = [], []
+    key = google_key()
     for isbn in ctx.isbns[:MAX_ISBNS]:
-        r = net.get(f"https://www.googleapis.com/books/v1/volumes?q=isbn:{urllib.parse.quote(isbn)}&maxResults=2")
+        r = net.get(
+            f"https://www.googleapis.com/books/v1/volumes?q=isbn:{urllib.parse.quote(isbn)}&maxResults=2"
+            + (f"&key={urllib.parse.quote(key)}" if key else "")
+        )
         if not r.ok:
-            notes.append(f"error: {isbn}: {r.error or r.status}")
+            notes.append(failed_note(isbn, r))
+            if r.limited:
+                break
             continue
         try:
             vols = r.json().get("items") or []
