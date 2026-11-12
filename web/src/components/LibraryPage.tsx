@@ -4,7 +4,7 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
-import { AsyncButton, BulkBar, Button, DataTable, DataView, EmptyState, Field, Input, NativeSelect, PageHeader, RowAction, Status, TableSkeleton, UndoBar, format, useAsyncAction, useLoad, useSelection, useUndoable, type Column } from 'strata-react'
+import { AsyncButton, BulkBar, Button, Checkbox, DataTable, DataView, EmptyState, Field, Input, NativeSelect, PageHeader, RowAction, Status, TableSkeleton, UndoBar, format, useAsyncAction, useLoad, useSelection, useUndoable, type Column } from 'strata-react'
 import { REVIEWS, STATUSES, api, ingestApi, type Book, type LibraryStage, type Review, type Status as ListenStatus } from '../api'
 import SourceFiles from './SourceFiles'
 
@@ -103,11 +103,11 @@ export default function LibraryPage() {
         <Field label="Match state"><NativeSelect value={review} onChange={e => setParam('review', e.target.value)}><option value="">Any match state</option>{REVIEWS.map(r => <option key={r} value={r}>{r}</option>)}</NativeSelect></Field>
         <Field label="Listening"><NativeSelect value={status} onChange={e => setParam('status', e.target.value)}><option value="">Any</option>{STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</NativeSelect></Field>
         <Field label="Workflow"><NativeSelect value={stage} onChange={e => setParam('stage', e.target.value)}><option value="">Not started</option>{(Object.entries(workflowLabels) as [LibraryStage, string][]).map(([s, l]) => <option key={s} value={s}>{l} ({data?.books.filter(b => data.workflow[b.id]?.includes(s)).length ?? 0})</option>)}</NativeSelect></Field>
-        <label className="type-body-sm flex h-(--control-h) items-center gap-2"><input type="checkbox" checked={showRadio} onChange={e => setParam('radio', e.target.checked ? '1' : '')} />Show radio</label>
+        <Checkbox label="Show radio" checked={showRadio} onCheckedChange={on => setParam('radio', on ? '1' : '')} />
       </div>
 
       <BulkBar count={sel.count} noun="book" onClear={sel.clear}>
-        <label className="flex items-center gap-2 type-body-sm"><input type="checkbox" checked={online} onChange={e => setOnline(e.target.checked)} /> Query metadata providers</label>
+        <Checkbox label="Query metadata providers" checked={online} onCheckedChange={setOnline} />
       </BulkBar>
 
       <DataView state={load} isEmpty={d => d.books.length === 0} skeleton={<TableSkeleton />}

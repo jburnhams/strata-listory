@@ -25,7 +25,7 @@ describe('ListensPage', () => {
     await user.clear(screen.getByLabelText('Search listens'))
     await user.click(screen.getByRole('tab', { name: 'Radio series (1)' }))
     await waitFor(() => expect(screen.queryByText('Red Dragon')).toBeNull())
-    expect(within(await screen.findByRole('table', { name: 'Listens' })).getByText('Dead Ringers (season 11)')).toBeInTheDocument()
+    expect(within(await screen.findByRole('grid', { name: 'Listens' })).getByText('Dead Ringers (season 11)')).toBeInTheDocument()
   })
 
   it('says how to start when there are none, and when nothing matches', async () => {

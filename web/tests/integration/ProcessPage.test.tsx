@@ -23,7 +23,7 @@ describe('ProcessPage', () => {
     expect(meta.getByText(/the Audible metadata file says: Frank Herbert/)).toBeInTheDocument()          // a disagreement between the match and the file is pointed out
     expect(screen.queryByRole('button', { name: /Process approved/ })).toBeNull()
     await user.click(screen.getAllByText('Chapters and output')[0])
-    expect(screen.getAllByText('/home/u/audiobooks/A/Dune/')).toHaveLength(2)
+    expect(screen.getAllByText('/home/u/audiobooks/A/Dune/')).toHaveLength(1)   // only the opened row mounts its body
     expect(screen.getAllByText('29.4 min · V5')[0]).toBeInTheDocument()
     expect(screen.getAllByText('21.4 min · kept as is')[0]).toBeInTheDocument()
 

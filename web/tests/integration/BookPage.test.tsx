@@ -28,11 +28,12 @@ describe('BookPage', () => {
   it('shows a suggestion, a hand-entered book without files, and not-found errors', async () => {
     mock.books[0] = { ...mock.books[0], review: 'suggested', match_score: 0.7, suggestion: { title: 'Dune Messiah', author: 'Frank Herbert', narrators: ['Scott Brick'], runtime_minutes: 1260, asin: 'B0X', series: 'Dune Chronicles', series_position: 2, matched_by: 'title', sources: ['audible', 'audiobookdb'], alternatives: [{ source: 'audible', title: 'Dune', author: 'Frank Herbert', asin: 'B0Y', score: 0.7 }, { source: 'audible', title: 'Other', author: '', asin: '', score: 0.61 }] } }
     mock.books.push({ ...mock.books[0], id: 2, title: 'By hand', suggestion: null, review: 'confirmed', path: '' })
-    const { unmount } = setup(<BookPage id={1} />)
+    const { unmount, user } = setup(<BookPage id={1} />)
     expect(await screen.findByText('Match suggestion')).toBeInTheDocument()
     expect(screen.getByText('70% match (check)')).toBeInTheDocument()
     expect(screen.getByText('audible + audiobookdb')).toBeInTheDocument()
     expect(screen.getByText('2 other candidates')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '2 other candidates' }))
     expect(screen.getByText(/Other/, { selector: 'li' })).toHaveTextContent('unknown')
     unmount()
     setup(<BookPage id={2} />)
@@ -115,7 +116,7 @@ describe('BookPage community ratings and reviews', () => {
 
   it('says so when the book is not on Hardcover, and offers nothing for unconfirmed books', async () => {
     mock.extras = { hardcover: { fetched: '2026-10-30T12:00:00+00:00', data: { not_found: true } } }
-    const { unmount } = setup(<BookPage id={1} />)
+    const { unmount, user } = setup(<BookPage id={1} />)
     expect(await screen.findByText('This book was not found on Hardcover.')).toBeInTheDocument()
     unmount()
     mock.books[0] = { ...mock.books[0], review: 'new' }
@@ -154,7 +155,7 @@ describe('BookPage when the audio share is down', () => {
 describe('BookPage final library section', () => {
   it('shows what processing produced, and a failure', async () => {
     mock.processed = { status: 'done', out_dir: '/home/u/audiobooks/A/Dune', chapters: 12, chapter_source: 'Audible chapter list', tiers: { V5: 11, V4: 1 }, in_bytes: 400_000_000, out_bytes: 190_000_000, loudness_before: -22.1, loudness_after: -18.0, true_peak_after: -1.7, retries: 1, warnings: ['peaks limit the boost'], finished: '2026-10-30T12:00:00+00:00' }
-    const { unmount } = setup(<BookPage id={1} />)
+    const { unmount, user } = setup(<BookPage id={1} />)
     expect(await screen.findByText('Final library')).toBeInTheDocument()
     expect(screen.getByText('/home/u/audiobooks/A/Dune')).toBeInTheDocument()
     expect(screen.getByText('12 (from Audible chapter list)')).toBeInTheDocument()
@@ -180,7 +181,7 @@ describe('BookPage final library section', () => {
 describe('BookPage Open Library section', () => {
   it('shows the first-published year, rating and subjects, or that it was not found', async () => {
     mock.extras = { openlibrary: { fetched: '2026-10-30T12:00:00+00:00', data: { first_publish_year: 1932, rating: 3.97, ratings_count: 483, edition_count: 300, subjects: ['Utopias', 'Brainwashing'], url: 'https://openlibrary.org/works/OL1W' } } }
-    const { unmount } = setup(<BookPage id={1} />)
+    const { unmount, user } = setup(<BookPage id={1} />)
     expect(await screen.findByText('Open Library')).toBeInTheDocument()
     expect(screen.getByText('1932')).toBeInTheDocument()
     expect(screen.getByText('3.97 / 5 from 483 ratings')).toBeInTheDocument()

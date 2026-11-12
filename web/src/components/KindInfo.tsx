@@ -2,9 +2,8 @@
 // Why it is shaped this way: the call is a score from many weak signals, so a card must show its reasons; a person's choice is saved and never recomputed.
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Button, Status, useAsyncAction, type Tone } from 'strata-react'
+import { Button, NativeSelect, Status, useAsyncAction, type Tone } from 'strata-react'
 import { listenApi, type KindInfoData } from '../api'
-import { input } from './ui'
 
 export const KIND_LABEL: Record<string, string> = { book: 'Book', radio_series: 'Radio series', radio_show: 'Radio show', play: 'Play', other: 'Other', 'not-book': 'Radio, plays and programmes', review: 'Kind is a close call' }
 /** The kinds a person may choose, in the order the buttons show them. */
@@ -35,10 +34,10 @@ export default function KindInfo({ listenId, kind, info, onChanged }: { listenId
       <div className="flex flex-wrap items-center gap-2">
         {sure && <Status tone={sure.tone}>{sure.word}</Status>}
         {info && info.band === 'review' && info.guess !== kind && <span className="type-caption text-muted-foreground">Could be: {KIND_LABEL[info.guess] ?? info.guess}</span>}
-        <select aria-label="Change kind" className={input} value={kind} disabled={choose.phase === 'pending'} onChange={e => { if (e.target.value !== kind) void choose.run(e.target.value) }}>      {/* the direct way to overrule the call, no need to open the reasons first; saved as a user answer like the buttons */}
+        <NativeSelect aria-label="Change kind" value={kind} disabled={choose.phase === 'pending'} onChange={e => { if (e.target.value !== kind) void choose.run(e.target.value) }}>      {/* the direct way to overrule the call, no need to open the reasons first; saved as a user answer like the buttons */}
           {CHOICES.map(k => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
           {!(CHOICES as readonly string[]).includes(kind) && <option value={kind}>{KIND_LABEL[kind] ?? kind}</option>}
-        </select>
+        </NativeSelect>
         <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setOpen(o => !o)}>{open ? 'Hide reasons' : 'Why?'}</Button>      {/* always: the panel also holds the buttons that correct a kind, even when no signal fired */}
       </div>
       {open && (

@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react'
 import { matchReviewApi, withBase, type MatchReview, type MatchCandidate } from '../api'
-import { href, useLoad } from '../route'
+import { href, readOf } from '../route'
 import { useMatchReviewQueue } from '../useMatchReviewQueue'
-import { Card, Err, btn, btnQuiet, input } from './ui'
+import { Disclosure, Input, Button, useLoad } from 'strata-react'
+import { Card, Err } from './ui'
 
 const show = (value: unknown): string => value == null || value === '' || (Array.isArray(value) && value.length === 0) ? 'Unknown' : Array.isArray(value) ? value.map(show).join(', ') : typeof value === 'boolean' ? value ? 'Yes' : 'No' : typeof value === 'object' ? Object.entries(value).map(([k, v]) => `${k.replaceAll('_', ' ')}: ${show(v)}`).join(' · ') : String(value)
 const sourceName = (name: string) => ({ hardcover: 'Hardcover', openlibrary: 'Open Library', audible: 'Audible', audnexus: 'Audnexus', catalogue: 'Source tags / catalogue', audiobookdb: 'AudiobookDB', applebooks: 'Apple Books' }[name] || name)
@@ -14,7 +15,7 @@ function SourceLink({ candidate }: { candidate: MatchCandidate }) {
   return candidate.url && /^https?:\/\//.test(candidate.url) ? <a className="underline text-accent-foreground" href={withBase(candidate.url)} target="_blank" rel="noreferrer">{sourceName(candidate.source)}</a> : <span>{sourceName(candidate.source)}</span>
 }
 function MoreEvidence({ id }: { id: string }) {
-  const { data, error } = useLoad(() => matchReviewApi.details(id), [id])
+  const { data, error } = readOf(useLoad({ queryKey: ['match-review', id], queryFn: () => matchReviewApi.details(id) }))
   if (error) return <Err msg={error} />
   if (!data) return <p className="type-body-sm" role="status">Loading evidence…</p>
   const proposed = data.suggestion?.candidate
@@ -26,17 +27,17 @@ function MoreEvidence({ id }: { id: string }) {
     ]} />}
     {proposed?.description && <p className="type-body-sm whitespace-pre-line">{proposed.description}</p>}
     <section aria-label="Book evidence"><h4 className="font-medium mb-2">Book evidence</h4>{data.match.rows.length > 0 && <Fields values={data.match.rows.map(row => [row.field, `${row.value} · ${row.source}${row.note ? ` · ${row.note}` : ''}`])} />}
-      {Object.entries(data.evidence?.records ?? {}).map(([name, record]) => <details key={name} className="type-body-sm mt-2"><summary className="cursor-pointer">{sourceName(name)} assertions</summary><Fields values={Object.entries(record).map(([key, value]) => [key.replaceAll('_', ' '), value])} /></details>)}
+      {Object.entries(data.evidence?.records ?? {}).map(([name, record]) => <Disclosure className="type-body-sm mt-2" summary={<>{sourceName(name)} assertions</>}><Fields values={Object.entries(record).map(([key, value]) => [key.replaceAll('_', ' '), value])} /></Disclosure>)}
     </section>
     {data.recording.rows && <section aria-label="Recording evidence"><h4 className="font-medium mb-2">Recording evidence · separate approval</h4><Fields values={data.recording.rows.map(row => [row.field, `${row.value} · ${row.source}${row.note ? ` · ${row.note}` : ''}`])} /></section>}
     <section aria-label="Source metadata"><h4 className="font-medium mb-2">Source tags</h4><Fields values={Object.entries(data.evidence?.tags ?? {}).map(([key, value]) => [key.replaceAll('_', ' '), value])} />
-      <details className="type-body-sm mt-2"><summary className="cursor-pointer">All {data.source.count} source files</summary><ul className="list-disc pl-5 break-all">{data.source.files.map((file, i) => <li key={i}>{file}</li>)}</ul></details>
+      <Disclosure className="type-body-sm mt-2" summary={<>All {data.source.count} source files</>}><ul className="list-disc pl-5 break-all">{data.source.files.map((file, i) => <li key={i}>{file}</li>)}</ul></Disclosure>
     </section>
-    <section aria-label="Catalogue alternatives"><h4 className="font-medium mb-2">Catalogue results</h4>{Object.entries(data.evidence?.providers ?? {}).map(([name, result]) => <details key={name} className="type-body-sm mt-2"><summary className="cursor-pointer">{sourceName(name)} · {result.candidates.length} results · {result.status}</summary>
-      {result.reason && <p>{result.reason}</p>}{result.candidates.map((candidate, i) => <div key={i} className="border-l-2 border-border pl-3 my-3"><p className="font-medium">{candidate.title}{candidate.subtitle && !candidate.title.includes(candidate.subtitle) ? `: ${candidate.subtitle}` : ''}</p><p>{show(candidate.authors)} · {show(candidate.original_year)} · <SourceLink candidate={candidate} /></p><details><summary className="cursor-pointer">All catalogue fields</summary><Fields values={Object.entries(candidate).map(([key, value]) => [key.replaceAll('_', ' '), value])} /></details></div>)}
-    </details>)}</section>
-    {data.suggestion && <details className="type-body-sm"><summary className="cursor-pointer">Match measurements</summary><Fields values={Object.entries(data.suggestion.features).map(([key, value]) => [key.replaceAll('_', ' '), Number(value.toFixed(3))])} /></details>}
-    {data.approval && <details className="type-body-sm"><summary className="cursor-pointer">Approval record</summary><Fields values={Object.entries(data.approval).filter(([key]) => key !== 'checks').map(([key, value]) => [key.replaceAll('_', ' '), value])} /><ul>{data.approval.checks?.map(c => <li key={c.metric}>{labels[c.metric] || c.metric}: {c.passed ? 'passed' : 'overridden'} · {show(c.value)}</li>)}</ul></details>}
+    <section aria-label="Catalogue alternatives"><h4 className="font-medium mb-2">Catalogue results</h4>{Object.entries(data.evidence?.providers ?? {}).map(([name, result]) => <Disclosure className="type-body-sm mt-2" summary={<>{sourceName(name)} · {result.candidates.length} results · {result.status}</>}>
+      {result.reason && <p>{result.reason}</p>}{result.candidates.map((candidate, i) => <div key={i} className="border-l-2 border-border pl-3 my-3"><p className="font-medium">{candidate.title}{candidate.subtitle && !candidate.title.includes(candidate.subtitle) ? `: ${candidate.subtitle}` : ''}</p><p>{show(candidate.authors)} · {show(candidate.original_year)} · <SourceLink candidate={candidate} /></p><Disclosure summary="All catalogue fields"><Fields values={Object.entries(candidate).map(([key, value]) => [key.replaceAll('_', ' '), value])} /></Disclosure></div>)}
+    </Disclosure>)}</section>
+    {data.suggestion && <Disclosure className="type-body-sm" summary="Match measurements"><Fields values={Object.entries(data.suggestion.features).map(([key, value]) => [key.replaceAll('_', ' '), Number(value.toFixed(3))])} /></Disclosure>}
+    {data.approval && <Disclosure className="type-body-sm" summary="Approval record"><Fields values={Object.entries(data.approval).filter(([key]) => key !== 'checks').map(([key, value]) => [key.replaceAll('_', ' '), value])} /><ul>{data.approval.checks?.map(c => <li key={c.metric}>{labels[c.metric] || c.metric}: {c.passed ? 'passed' : 'overridden'} · {show(c.value)}</li>)}</ul></Disclosure>}
   </div>
 }
 function ReviewCard({ row, mode, busy, selected, act }: { row: MatchReview; mode: 'automatic' | 'shortlist'; busy: boolean; selected?: 'approve' | 'reject'; act: (row: MatchReview, decision: 'approve' | 'reject') => void }) {
@@ -50,8 +51,8 @@ function ReviewCard({ row, mode, busy, selected, act }: { row: MatchReview; mode
         {row.cover && <img src={withBase(`/api/books/${row.book_id}/cover`)} alt="" loading="lazy" className="w-12 h-16 rounded-control object-cover" />}
         <div className="flex-1 min-w-0"><h2 className="font-semibold"><a href={withBase(href.book(row.book_id))} className="hover:underline">{row.local.title}</a></h2><p className="type-caption text-muted-foreground">#{row.book_id} · {row.local.kind} · {row.state.replaceAll('_', ' ')}{row.approved_at && ` · approved ${new Date(row.approved_at).toLocaleDateString()}`}</p></div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className={btn} aria-pressed={selected === 'approve'} disabled={!!busy || selected === 'approve' || !!row.blocked || (mode === 'shortlist' && !row.complete)} onClick={() => act(row, 'approve')}>{busy ? 'Saving…' : 'Approve'}</button>
-          <button type="button" className={`${btnQuiet} text-danger`} aria-pressed={selected === 'reject'} disabled={!!busy || selected === 'reject' || !!row.blocked} onClick={() => act(row, 'reject')}>Reject</button>
+          <Button aria-pressed={selected === 'approve'} disabled={!!busy || selected === 'approve' || !!row.blocked || (mode === 'shortlist' && !row.complete)} onClick={() => act(row, 'approve')}>{busy ? 'Saving…' : 'Approve'}</Button>
+          <Button variant="outline" size="sm" className="text-danger" aria-pressed={selected === 'reject'} disabled={!!busy || selected === 'reject' || !!row.blocked} onClick={() => act(row, 'reject')}>Reject</Button>
         </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -67,7 +68,7 @@ function ReviewCard({ row, mode, busy, selected, act }: { row: MatchReview; mode
       {!row.complete ? <p className="type-body-sm text-warning">Saved book analysis is incomplete.</p> : failed.length > 0 ? <ul aria-label="Review warnings" className="type-body-sm text-warning list-disc pl-5">{failed.map(c => <li key={c.metric}>{labels[c.metric] || c.metric} · {c.reason}{c.value != null && ` (${c.value})`}</li>)}</ul> : <p className="type-caption text-success">All saved book checks passed.</p>}
       {row.match.rows.some(field => field.note) && <ul className="type-body-sm text-warning list-disc pl-5">{row.match.rows.filter(field => field.note).map(field => <li key={field.field}>{field.field}: {field.note}</li>)}</ul>}
       {row.blocked && <p className="type-body-sm text-warning">{row.blocked}</p>}
-      <details onToggle={e => setExpanded(e.currentTarget.open)}><summary className="type-body-sm cursor-pointer underline">All evidence and alternatives</summary>{expanded && <MoreEvidence id={row.id} />}</details>
+      <Disclosure className="type-body-sm" onOpenChange={setExpanded} summary="All evidence and alternatives">{expanded && <MoreEvidence id={row.id} />}</Disclosure>
     </article>
   </Card>
 }
@@ -116,11 +117,11 @@ export default function MatchReviewPage({ mode }: { mode: 'automatic' | 'shortli
     <h2 className="type-title font-semibold">{mode === 'automatic' ? 'Automatic approvals' : 'Match shortlist'}</h2>
     <p className="type-body-sm text-muted-foreground">{mode === 'automatic' ? 'Approve to confirm an automatic book match. Reject to withdraw consent and hold it for manual review. Existing outputs are retained.' : 'Approve the displayed book match, including any shown exceptions, then press Next to start separate recording identification. Reject dismisses the suggestion and holds the book for manual review.'}</p>
     <p className="type-body-sm text-muted-foreground">Saved cards stay in place. Change a decision with the other button. Next clears saved cards and fills the batch with new reviews.</p>
-    <div className="flex flex-wrap items-center gap-3"><label className="flex-1 type-body-sm">Search reviews<input className={`${input} block w-full mt-1`} value={query} onChange={e => setQuery(e.target.value)} placeholder="Title or author" /></label><button className={btnQuiet} disabled={loading} onClick={reload}>Refresh</button></div>
+    <div className="flex flex-wrap items-center gap-3"><label className="flex-1 type-body-sm">Search reviews<Input className="block w-full mt-1" value={query} onChange={e => setQuery(e.target.value)} placeholder="Title or author" /></label><Button variant="outline" size="sm" disabled={loading} onClick={reload}>Refresh</Button></div>
     <Err msg={error} />{Object.entries(actionErrors).map(([id, msg]) => <Err key={id} msg={msg} />)}{message && <p role="status" className="type-body-sm">{message}</p>}
     {!data && !error && <p role="status">Loading match reviews…</p>}
     {data && loading && data.rows.length === 0 && <p aria-live="polite">Loading next reviews…</p>}
-    {data && <><nav aria-label="Match review pages" className="flex items-center gap-3 type-body-sm"><span>{data.total === 0 ? '0 reviews' : `${offset + 1}–${Math.min(offset + data.rows.length, data.total)} of ${data.total} reviews`}</span><button className={btnQuiet} disabled={offset === 0 || loading} onClick={previous}>Previous</button><button className={btnQuiet} disabled={advancing || loading || (!data.rows.some(row => decisions[row.id]?.basis === row.basis) && offset + data.rows.length >= data.total)} onClick={() => { void advance() }}>Next</button></nav>
+    {data && <><nav aria-label="Match review pages" className="flex items-center gap-3 type-body-sm"><span>{data.total === 0 ? '0 reviews' : `${offset + 1}–${Math.min(offset + data.rows.length, data.total)} of ${data.total} reviews`}</span><Button variant="outline" size="sm" disabled={offset === 0 || loading} onClick={previous}>Previous</Button><Button variant="outline" size="sm" disabled={advancing || loading || (!data.rows.some(row => decisions[row.id]?.basis === row.basis) && offset + data.rows.length >= data.total)} onClick={() => { void advance() }}>Next</Button></nav>
       {data.rows.length === 0 && !loading && !error && <p>{mode === 'automatic' ? 'No automatic approvals to review.' : 'No current model suggestions. Imported suggestions appear here when their saved evidence is still current.'}</p>}
       {data.rows.map(row => <ReviewCard key={row.id} row={row} mode={mode} busy={pending.has(row.id)} selected={decisions[row.id]?.basis === row.basis ? decisions[row.id].action : undefined} act={act} />)}
     </>}

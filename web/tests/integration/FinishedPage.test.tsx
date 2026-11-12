@@ -1,5 +1,5 @@
 import { it, expect } from 'vitest'
-import { fireEvent } from '@testing-library/react'
+import { fireEvent, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import FinishedPage from '../../src/components/FinishedPage'
 import Player from '../../src/components/Player'
@@ -35,10 +35,8 @@ it('continues playback on the next chapter but not after the last', async () => 
   const { container } = setup(<Player id={1} />)
   await screen.findByRole('option', { name: /Opening/ })
   const audio = container.querySelector('audio')!
-  expect(audio).not.toHaveAttribute('autoplay')
   fireEvent.ended(audio)
-  expect(audio).toHaveAttribute('src', '/api/books/1/audio/1')
-  expect(audio).toHaveAttribute('autoplay')
+  await waitFor(() => expect(audio).toHaveAttribute('src', '/api/books/1/audio/1'))      // MediaPlayer moves on and keeps playing on the same element
   fireEvent.ended(audio)
   expect(audio).toHaveAttribute('src', '/api/books/1/audio/1')
 })
