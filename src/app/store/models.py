@@ -368,3 +368,49 @@ class ListenKind(Base):
         CheckConstraint(_in("band", ("broadcast", "book", "review")), name="listen_kind_band"),
         CheckConstraint(_in("decided_by", ("rule", "user")), name="listen_kind_decided_by"),
     )
+
+
+# ---------------------------------------------------------------- covers
+
+
+class CoverImage(Base):
+    """One downloaded picture, stored once by content hash under `<data_dir>/covers/`. The same picture found through several sources is one row."""
+
+    __tablename__ = "cover_image"
+    id: Mapped[int] = mapped_column(primary_key=True, init=False)
+    sha256: Mapped[str] = mapped_column(unique=True)
+    ext: Mapped[str]  # .jpg | .png | .webp
+    width: Mapped[int]
+    height: Mapped[int]
+    size: Mapped[int]  # bytes
+    dhash: Mapped[str] = mapped_column(
+        index=True
+    )  # 64-bit difference hash (hex): near-duplicates (the same cover at another size or recompression) share it or differ by a few bits
+    fetched_at: Mapped[datetime] = mapped_column(server_default=func.now(), init=False)
+
+
+class CoverRun(Base):
+    """One cover search for one listen: what each source answered and when. `listen_changed_at` is the newest change to the listen (cover choices excluded) the search saw, so the next job knows whether the listen has changed since."""
+
+    __tablename__ = "cover_run"
+    id: Mapped[int] = mapped_column(primary_key=True, init=False)
+    listen_id: Mapped[int] = mapped_column(ForeignKey("listen.id"), index=True)
+    listen_changed_at: Mapped[datetime | None] = mapped_column(default=None)
+    sources: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default_factory=list
+    )  # [{source, status: found|none|not_found|error|skipped, detail, count}]
+    started_at: Mapped[datetime] = mapped_column(server_default=func.now(), init=False)
+    finished_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class CoverCandidate(Base):
+    """A picture one source offered for the listen in one search: where it came from (the ASIN, ISBN or file) and the address asked for."""
+
+    __tablename__ = "cover_candidate"
+    id: Mapped[int] = mapped_column(primary_key=True, init=False)
+    run_id: Mapped[int] = mapped_column(ForeignKey("cover_run.id", ondelete="CASCADE"), index=True)
+    image_id: Mapped[int] = mapped_column(ForeignKey("cover_image.id"), index=True)
+    source: Mapped[str]  # audible | audnexus | openlibrary | apple | google | folder | embedded
+    ref: Mapped[str] = mapped_column(default="")  # ASIN, ISBN, Open Library cover id, file name
+    label: Mapped[str] = mapped_column(default="")  # what it is the cover of: the recording or edition
+    url: Mapped[str | None] = mapped_column(default=None, index=True)

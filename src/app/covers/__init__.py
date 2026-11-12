@@ -1,0 +1,1 @@
+"""The cover stage: for every confirmed or accepted listen, look for its cover at every source that knows the identified book and audiobook editions, download each picture at the highest size on offer, store it once by content hash and let a person choose the preferred one (saved as the listen's `cover` choice for the next stage)."""

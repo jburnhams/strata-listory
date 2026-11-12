@@ -105,6 +105,9 @@ def create_app():
         from app.linkage.api import router as matches_router
 
         app.include_router(matches_router)
+        from app.covers.api import router as covers_router
+
+        app.include_router(covers_router)
     except ImportError:
         pass
 

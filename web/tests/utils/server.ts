@@ -63,6 +63,7 @@ export const matchState: { queue: import('../../src/api').QueueItem[]; decided: 
 export const resetMock = () => {
   matchState.queue = matchQueue(); matchState.decided = []; matchState.retrains = 0; matchState.training = false; matchState.model = 'fs-test'
   mock.settings = { ...defaultSettings }
+  resetCovers()
   mock.books = [...initialBooks]
   mock.extras = {}
   mock.processed = null
@@ -83,7 +84,34 @@ const listenRows = [
   { id: 2, label: 'Persuader', kind: 'book', status: 'grouped', files: 99, bytes: 5e8, minutes: 45, group_id: 3, path: '/audio/Lee Child/Persuader', copies: 1, parts: 2, author: 'Lee Child', narrator: null, year: null, kind_info: kindInfos.close },
   { id: 3, label: 'Dead Ringers (season 11)', kind: 'radio_series', status: 'grouped', files: 6, bytes: 1e8, minutes: 0, group_id: null, path: null, copies: 1, parts: 0, author: null, narrator: null, year: null, kind_info: kindInfos.series },
 ]
+export const coverState: { rows: import('../../src/api').CoverRow[]; waiting: number; chosen: { listen: number; image: number | null }[]; runs: { ids: number[] | null }[]; job: import('../../src/api').CoverJob } = { rows: [], waiting: 0, chosen: [], runs: [], job: { running: false, done: 0, total: 0, current: '', finished: null, error: '' } }
+export function resetCovers() {
+  const src = (source: string, ref: string, image_id: number) => ({ source, ref, label: '', url: null, image_id })
+  coverState.rows = [
+    { listen_id: 1, label: 'Glass Orchard', run_id: 1, searched: '2026-11-12T10:00:00', state: 'choose', chosen: null,
+      covers: [{ image_id: 11, width: 2400, height: 2400, bytes: 1_500_000, sources: [src('apple', '5', 11), src('audible', 'B0A', 11)], members: [11] }, { image_id: 12, width: 500, height: 750, bytes: 80_000, sources: [src('google', '978', 12)], members: [12] }],
+      sources: [{ source: 'audible', status: 'found', detail: '', count: 1 }, { source: 'openlibrary', status: 'error', detail: 'error: down', count: 0 }] },
+    { listen_id: 2, label: 'Salt Roads', run_id: 2, searched: '2026-11-12T10:05:00', state: 'none', chosen: null, covers: [], sources: [{ source: 'audible', status: 'skipped', detail: 'no ASIN known for this book', count: 0 }, { source: 'apple', status: 'none', detail: '8 results, none with a matching title', count: 0 }] },
+    { listen_id: 3, label: 'Third Book', run_id: 3, searched: '2026-11-12T10:09:00Z', state: 'chosen', chosen: 31, covers: [{ image_id: 31, width: 800, height: 800, bytes: 90_000, sources: [src('folder', 'cover.jpg', 31)], members: [31, 32] }], sources: [] },
+  ]
+  coverState.waiting = 2; coverState.chosen = []; coverState.runs = []; coverState.job = { running: false, done: 0, total: 0, current: '', finished: null, error: '' }
+}
+resetCovers()
+
 export const handlers = [
+  http.get('/api/covers', ({ request }) => {
+    const u = new URL(request.url), state = u.searchParams.get('state') ?? '', q = (u.searchParams.get('q') ?? '').toLowerCase()
+    const rows = coverState.rows.filter(r => (!state || r.state === state) && q.split(' ').filter(Boolean).every(w => r.label.toLowerCase().includes(w)))
+    const count = (k: string) => coverState.rows.filter(r => r.state === k).length
+    return HttpResponse.json({ total: rows.length + (q === 'big' ? 30 : 0), counts: { choose: count('choose'), chosen: count('chosen'), none: count('none') }, waiting: coverState.waiting, rows, job: coverState.job })
+  }),
+  http.post('/api/covers/run', async ({ request }) => { const b = await request.json() as { listen_ids: number[] | null }; coverState.runs.push({ ids: b.listen_ids }); return HttpResponse.json({ started: true }, { status: 202 }) }),
+  http.post('/api/covers/:id/choose', async ({ request, params }) => {
+    const b = await request.json() as { image_id: number | null }
+    coverState.chosen.push({ listen: Number(params.id), image: b.image_id })
+    coverState.rows = coverState.rows.map(r => r.listen_id === Number(params.id) ? { ...r, chosen: b.image_id, state: b.image_id ? 'chosen' : r.covers.length ? 'choose' : 'none' } : r)
+    return HttpResponse.json({ ok: true, chosen: b.image_id })
+  }),
   http.post('/api/jobs/:id/retry', () => HttpResponse.json({ queued: true })),
   http.get('/api/operations', () => HttpResponse.json({ rows: [], busy: false })),
   http.get('/api/finished', () => HttpResponse.json([])),

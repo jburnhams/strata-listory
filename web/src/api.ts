@@ -143,6 +143,20 @@ export const listenApi = {
   setKind: (id: number, kind: string) => req<{ ok: boolean; retraining: boolean; reidentified?: boolean; kind_info: KindInfoData | null }>(`/api/listens/${id}/kind`, send('POST', { kind })),
 }
 
+// Covers (src/app/covers/api.py): listens a cover search has run on, the distinct pictures found (with every source that offered each) or why none, and the preferred one.
+export interface CoverSource { source: string; ref: string; label: string; url: string | null; image_id: number }
+export interface CoverPicture { image_id: number; width: number; height: number; bytes: number; sources: CoverSource[]; members: number[] }
+export interface CoverStatus { source: string; status: 'found' | 'none' | 'error' | 'skipped' | 'not_found'; detail: string; count: number }
+export interface CoverRow { listen_id: number; label: string; run_id: number; searched: string | null; state: 'choose' | 'chosen' | 'none'; chosen: number | null; covers: CoverPicture[]; sources: CoverStatus[] }
+export interface CoverJob { running: boolean; done: number; total: number; current: string; finished: number | null; error: string }
+export interface CoverList { total: number; counts: Record<'choose' | 'chosen' | 'none', number>; waiting: number; rows: CoverRow[]; job: CoverJob }
+export const coverApi = {
+  list: (state = '', q = '', limit = 24) => req<CoverList>(`/api/covers?${new URLSearchParams({ state, q, limit: String(limit) })}`),
+  choose: (listenId: number, imageId: number | null) => req<{ ok: boolean; chosen: number | null }>(`/api/covers/${listenId}/choose`, send('POST', { image_id: imageId })),
+  run: (listenIds?: number[], force = false) => req<{ started: boolean }>('/api/covers/run', send('POST', { listen_ids: listenIds ?? null, force })),
+  image: (id: number, w = 0) => withBase(`/api/covers/image/${id}${w ? `?w=${w}` : ''}`),
+}
+
 // The match queue (src/app/linkage/api.py): book listens with the model's candidate works, easiest first; answers become labels for the next fit.
 export interface QueueRecording { asin: string; title: string; narrators: string[]; minutes: number | null; fmt: string; year: number | null }
 export type QueueEvidence = Partial<Record<'title' | 'author' | 'narrator' | 'runtime' | 'asin' | 'year' | 'numbers' | 'sources' | 'popularity' | 'channel' | 'form', string | null>>
