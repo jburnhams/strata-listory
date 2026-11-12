@@ -421,3 +421,13 @@ def test_explode_listen_leaves_a_listen_a_person_decided_on(s, tmp_path, monkeyp
     with pytest.raises(ValueError):
         repair.explode_listen(s, listen.id)
     assert s.scalar(select(func.count()).select_from(Listen)) == 1
+
+
+def test_explode_listen_leaves_a_listen_where_a_person_confirmed_or_rejected_a_work(s, tmp_path, monkeypatch):
+    from app.store import listens as Ls
+    from app.store import repair
+
+    _, listen = _folder_of_books(s, tmp_path, monkeypatch)
+    Ls.set_status(s, listen, "identified", actor_kind="user", actor_ref="web", reason="confirmed in the match queue")
+    with pytest.raises(ValueError):
+        repair.explode_listen(s, listen.id)

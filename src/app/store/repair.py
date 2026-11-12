@@ -13,7 +13,7 @@ from app.store import structure as st
 from app.store.filegroups import finish_run, new_run
 from app.store.models import (
     Listen,
-    ListenChoice,
+    ListenEvent,
     ListenPart,
     PartFile,
     PartFilegroup,
@@ -178,31 +178,12 @@ def explode_listen(s: Session, listen_id: int, *, actor_ref: str = "explode") ->
     listen, old_part, old, clusters, durations, folder = _read_group(s, listen_id)
     if any(kind != "book" or len(fl) != 1 for kind, fl, _ in clusters):
         raise ValueError("the current rules do not see one book per file here")
-    decided = (
-        s.scalar(
-            select(func.count())
-            .select_from(ListenPart)
-            .where(
-                ListenPart.listen_id == listen_id,
-                ListenPart.linked_by == "user",
-                ListenPart.role.in_(("match", "candidate")),
-            )
-        )
-        or 0
+    person = s.scalar(
+        select(func.count())
+        .select_from(ListenEvent)
+        .where(ListenEvent.listen_id == listen_id, ListenEvent.actor_kind == "user")
     )
-    chosen = (
-        s.scalar(
-            select(func.count())
-            .select_from(ListenChoice)
-            .where(
-                ListenChoice.listen_id == listen_id,
-                ListenChoice.chosen_by == "user",
-                ListenChoice.unchosen_at.is_(None),
-            )
-        )
-        or 0
-    )
-    if decided or chosen:
+    if person:  # a chosen field, a confirmed or rejected work, a status: anything a person did on the listen belongs to the book it was about
         raise ValueError("a person has decided on this listen: split it by hand")
     run = new_run(s, "explode", {"listen": listen_id, "from_group": old.id})
     made = _make_groups(s, run, old, clusters, durations, folder)
