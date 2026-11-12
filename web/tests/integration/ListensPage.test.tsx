@@ -8,14 +8,15 @@ describe('ListensPage', () => {
   it('lists listens with a finding by kind, and links each to its files', async () => {
     setup(<ListensPage />, { route: '/listens' })
     expect(await screen.findByText('3 listens: 2 books, 1 radio series')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Red Dragon' })).toHaveAttribute('href', '/files?group=2')
+    expect(screen.getByRole('link', { name: 'Red Dragon' })).toHaveAttribute('href', '/listens/1')
+    expect(screen.getAllByRole('link', { name: 'files' })[0]).toHaveAttribute('href', '/files?group=2')
     expect(screen.getByText('12h 05m')).toBeInTheDocument()
     expect(screen.getByText('Thomas Harris · read by Steven Weber · 1981')).toBeInTheDocument()
     expect(screen.getByText('3 copies')).toBeInTheDocument()                       // linked copies of one recording
     expect(screen.queryByText('1 copies')).toBeNull()
     expect(screen.getByText('2 parts')).toBeInTheDocument()                          // numbered parts of one recording, not copies
-    expect(screen.getByText('Dead Ringers (season 11)')).toBeInTheDocument()      // no files group: plain text, not a link
-    expect(screen.queryByRole('link', { name: 'Dead Ringers (season 11)' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Dead Ringers (season 11)' })).toHaveAttribute('href', '/listens/3')   // no files group: no link to the files, only to the listen
+    expect(screen.getAllByRole('link', { name: 'files' })).toHaveLength(2)
   })
 
   it('shows confirmed and accepted matches by default and asks for the other match states on request', async () => {

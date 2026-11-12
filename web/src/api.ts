@@ -138,7 +138,19 @@ export interface KindSignal { name: string; weight: number; detail: string; prio
 export interface KindInfoData { kind: string; guess: string; band: 'broadcast' | 'book' | 'review'; confidence: number; p_broadcast: number; decided_by: 'rule' | 'user'; signals: KindSignal[] }
 export interface ListenRow { id: number; label: string; kind: 'book' | 'radio_series' | 'radio_show' | 'play' | 'other'; kind_info: KindInfoData | null; status: string; files: number; bytes: number; minutes: number; group_id: number | null; path: string | null; copies: number; parts: number; author: string | null; narrator: string | null; year: number | null }
 export interface ListenList { total: number; kinds: Record<string, number>; review: number; not_book: number; rows: ListenRow[] }
+export interface ConfigSource { source: string; label: string; ref: string; note: string }
+export interface ConfigOption { value: string | number; sources: ConfigSource[]; chosen: boolean }
+export interface ConfigField { field: string; label: string; value: string | number | null; chosen_by: string | null; options: ConfigOption[] }
+export interface ListenConfig {
+  listen_id: number; label: string; kind: string; status: string; fields: ConfigField[]
+  cover: { image_id: number; width: number; height: number } | null
+  work: { id: number; title: string; authors: string[]; year: number | null } | null
+  recordings: { asin: string; region: string; title: string; narrators: string[]; runtime_minutes: number | null; release: string | null; abridged: boolean | null }[]
+  inputs: { part_id: number; group_id: number | null; path: string | null; files: number; minutes: number; relation: string }[]
+}
 export const listenApi = {
+  config: (id: number) => req<ListenConfig>(`/api/listens/${id}/config`),
+  chooseField: (id: number, field: string, value: string | number | null, source = '') => req<ListenConfig>(`/api/listens/${id}/config/${field}`, send('POST', { value, source })),
   list: (q = '', kind = '', status = '', match = '', limit = 500) => req<ListenList>(`/api/listens?${new URLSearchParams({ q, kind, status, match, limit: String(limit) })}`),
   setKind: (id: number, kind: string) => req<{ ok: boolean; retraining: boolean; reidentified?: boolean; kind_info: KindInfoData | null }>(`/api/listens/${id}/kind`, send('POST', { kind })),
 }

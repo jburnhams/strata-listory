@@ -64,6 +64,7 @@ export const resetMock = () => {
   matchState.queue = matchQueue(); matchState.decided = []; matchState.retrains = 0; matchState.training = false; matchState.model = 'fs-test'
   mock.settings = { ...defaultSettings }
   resetCovers()
+  resetConfig()
   mock.books = [...initialBooks]
   mock.extras = {}
   mock.processed = null
@@ -98,7 +99,33 @@ export function resetCovers() {
 }
 resetCovers()
 
+export const configState: { picks: { field: string; value: unknown; source: string }[]; config: import('../../src/api').ListenConfig } = { picks: [], config: undefined as never }
+export function resetConfig() {
+  const src = (source: string, label: string, ref = '', note = '') => ({ source, label, ref, note })
+  configState.picks = []
+  configState.config = {
+    listen_id: 1, label: 'Red Dragon', kind: 'book', status: 'identified', cover: null,
+    work: { id: 7, title: 'Red Dragon', authors: ['Thomas Harris'], year: 1981 },
+    recordings: [{ asin: 'B0A', region: 'uk', title: 'Red Dragon', narrators: ['Steven Weber'], runtime_minutes: 725, release: '2004-05-01', abridged: false }],
+    inputs: [{ part_id: 1, group_id: 2, path: '/audio/Red Dragon', files: 24, minutes: 725, relation: 'copy' }],
+    fields: [
+      { field: 'title', label: 'Title', value: 'Red Dragon', chosen_by: 'rule', options: [{ value: 'Red Dragon', chosen: true, sources: [src('tags', 'Embedded tag', 'album', '24 of 24 tagged files'), src('openlibrary', 'Open Library work')] }, { value: 'The Red Dragon', chosen: false, sources: [src('folder', 'Folder name')] }] },
+      { field: 'narrator', label: 'Narrator', value: null, chosen_by: null, options: [{ value: 'Steven Weber', chosen: false, sources: [src('audible', 'Audible UK', 'B0A')] }] },
+      { field: 'subtitle', label: 'Subtitle', value: null, chosen_by: null, options: [] },
+    ],
+  }
+}
+resetConfig()
+
 export const handlers = [
+  http.get('/api/listens/:id/config', () => HttpResponse.json(configState.config)),
+  http.post('/api/listens/:id/config/:field', async ({ request, params }) => {
+    const b = await request.json() as { value: string | number | null; source: string }
+    if (params.field === 'year' && b.value === 'soon') return HttpResponse.json({ detail: 'the year must be four digits' }, { status: 400 })
+    configState.picks.push({ field: String(params.field), value: b.value, source: b.source })
+    configState.config = { ...configState.config, fields: configState.config.fields.map(f => f.field !== params.field ? f : { ...f, value: b.value, chosen_by: b.value == null ? null : 'user', options: f.options.map(o => ({ ...o, chosen: o.value === b.value })) }) }
+    return HttpResponse.json(configState.config)
+  }),
   http.get('/api/covers', ({ request }) => {
     const u = new URL(request.url), state = u.searchParams.get('state') ?? '', q = (u.searchParams.get('q') ?? '').toLowerCase()
     const rows = coverState.rows.filter(r => (!state || r.state === state) && q.split(' ').filter(Boolean).every(w => r.label.toLowerCase().includes(w)))

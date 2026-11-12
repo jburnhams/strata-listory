@@ -15,6 +15,7 @@ import SettingsPage from './components/SettingsPage'
 import FilesPage from './components/FilesPage'
 import ListensPage from './components/ListensPage'
 import CoversPage from './components/CoversPage'
+import ListenPage from './components/ListenPage'
 
 // The flow, top to bottom: raw files on disk, matches (what links file groups to works), listens (confirmed or accepted matches), covers (a picture per listen), processing; Library and Pipeline are the older per-book flow, kept at their paths until retired.
 const nav = [
@@ -61,6 +62,7 @@ export default function App() {
         <Route path="/" element={<MatchQueuePage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/listens" element={<ListensPage />} />
+        <Route path="/listens/:id" element={<ListenPage />} />
         <Route path="/files" element={<FilesPage />} />
         <Route path="/covers" element={<CoversPage />} />
         <Route path="/book/:id" element={<Book />} />
