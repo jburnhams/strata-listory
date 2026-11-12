@@ -146,7 +146,7 @@ export const listenApi = {
 // Covers (src/app/covers/api.py): listens a cover search has run on, the distinct pictures found (with every source that offered each) or why none, and the preferred one.
 export interface CoverSource { source: string; ref: string; label: string; url: string | null; image_id: number }
 export interface CoverPicture { image_id: number; width: number; height: number; bytes: number; sources: CoverSource[]; members: number[] }
-export interface CoverStatus { source: string; status: 'found' | 'none' | 'error' | 'skipped' | 'not_found'; detail: string; count: number }
+export interface CoverStatus { source: string; status: 'found' | 'none' | 'error' | 'limited' | 'skipped' | 'not_found'; detail: string; count: number }
 export interface CoverRow { listen_id: number; label: string; run_id: number; searched: string | null; state: 'choose' | 'chosen' | 'none'; chosen: number | null; covers: CoverPicture[]; sources: CoverStatus[] }
 export interface CoverJob { running: boolean; done: number; total: number; current: string; finished: number | null; error: string }
 export interface CoverList { total: number; counts: Record<'choose' | 'chosen' | 'none', number>; waiting: number; rows: CoverRow[]; job: CoverJob }

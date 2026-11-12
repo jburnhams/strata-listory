@@ -9,8 +9,8 @@ import { size } from './FilesPage'
 
 const SOURCE: Record<string, string> = { audible: 'Audible', audnexus: 'Audnexus', openlibrary: 'Open Library', apple: 'Apple Books', google: 'Google Books', folder: 'Your folder', embedded: 'In the audio', local: 'Your files' }
 const name = (s: string) => SOURCE[s] ?? s
-const TONE: Record<CoverStatus['status'], Tone> = { found: 'success', none: 'neutral', not_found: 'neutral', error: 'danger', skipped: 'neutral' }
-const WORD: Record<CoverStatus['status'], string> = { found: 'found', none: 'nothing', not_found: 'not found', error: 'failed', skipped: 'not tried' }
+const TONE: Record<CoverStatus['status'], Tone> = { found: 'success', none: 'neutral', not_found: 'neutral', error: 'danger', limited: 'warning', skipped: 'neutral' }
+const WORD: Record<CoverStatus['status'], string> = { found: 'found', none: 'nothing', not_found: 'not found', error: 'failed', limited: 'rate limited', skipped: 'not tried' }
 const when = (iso: string | null) => iso ? new Date(iso + (iso.endsWith('Z') ? '' : 'Z')).toLocaleString() : ''
 
 function Sources({ statuses }: { statuses: CoverStatus[] }) {
