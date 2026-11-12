@@ -343,10 +343,11 @@ it('starts background previews on opening quality and enables each ready sample'
   expect(prepares).toBe(1); expect(polls).toBe(1)
   expect(screen.getAllByRole('button', { name: /^Sample/ })).toHaveLength(5)
   await user.click(screen.getByRole('button', { name: 'Sample 3 · 0:21:00' }))
-  const player = screen.getByLabelText('Listening sample 3')
+  const player = screen.getByRole('group', { name: 'Listening sample 3' }).querySelector('audio')!
   expect(player).toHaveAttribute('src', '/api/ingest/runs/test/samples/2')
+  Object.defineProperty(player, 'error', { value: { code: 4, message: '' }, configurable: true })      // jsdom has no decoder: say what a browser would
   act(() => player.dispatchEvent(new Event('error')))
-  expect(await screen.findByRole('alert')).toHaveTextContent('Select it again to retry')
+  expect(await screen.findByRole('alert')).toHaveTextContent('Could not load')      // MediaPlayer says so itself, with Try again
   await user.click(screen.getByRole('button', { name: 'Sample 3 · 0:21:00' }))
   expect(screen.queryByRole('alert')).toBeNull()
 })
