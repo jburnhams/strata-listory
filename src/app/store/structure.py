@@ -331,6 +331,32 @@ def full_beside_its_parts(files: list[tuple[int, str]], tolerance: float = 0.03)
     return None
 
 
+def chapter_copies(
+    files: list[tuple[int, str]], chapters: list[tuple[int, str]], tolerance: float = 0.03
+) -> list[tuple[int, str]]:
+    """The files that are one of `chapters` again in another format (`22 Title 022.mp3` beside `Title 022.aac`): the same name once a leading index is taken off, and the same length when both are known. They are not books of their own."""
+    if not chapters:
+        return []
+
+    def key(name: str, lead: bool) -> str:
+        stem = os.path.splitext(name)[0].lower()
+        return re.sub(r"[^a-z0-9]+", "", re.sub(r"^\s*\d+\s+", "", stem) if lead else stem)
+
+    by_name = {key(c[1], False): c for c in chapters}
+    out = []
+    for f in files:
+        c = by_name.get(key(f[1], True)) or by_name.get(key(f[1], False))
+        if c is None:
+            continue
+        a, b = DURATIONS.get(f[0]), DURATIONS.get(c[0])
+        if a and b and abs(a - b) / max(a, b) > tolerance:
+            continue
+        out.append(f)
+    return (
+        out if len(out) <= max(1, len(chapters) // 10) else []
+    )  # a stray one or two; a whole second set is a copy of the book (see `test_three_copies...`)
+
+
 def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[int, str]], dict]]:
     """Split the audio files directly in one folder into (kind, files, evidence) clusters: every whole-book file (.m4b/.m4a/.aac) is a book of its own, the rest are the chapter files of one work or unrelated tracks."""
     out = []
@@ -340,9 +366,18 @@ def cluster_files(files: list[tuple[int, str]]) -> list[tuple[str, list[tuple[in
         out.append(
             ("book", whole, {"reason": "numbered m4b/m4a files are the chapters of one work", "files": len(whole)})
         )
+        chapters = whole
         whole = []
+    else:
+        chapters = []
     out += [("book", [f], {"reason": "whole-book file"}) for f in whole]
     rest = [f for f in files if os.path.splitext(f[1])[1].lower() not in WHOLE_BOOK]
+    copies = chapter_copies(rest, chapters)
+    if copies:  # a chapter kept a second time in another format beside the numbered set: not a book of its own
+        out += [
+            ("loose", [f], {"reason": "a second copy of one chapter of the numbered set beside it"}) for f in copies
+        ]
+        rest = [f for f in rest if f not in copies]
     full = full_beside_its_parts(rest)
     if full:  # the same book twice in one folder: whole, and split into chapters; two groups, which the copies step then joins as copies
         out.append(("book", [full], {"reason": "a whole-book file with its split chapters beside it"}))

@@ -956,3 +956,36 @@ def test_numbered_folders_crossing_a_decimal_boundary_are_joined(s, tmp_path):
     listens = _chapter_folders(s, tmp_path, {"08 The Arrest": 190, "09 Sorry": 190, "10 Yellow": 185})
     _decide_all(s, listens)
     assert len(apply.merge_parts(s)) == 2
+
+
+def test_a_merged_listen_keeps_one_answer_not_one_per_absorbed_listen(s, tmp_path):
+    by = _parts_listens(s, tmp_path, {"Books/01 Delta Title Part 1.m4b": 284, "Books/02 Delta Title Part 2.m4b": 281})
+    _decide(s, by)
+    apply.merge_parts(s)
+    survivor = s.scalars(select(Listen).where(Listen.merged_into_id.is_(None))).one()
+    matches = s.scalars(
+        select(ListenPart).where(
+            ListenPart.listen_id == survivor.id, ListenPart.role == "match", ListenPart.unlinked_at.is_(None)
+        )
+    ).all()
+    assert (
+        len(matches) == 1
+    )  # the loser's accepted match stayed behind (it used to move over: two accepted matches for one work)
+
+
+def test_discard_listen_retires_a_stray_file_without_leaving_it_in_any_listen(s, tmp_path):
+    from app.store import repair
+
+    by = _parts_listens(s, tmp_path, {"Books/Delta Title.m4b": 565, "Audible/Delta Title Extra.m4b": 42})
+    a, stray = by[565], by[42]
+    repair.discard_listen(s, stray.id, a.id, reason="a second copy of one chapter")
+    live = s.scalars(select(Listen).where(Listen.merged_into_id.is_(None))).all()
+    assert [l.id for l in live] == [a.id]
+    inputs = s.scalars(
+        select(ListenPart).where(
+            ListenPart.listen_id == a.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None)
+        )
+    ).all()
+    assert len(inputs) == 1 and inputs[0].detail["minutes"] == 565  # the stray's file is in no listen
+    with pytest.raises(ValueError):
+        repair.discard_listen(s, stray.id, a.id, reason="again")

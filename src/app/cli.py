@@ -470,6 +470,23 @@ def cmd_listens_explode(args):
     return 0
 
 
+def cmd_listens_discard(args):
+    """Retire a listen that is not a book of its own (e.g. a stray second copy of one chapter) by merging it into another listen and unlinking its files; logged as user events."""
+    from omarchy_db import connect
+    from sqlalchemy.orm import Session
+
+    from app.store import repair
+
+    with Session(connect("listory")) as s:
+        try:
+            repair.discard_listen(s, args.listen, args.into, reason=args.reason)
+        except ValueError as e:
+            sys.exit(str(e))
+        s.commit()
+    print(f"listen {args.listen} retired into {args.into}")
+    return 0
+
+
 def cmd_listens_identify_train(args):
     """Fit the record-linkage model on every prepared listen (labelled ones clamped: old catalogue approvals and the match queue's answers), cross-validate on the labelled ones and save data/linkage/model.json and report.json."""
     from omarchy_db import connect
@@ -938,6 +955,14 @@ def main(argv=None):
     )
     ex.add_argument("ids", nargs="+", type=int)
     ex.set_defaults(fn=cmd_listens_explode)
+    dc = sub.add_parser(
+        "listens-discard",
+        help="retire a listen that is not a book of its own (merge it into another listen, unlink its files; logged)",
+    )
+    dc.add_argument("listen", type=int)
+    dc.add_argument("--into", type=int, required=True, help="the listen it belongs with")
+    dc.add_argument("--reason", default="not a book of its own", help="why, for the event log")
+    dc.set_defaults(fn=cmd_listens_discard)
     rs = sub.add_parser(
         "listens-restructure",
         help="re-read these listens' files with the current structure rules (decisions are kept; run listens-identify-prepare and listens-identify afterwards)",

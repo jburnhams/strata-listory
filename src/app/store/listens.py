@@ -229,6 +229,16 @@ def merge(
             .order_by(ListenPart.role, ListenPart.ordinal, ListenPart.id)
         )
     )
+    for p in [p for p in moved if p.role in ("match", "candidate") and p.linked_by != "user"]:
+        unlink(
+            s,
+            p,
+            actor_kind=actor_kind,
+            actor_ref=actor_ref,
+            run_id=run_id,
+            reason="the model's answer for a merged listen stays behind: the survivor keeps its own",
+        )
+        moved.remove(p)  # carrying them over left the survivor with one accepted match per absorbed listen
     top: dict[str, int] = {}
     for role, mx in s.execute(
         select(ListenPart.role, ListenPart.ordinal).where(
