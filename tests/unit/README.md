@@ -49,8 +49,6 @@ Job hardening tests use fake child processes/clocks to verify hard deadlines, sh
 
 Bulk identification regressions cover recording marketing versus written-work subtitle conflicts, explicit English edition discovery with work/volume bounds, failed-provider preservation, and canonical main-title retries retaining contrary hits. `test_match_audit.py` verifies candidate features, unknown labels despite automatic consent, read-only export, overwrite refusal and zero-error precision uncertainty.
 
-`test_match_model.py` verifies user-trusted automatic/manual labels, freezing evidence at approval time, unknown edition alternatives, work/member/identifier grouping, within-split hard negatives, zero-error calibration with group support, selection before held-out evaluation, optional ML orchestration, saved-model artifacts and replaying frozen datasets. Scikit-learn/XGBoost remain optional research dependencies; unit orchestration uses deterministic estimator doubles and a separate real-data experiment runs the actual libraries.
-
 `test_match_review.py` covers saved-only reads, exact displayed candidate acceptance,
 source identity preservation, stale/superseded/locked/active refusals, downstream
 consent invalidation, rejected pending plans, processed-output preservation and

@@ -120,50 +120,6 @@ export const ingestApi = {
   details: (id: string) => req<object>(`/api/ingest/runs/${encodeURIComponent(id)}`),
 }
 
-export interface MatchCandidate {
-  source: string; id: string; title: string; subtitle?: string; authors: string[]; narrators?: string[]; original_year?: number | null; publisher?: string; release_date?: string; runtime_minutes?: number | null; language?: string; abridged?: boolean | null; asin?: string; isbns?: string[]; series?: string; series_position?: number | null; genres?: string[]; description?: string; rating?: number | null; ratings_count?: number | null; pages?: number | null; url?: string
-}
-export interface MatchReview {
-  id: string; book_id: number; created: string; state: string; basis: string; automatic: boolean; approved: boolean; held: boolean; shortlisted: boolean; blocked: string; approved_at: string | null; cover: boolean; complete: boolean;
-  approval: { automatic: boolean; policy_revision?: number; resolution_version?: number; scope?: string; checks?: IngestCheck[] } | null;
-  local: { title: string; author: string; narrator: string; path: string; asin: string; kind: string; locked: string[] };
-  match: { title: string; authors: string[]; year: number | null; publisher: string; rows: MetaRow[]; sources: string[] };
-  recording: { matched?: boolean; local?: { narrators?: string[]; language?: string; duration_seconds?: number; abridged?: boolean | null }; rows?: MetaRow[] };
-  suggestion: { candidate: MatchCandidate; score: number; features: Record<string, number>; model: string; candidate_key: string } | null;
-  source: { folder: string; count: number; files: string[]; hours: number };
-  checks: IngestCheck[];
-  evidence?: { records: Record<string, Record<string, unknown>>; providers: Record<string, { status: string; reason?: string; candidates: MatchCandidate[] }>; tags: Record<string, string[]> }
-}
-export interface MatchReviewPage { rows: MatchReview[]; total: number; offset: number; limit: number }
-export const matchReviewApi = {
-  list: (mode: 'automatic' | 'shortlist', offset = 0, q = '', after?: string) => req<MatchReviewPage>(`/api/match-reviews?${new URLSearchParams({ mode, offset: String(offset), q, ...(after ? { after } : {}) })}`),
-  details: (id: string) => req<MatchReview>(`/api/match-reviews/${encodeURIComponent(id)}`),
-  decide: (id: string, action: 'accept' | 'unapprove' | 'confirm' | 'reject' | 'restore', basis: string, defer = false) => req<{ changed: boolean; basis?: string }>(`/api/match-reviews/${encodeURIComponent(id)}/${action}`, send('POST', { basis, ...(defer ? { defer_continuation: true } : {}) })),
-  advance: (id: string) => req(`/api/ingest/runs/${encodeURIComponent(id)}/resume`, { method: 'POST' }, false),
-}
-
-// Identification review queue (src/app/identify): every undecided model decision, most impactful first.
-export interface IdentifyItem {
-  group: string; files: number; decision: 'review' | 'accept'; reason?: string; score: number; margin: number; impact: number
-  work: string | null; title?: string; authors?: string[]; editions?: number; candidates: number
-  item: { title: string; author: string; narrator?: string; path: string; asin?: string; year?: number | null; runtime_min?: number; language?: string; members?: number; siblings?: number; folder_files?: number }
-}
-export interface IdentifySummary { queue: number; accepted: number; accepted_files: number; queue_files: number; remaining: number; decided: number }
-/** What happened to the ingest pipeline when a decision was saved: approved (the book was approved and the run continues), confirmed, withdrawn, labelled (only the training label), or skipped with the reason. */
-export interface PipelineOutcome { status: 'approved' | 'confirmed' | 'withdrawn' | 'labelled' | 'skipped'; note: string; changed?: boolean }
-export interface IdentifyPage { summary: IdentifySummary | null; items: IdentifyItem[] }
-export const identifyApi = {
-  queue: (after?: string, limit = 20) => req<IdentifyPage>(`/api/identify/queue?${new URLSearchParams({ limit: String(limit), ...(after ? { after } : {}) })}`),
-  // A decision is idempotent (the label is replaced, an approved book is only confirmed), so a dropped connection, which an IO-starved server produces, is retried before the answer is reported lost.
-  decide: async (group: string, decision: 'approve' | 'reject', work = '') => {
-    for (let attempt = 0; ; attempt++) {
-      try { return await req<{ recorded: string; pipeline: PipelineOutcome }>('/api/identify/decisions', send('POST', { group, decision, work })) }
-      catch (e) { if (!(e instanceof TypeError) || attempt >= 2) throw e; await new Promise(r => setTimeout(r, 1500 * (attempt + 1))) }
-    }
-  },
-  refresh: (train = false) => req<unknown>(`/api/identify/refresh?train=${train}`, { method: 'POST' }),
-}
-
 // Filegroups (src/app/store/api.py): the folder tree of the library as grouped into the listory Postgres schema.
 export interface FileGroup { id: number; kind: 'root' | 'folder' | 'disc' | 'book' | 'series' | 'programme' | 'collection' | 'loose'; label: string; path: string | null; file_count: number; total_bytes: number; group_count: number }
 export interface FileGroupDetail { group: FileGroup; ancestors: { id: number; label: string; kind: string }[]; children: (FileGroup & { ordinal: number })[]; files: { id: number; ordinal: number; name: string; path: string | null; size: number; duration_s: number | null; codec: string | null; tags: Record<string, string>; probe_error: string | null }[] }

@@ -21,11 +21,6 @@ describe('App shell', () => {
     expect(screen.queryByText('v0.1.0')).toBeNull()
   })
 
-  it('keeps the older Review as a Pipeline tab', async () => {
-    open('/pipeline?tab=review')
-    expect(await screen.findByRole('heading', { name: 'Review' })).toBeInTheDocument()
-  })
-
   it('lists the flow from Files and moves between sections from the side navigation', async () => {
     const { user } = open('/')
     expect(within(nav()).getAllByRole('link').map(a => a.textContent)).toEqual(['Files', 'Matches', 'Listens', 'Processing', 'Settings'])
@@ -55,7 +50,7 @@ describe('App shell', () => {
   it('moves through the pipeline stages as tabs', async () => {
     const { user } = open('/pipeline')
     await screen.findByRole('heading', { name: 'Pipeline' })
-    for (const name of ['Audiobook', 'Quality', 'Automatic approvals', 'Match shortlist']) {
+    for (const name of ['Audiobook', 'Quality']) {
       await user.click(screen.getByRole('tab', { name }))
       expect(screen.getByRole('tab', { name, selected: true })).toBeInTheDocument()
     }

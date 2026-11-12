@@ -1,5 +1,7 @@
 # Learning work matches from trusted approvals — 2026-11-04
 
+> **Retired 2026-11-12.** The code this document describes (the old per-book identification model and review queue, `match_review`, `training_cache`, `evidence-report`) was removed; identification now lives in `src/app/linkage/` and the Matches page ([listen-identification.md](listen-identification.md)). Kept as history.
+
 The user explicitly trusts existing automatic approvals as ground truth. The
 training pipeline now uses those decisions as positive supervision, alongside
 manual approvals where the accepted catalogue candidate can be recovered.

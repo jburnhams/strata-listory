@@ -1,5 +1,7 @@
 # Bulk book identification and learned matching — 2026-11-04
 
+> **Retired 2026-11-12.** The code this document describes (the old per-book identification model and review queue, `match_review`, `training_cache`, `evidence-report`) was removed; identification now lives in `src/app/linkage/` and the Matches page ([listen-identification.md](listen-identification.md)). Kept as history.
+
 The initial read-only audit found 355 current book-identification reviews: 329
 classified as books, 24 radio and two episodes. None passed every existing book
 predicate. Failed-check counts overlap: 348 lacked two independent families,

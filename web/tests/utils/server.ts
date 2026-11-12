@@ -7,16 +7,6 @@ export const initialBooks: Book[] = [
   { id: 1, title: 'Dune', author: 'Frank Herbert', narrator: '', series: 'Dune', series_position: 1, duration_seconds: 75600, path: '', status: 'unlistened', added: '2026-10-29T12:00:00Z', asin: '', kind: 'book', review: 'confirmed', file_count: null, suggestion: null, match_score: null, year: null, year_source: '' },
 ]
 
-/** A review queue of `n` doubtful matches, most impactful first (impact falls with the number). */
-export function identifyQueue(n: number): import('../../src/api').IdentifyItem[] {
-  return Array.from({ length: n }, (_, i) => ({
-    group: `/audio/Books/Author ${i + 1}/Title ${i + 1}|title ${i + 1}|`, files: 40 - i, decision: 'review' as const, score: i % 3 === 0 ? .95 : i % 3 === 1 ? .84 : .6, margin: i % 3 === 0 ? .01 : .4, impact: 100 - i,
-    work: `/works/OL${i + 1}W`, title: `Title ${i + 1}`, authors: [`Author ${i + 1}`], editions: 12 + i, candidates: 5,
-    item: { title: `Title ${i + 1} CD01 01`, author: i % 2 ? '' : `Author ${i + 1}`, path: `/audio/Books/Author ${i + 1}/Title ${i + 1}/CD01 01.mp3` },
-  }))
-}
-export const identifyState: { queue: import('../../src/api').IdentifyItem[]; decided: { group: string; decision: string; work: string }[]; accepted: number; refreshes: string[]; pipeline: (group: string) => import('../../src/api').PipelineOutcome } = { queue: identifyQueue(3), decided: [], accepted: 520, refreshes: [], pipeline: () => ({ status: 'approved', note: 'the book was approved and the pipeline continues' }) }
-
 export const hardcover = {
   id: '375699', url: 'https://hardcover.app/books/dune', description: 'A desert planet saga.', pages: 612, rating: 4.31, ratings_count: 12345, reviews_count: 99, readers: 5000, finished: 4000,
   genres: ['Science Fiction'], moods: ['adventurous'], tags: ['classic'], content_warnings: ['Violence'], series: [{ name: 'Dune Chronicles', position: 1 }], audiobook_editions: [{ asin: 'B0A', hours: 21, publisher: 'Macmillan Audio', released: '2007-01-01', format: 'Audible' }],
@@ -72,7 +62,6 @@ export const matchState: { queue: import('../../src/api').QueueItem[]; decided: 
 
 export const resetMock = () => {
   matchState.queue = matchQueue(); matchState.decided = []; matchState.retrains = 0; matchState.training = false; matchState.model = 'fs-test'
-  identifyState.queue = identifyQueue(3); identifyState.decided = []; identifyState.refreshes = []; identifyState.pipeline = () => ({ status: 'approved', note: 'the book was approved and the pipeline continues' })
   mock.settings = { ...defaultSettings }
   mock.books = [...initialBooks]
   mock.extras = {}
@@ -95,9 +84,6 @@ const listenRows = [
   { id: 3, label: 'Dead Ringers (season 11)', kind: 'radio_series', status: 'grouped', files: 6, bytes: 1e8, minutes: 0, group_id: null, path: null, copies: 1, parts: 0, author: null, narrator: null, year: null, kind_info: kindInfos.series },
 ]
 export const handlers = [
-  http.get('/api/match-reviews', ({ request }) => { const mode = new URL(request.url).searchParams.get('mode') === 'automatic' ? 'automatic' : 'shortlist'; return HttpResponse.json({ rows: [matchReviewFixture(mode)], total: 1, offset: 0, limit: 10 }) }),
-  http.get('/api/match-reviews/:id', () => HttpResponse.json(matchReviewFixture())),
-  http.post('/api/match-reviews/:id/:action', () => HttpResponse.json({ changed: true })),
   http.post('/api/jobs/:id/retry', () => HttpResponse.json({ queued: true })),
   http.get('/api/operations', () => HttpResponse.json({ rows: [], busy: false })),
   http.get('/api/finished', () => HttpResponse.json([])),
@@ -249,19 +235,6 @@ export const server = setupServer(
     matchState.decided.push(b); return HttpResponse.json({ ok: true, status: 'identified', retraining: false })
   }),
   http.post('/api/matches/retrain', () => { matchState.retrains++; return HttpResponse.json({ started: true }) }),
-  http.get('/api/identify/queue', ({ request }) => {
-    const u = new URL(request.url), after = u.searchParams.get('after'), limit = Number(u.searchParams.get('limit') || 10)
-    const open = identifyState.queue.filter(i => !identifyState.decided.some(d => d.group === i.group))
-    const start = after ? identifyState.queue.findIndex(i => i.group === after) + 1 : 0
-    return HttpResponse.json({ summary: identifyState.queue.length ? { queue: identifyState.queue.length, accepted: identifyState.accepted, accepted_files: 1446, queue_files: 562, remaining: open.length, decided: identifyState.decided.length } : null, items: identifyState.queue.slice(start).filter(i => !identifyState.decided.some(d => d.group === i.group)).slice(0, limit) })
-  }),
-  http.post('/api/identify/decisions', async ({ request }) => {
-    const b = (await request.json()) as { group: string; decision: string; work: string }
-    if (!identifyState.queue.some(i => i.group === b.group)) return HttpResponse.json({ detail: 'no such queued group; refresh the queue' }, { status: 404 })
-    identifyState.decided.push(b)
-    return HttpResponse.json({ recorded: b.decision, pipeline: identifyState.pipeline(b.group) })
-  }),
-  http.post('/api/identify/refresh', ({ request }) => { identifyState.refreshes.push(new URL(request.url).searchParams.get('train') ?? ''); return HttpResponse.json({ queue: identifyState.queue.length }) }),
   http.get('/api/jobs/:id', () => HttpResponse.json({ state: 'done', result: {}, error: '' })),
   http.get('/api/ingest', () => HttpResponse.json(ingestFixture())),
   http.post('/api/ingest/run', () => HttpResponse.json({ queued: true })),
@@ -276,17 +249,3 @@ export const server = setupServer(
   http.post('/api/ingest/runs/:id/enqueue', () => HttpResponse.json({ book_id: 1, approved: false })),
   http.put('/api/ingest/policy', async ({ request }) => HttpResponse.json(await request.json())),
 ...handlers)
-
-export function matchReviewFixture(mode: 'automatic' | 'shortlist' = 'shortlist'): import('../../src/api').MatchReview {
-  return {
-    id: 'review1', book_id: 1, created: '2026-11-04T12:00:00Z', state: mode === 'automatic' ? 'audiobook_review' : 'metadata_review', basis: 'a'.repeat(64), automatic: mode === 'automatic', approved: mode === 'automatic', held: false, shortlisted: mode === 'shortlist', blocked: '', approved_at: mode === 'automatic' ? '2026-11-04T12:00:00Z' : null, cover: true, complete: true,
-    approval: mode === 'automatic' ? { automatic: true, policy_revision: 1, checks: [] } : null,
-    local: { title: 'Dune', author: 'Frank Herbert', narrator: 'Reader', path: '/inbox/Dune', asin: 'B000000001', kind: 'book', locked: [] },
-    match: { title: 'Dune', authors: ['Frank Herbert'], year: 1965, publisher: 'Original Press', rows: [{ field: 'Title', value: 'Dune', source: 'Hardcover + Open Library', note: '' }], sources: ['hardcover','openlibrary'] },
-    recording: { matched: false, rows: [{ field: 'Narrator', value: 'Reader', source: 'Local tags', note: 'Recording not approved' }] },
-    suggestion: mode === 'shortlist' ? { candidate: { source: 'openlibrary', id: '/works/OL1W', title: 'Dune', subtitle: '', authors: ['Frank Herbert'], original_year: 1965, publisher: 'Original Press', url: 'https://openlibrary.org/works/OL1W', narrators: [], abridged: false, runtime_minutes: 60, language: 'english', isbns: ['1234'], genres: ['Science fiction'], description: 'Desert planet.', rating: 0, ratings_count: 0 }, score: .97, features: { title_edit: 1, author_edit: .99, supporting_families: 2 }, model: 'xgboost_depth2', candidate_key: 'chosen' } : null,
-    source: { folder: '/inbox/Dune', count: 4, files: ['01.mp3','02.mp3','03.mp3'], hours: 1 },
-    checks: [{ metric: 'metadata.work_families', passed: true, value: 2, threshold: { min: 2 }, reason: '' }],
-    evidence: { records: { hardcover: { title: 'Dune', authors: ['Frank Herbert'], original_year: 1965 } }, tags: { album: ['Dune'], artist: ['Frank Herbert'] }, providers: { openlibrary: { status: 'ok', candidates: [{ source: 'openlibrary', id: '/works/OL1W', title: 'Dune', authors: ['Frank Herbert'], original_year: 1965, url: 'https://openlibrary.org/works/OL1W' }] } } },
-  }
-}

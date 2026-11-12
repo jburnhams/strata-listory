@@ -1,5 +1,7 @@
 # Book identification audit and unified design — 2026-11-07
 
+> **Retired 2026-11-12.** The code this document describes (the old per-book identification model and review queue, `match_review`, `training_cache`, `evidence-report`) was removed; identification now lives in `src/app/linkage/` and the Matches page ([listen-identification.md](listen-identification.md)). Kept as history.
+
 Read-only audit of how strata-listory decides which written work (and which recording) a folder of audio files is. Nothing was changed. Line references are to `src/app/` at commit `7140a66`. Numbers from the catalogue are from a read-only open of `data/catalogue.db` on omarchy.
 
 ## Findings (short version)

@@ -1,5 +1,7 @@
 # Book identification (model-first, local Open Library)
 
+> **Retired 2026-11-12.** The code this document describes (the old per-book identification model and review queue, `match_review`, `training_cache`, `evidence-report`) was removed; identification now lives in `src/app/linkage/` and the Matches page ([listen-identification.md](listen-identification.md)). Kept as history.
+
 Replaces the rule-engine route for deciding *which written work* a local item is. Design rationale and the audit it came from: [identification-audit-20261107.md](identification-audit-20261107.md). Code is in `src/app/identify/`; the older `matcher`/`ingest/metadata` path is still in place until the migration steps below are done.
 
 ## Pipeline

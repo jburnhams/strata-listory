@@ -19,8 +19,6 @@ scripts/setup_env.sh                          # macOS / Linux (or scripts\setup_
 ./app ingest-status                           # metrics, review reasons and threshold policy
 ./app providers                               # which metadata providers can run
 ./app match                                   # look new books up with them and record suggestions
-./app evidence-report --limit 20 --stride 25  # JSON snapshot using stored sources
-./app evidence-report 151 --fresh-openlibrary # fetch work details + ratings, archive every response
 ./app match-test --limit 60 --stride 25       # compare providers on a sample, records nothing
 ./app list --review suggested                 # check them; ./app confirm ID applies a suggestion, ./app ignore ID drops one
 ./app serve                                   # web UI + API on http://127.0.0.1:8360/
