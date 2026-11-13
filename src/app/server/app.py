@@ -7,6 +7,7 @@ GET /api/books?q=&status=&review=&kind=; POST /api/scan {folder?}; POST /api/mat
 GET|PATCH|DELETE /api/books/{id}; GET /api/books/{id}/details (files, embedded tags, Audible metadata file); GET /api/books/{id}/cover (image).
 The page at / serves `src/app/server/static/index.html` when built (`cd web && npm run build`), else the plain stand-in `landing.html`."""
 
+import json
 import os
 from contextlib import asynccontextmanager
 from typing import Literal
@@ -324,10 +325,35 @@ def create_app():
 
     @app.get("/api/operations")
     def get_operations(completed: bool = False):
+        from app.covers.api import labels as covers_labels
         from app.ingest import operations
 
         view = operations.view(ingest_worker.tasks() + jobs.tasks("system"), worker.tasks(), completed)
+        cover_jobs = jobs.tasks("covers")
+        names = covers_labels(
+            [x["options"].get("listen_id") for x in cover_jobs]
+            + [json.loads(j["options"]).get("listen_id") for j in jobs.failures() if j["domain"] == "covers"]
+        )
+        for t in cover_jobs:
+            lid = t["options"].get("listen_id")
+            view["rows"].append(
+                dict(
+                    id=f"covers-{t['id']}",
+                    book_id=None,
+                    run_id=None,
+                    title=f"Search covers: {names.get(lid) or f'listen {lid}'}",
+                    stage="Covers",
+                    state=t["state"],
+                    phase=None,
+                    error="",
+                )
+            )
+        if cover_jobs:
+            view["busy"] = True
         for job in jobs.failures():
+            if job["domain"] == "covers":
+                lid = json.loads(job["options"]).get("listen_id")
+                job["kind"], job["title"] = "search covers", names.get(lid) or f"listen {lid}"
             label = job["kind"].replace("_", " ")
             view["rows"].append(
                 dict(

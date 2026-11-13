@@ -72,9 +72,10 @@ class JobQueue:
                         for r in c.execute("SELECT book_id FROM ingest_members WHERE run_id=?", (options["run_id"],))
                     )
                 # Derived evidence reads immutable event snapshots; it must not block a human decision.
-                resources = json.dumps(
-                    [] if domain == "system" and kind == "training_features" else sorted(f"book:{bid}" for bid in ids)
-                )
+                owned = sorted(f"book:{bid}" for bid in ids)
+                if options.get("listen_id"):  # listens live in the Postgres catalogue, a different id space from books
+                    owned.append(f"listen:{options['listen_id']}")
+                resources = json.dumps([] if domain == "system" and kind == "training_features" else owned)
                 c.execute(
                     "INSERT OR IGNORE INTO jobs(id,domain,kind,options,dedupe,state,created,resources,timeout_seconds) VALUES (?,?,?,?,?,'queued',?,?,?)",
                     (ident, domain, kind, payload, key, now(), resources, self.timeout_seconds),
@@ -162,15 +163,15 @@ class JobQueue:
         finally:
             c.close()
 
-    def failures(self, limit=25):
+    def failures(self, limit=25, domain=None):
         c = db.connect()
         owner = "COALESCE(json_extract(j.options,'$.book_id'),json_extract(j.options,'$.ids[0]'),(SELECT book_id FROM ingest_runs WHERE id=COALESCE(json_extract(j.options,'$.run_id'),json_extract(j.options,'$.resume'))),(SELECT CAST(owner AS INTEGER) FROM job_work WHERE job_id=j.id AND kind='plan' LIMIT 1))"
         try:
             return [
                 dict(r)
                 for r in c.execute(
-                    f"SELECT j.id,j.domain,j.kind,j.error,j.finished,b.id AS book_id,b.title FROM jobs j LEFT JOIN books b ON b.id={owner} WHERE j.state='failed' AND NOT EXISTS (SELECT 1 FROM job_work retry WHERE retry.kind='retry' AND retry.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created) ORDER BY j.finished DESC LIMIT ?",
-                    (limit,),
+                    f"SELECT j.id,j.domain,j.kind,j.error,j.finished,j.options,b.id AS book_id,b.title FROM jobs j LEFT JOIN books b ON b.id={owner} WHERE j.state='failed' AND (? IS NULL OR j.domain=?) AND NOT EXISTS (SELECT 1 FROM job_work retry WHERE retry.kind='retry' AND retry.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created) ORDER BY j.finished DESC LIMIT ?",
+                    (domain, domain, limit),
                 )
             ]
         finally:

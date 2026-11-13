@@ -470,3 +470,18 @@ def test_finished_list_uses_resolved_output_identity(client):
     row = client.get("/api/finished").json()[0]
     assert row["title"] == "Resolved title" and row["author"] == "Resolved Author"
     assert catalogue.get_book(b["id"])["author"] == ""
+
+
+def test_queued_and_failed_cover_searches_show_with_the_other_operations(client, monkeypatch):
+    from app.covers import api as covers_api
+
+    monkeypatch.setattr(covers_api, "labels", lambda ids: {7: "Glass Orchard"})
+    jobs = client.app.state.jobs
+    jobs.submit("covers", "search", listen_id=7)
+    view = client.get("/api/operations").json()
+    row = next(r for r in view["rows"] if r["stage"] == "Covers")
+    assert row["title"] == "Search covers: Glass Orchard" and row["state"] == "queued" and view["busy"]
+    jobs.handler = lambda *a: (_ for _ in ()).throw(ValueError("no network"))
+    jobs.run_one()
+    row = next(r for r in client.get("/api/operations").json()["rows"] if r.get("job_id"))
+    assert row["state"] == "failed" and row["title"] == "search covers: Glass Orchard" and row["error"] == "no network"
