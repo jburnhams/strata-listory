@@ -196,22 +196,23 @@ export default function CoversPage({ pollMs = 2000 }: { pollMs?: number }) {
   const load = useJob({ queryKey: ['covers', state, q], queryFn: () => coverApi.list(state === 'all' ? '' : state, q), staleTime: 0, every: pollMs, isRunning: x => x.job.running })   // polled while a search runs: the page fills as each listen is finished
   const reload = load.poll
   const start = useAsyncAction(async () => { await coverApi.run(); reload() }, { settleMs: 800 })
-  const [gone, setGone] = useState<Set<number>>(new Set())   // saved cards leave the list at once; the write follows in the background
+  // a choice shows at once and the write follows in the background: the page answers from what was clicked, never from a refetch of the whole list
+  const [over, setOver] = useState<Record<number, { image: number | null; from: CoverRow['state'] }>>({})
   const [failed, setFailed] = useState<Record<number, string>>({})
   const onPick = async (row: CoverRow, id: number | null, via: 'pick' | 'accept') => {
-    const hide = state === 'choose' && id != null
-    setGone(g => { const n = new Set(g); if (hide) n.add(row.listen_id); else n.delete(row.listen_id); return n })
+    setOver(o => ({ ...o, [row.listen_id]: { image: id, from: o[row.listen_id]?.from ?? row.state } }))
     setFailed(f => { const { [row.listen_id]: _, ...rest } = f; return rest })
-    const write = coverApi.choose(row.listen_id, id, via)
-    if (!hide) { await write; reload(); return }
-    write.catch((e: unknown) => {
-      setGone(g => { const n = new Set(g); n.delete(row.listen_id); return n })
+    coverApi.choose(row.listen_id, id, via).catch((e: unknown) => {
+      setOver(o => { const { [row.listen_id]: _, ...rest } = o; return rest })
       setFailed(f => ({ ...f, [row.listen_id]: `${row.label}: ${e instanceof Error ? e.message : 'could not be saved'}` }))
     })
   }
+  const shownRow = (r: CoverRow): CoverRow => { const o = over[r.listen_id]; return o ? { ...r, chosen: o.image, state: o.image != null ? 'chosen' : r.covers.length ? 'choose' : 'none' } : r }
   const d = load.status === 'ready' ? load.data : null
   const running = !!d?.job.running
-  const finding = d ? `${format.count(d.waiting, 'listen')} waiting for a search · ${Math.max(0, d.counts.choose - gone.size)} to choose · ${d.counts.chosen + gone.size} chosen · ${d.counts.none} with none found` : undefined
+  const counts = { ...(d?.counts ?? { choose: 0, chosen: 0, none: 0 }) }
+  for (const o of Object.values(over)) { const now = o.image != null ? 'chosen' : o.from === 'chosen' ? 'choose' : o.from; if (now !== o.from) { counts[o.from]--; counts[now]++ } }
+  const finding = d ? `${format.count(d.waiting, 'listen')} waiting for a search · ${counts.choose} to choose · ${counts.chosen} chosen · ${counts.none} with none found` : undefined
   return (
     <div className="space-y-5">
       <PageHeader title="Covers" scope="A picture for each listen, from every source that knows the book" finding={finding ? { text: finding } : undefined} />
@@ -225,11 +226,11 @@ export default function CoversPage({ pollMs = 2000 }: { pollMs?: number }) {
       <Field label="Search covers" hint="Every word must appear in the title">
         <Input type="search" value={typed} onChange={e => setTyped(e.target.value)} placeholder="e.g. glass orchard" />
       </Field>
-      <Tabs param="state" label="Cover state" items={[{ value: '', label: `To choose${d ? ` (${d.counts.choose})` : ''}` }, { value: 'chosen', label: `Chosen${d ? ` (${d.counts.chosen})` : ''}` }, { value: 'none', label: `None found${d ? ` (${d.counts.none})` : ''}` }, { value: 'all', label: 'All searched' }]}>
+      <Tabs param="state" label="Cover state" items={[{ value: '', label: `To choose${d ? ` (${counts.choose})` : ''}` }, { value: 'chosen', label: `Chosen${d ? ` (${counts.chosen})` : ''}` }, { value: 'none', label: `None found${d ? ` (${counts.none})` : ''}` }, { value: 'all', label: 'All searched' }]}>
         {() => (
           <DataView state={load} isEmpty={x => x.rows.length === 0} skeleton={<div className="space-y-3">{[0, 1].map(i => <Skeleton key={i} className="h-48 w-full" />)}</div>}
             empty={<EmptyState title="Nothing here yet">{(d?.waiting ?? 0) > 0 ? 'Press Search for covers to look for the pictures.' : 'No search has run on a listen like this.'}</EmptyState>}>
-            {x => <div className="space-y-4">{Object.entries(failed).map(([id, m]) => <p key={id} role="alert" className="type-body-sm text-danger">Not saved — {m}</p>)}{x.rows.filter(r => state !== 'choose' || !gone.has(r.listen_id)).map(r => <Card key={r.listen_id} row={r} onPick={onPick} onChanged={reload} />)}{x.total > x.rows.length && <p className="type-caption text-muted-foreground">Showing {x.rows.length} of {x.total}; search to narrow it.</p>}</div>}
+            {x => <div className="space-y-4">{Object.entries(failed).map(([id, m]) => <p key={id} role="alert" className="type-body-sm text-danger">Not saved — {m}</p>)}{x.rows.map(shownRow).filter(r => state === 'all' || r.state === (state || 'choose')).map(r => <Card key={r.listen_id} row={r} onPick={onPick} onChanged={reload} />)}{x.total > x.rows.length && <p className="type-caption text-muted-foreground">Showing {x.rows.length} of {x.total}; search to narrow it.</p>}</div>}
           </DataView>
         )}
       </Tabs>

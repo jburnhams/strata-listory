@@ -70,6 +70,17 @@ describe('CoversPage', () => {
     expect(within(table).getByRole('row', { name: /Length .* −13%/ })).toBeInTheDocument()
   })
 
+  it('changes a saved choice at once too, without waiting for the write or a reload of the list', async () => {
+    let answer: () => void = () => {}
+    server.use(http.post('/api/covers/:id/choose', async () => { await new Promise<void>(r => { answer = r }); return HttpResponse.json({ ok: true, chosen: null }) }))
+    const { user } = setup(<CoversPage />, { route: '/covers' })
+    await user.click(await screen.findByRole('tab', { name: /Chosen/ }))
+    const saved = await screen.findByRole('article', { name: 'Third Book' })
+    await user.click(within(saved).getByRole('button', { name: 'Clear choice' }))
+    await waitFor(() => expect(screen.queryByRole('article', { name: 'Third Book' })).toBeNull())
+    answer()
+  })
+
   it('collapses again without saving, and says why a picture ranks where it does', async () => {
     const { user } = setup(<CoversPage />, { route: '/covers' })
     const card = await screen.findByRole('article', { name: 'Glass Orchard' })
