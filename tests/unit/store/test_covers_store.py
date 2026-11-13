@@ -323,7 +323,7 @@ def test_searches_go_on_the_job_queue_one_per_listen_and_run_as_jobs(s, monkeypa
     assert d == dict(queued=2, listen_ids=[a.id, b.id])
     assert client.post("/api/covers/run", json={}).json()["queued"] == 2  # still waiting: the same jobs, not four
     assert [t["options"] for t in jobs.tasks("covers")] == [dict(listen_id=a.id), dict(listen_id=b.id)]
-    assert client.get("/api/covers").json()["job"] == dict(running=True, queued=2, current="", error="")
+    assert client.get("/api/covers").json()["job"] == dict(running=True, queued=2, current="", error="", failed=[])
     c = db.connect()
     try:
         assert [r[0] for r in c.execute("SELECT resources FROM jobs ORDER BY created")] == [
