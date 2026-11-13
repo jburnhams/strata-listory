@@ -12,18 +12,21 @@ from dataclasses import dataclass, field
 from app.covers import imaging, net
 
 IMAGE_NAMES = ("cover", "folder", "front", "albumart", "albumartsmall", "artwork")
-MAX_ASINS, MAX_ISBNS, MAX_OL = 12, 6, 6
+MAX_ASINS, MAX_ISBNS, MAX_OL, MAX_PIDS = 12, 6, 6, 3
 
 
 @dataclass
 class Context:
-    """What is known about the listen's identified book: its Audible ASINs (every recording of the work), ISBNs (every edition), Open Library work keys, a title and author for text searches, and the folder and files it was made from."""
+    """What is known about the listen's identified book or programme: its Audible ASINs (every recording of the work), ISBNs (every edition), Open Library work keys, BBC programme ids and Wikidata items, a title and author for text searches, and the folder and files it was made from."""
 
     title: str = ""
     author: str = ""
     asins: list[str] = field(default_factory=list)
     isbns: list[str] = field(default_factory=list)
     ol_works: list[str] = field(default_factory=list)
+    radio: bool = False  # a programme, series or play: the sources that know programmes are asked, and the book sources have little to say
+    bbc_pids: list[str] = field(default_factory=list)  # BBC programme ids of the identified programme
+    wikidata: list[str] = field(default_factory=list)  # Wikidata items (Q...) of the identified programme
     folder: str = ""
     files: list[str] = field(default_factory=list)
 
@@ -338,11 +341,124 @@ def local(ctx: Context) -> tuple[list[Item], dict]:
     return items, record("local", items, notes)
 
 
+def bbc_pids_for(ctx: Context) -> list[str]:
+    """The BBC programme ids to ask about: those the identification found, else (a radio listen the index knows by title) the ids of the radio index's programmes with exactly that title."""
+    if ctx.bbc_pids:
+        return ctx.bbc_pids[:MAX_PIDS]
+    if not ctx.radio or not ctx.title:
+        return []
+    from app.identify import radioindex
+
+    return [p["ref"] for p in radioindex.find([ctx.title]) if p["source"] == "bbc_radio"][:MAX_PIDS]
+
+
+def bbc(ctx: Context) -> tuple[list[Item], dict]:
+    """The BBC's own picture of each programme (`/programmes/<pid>.json` names its image, `programme.image.pid`), as the original and as the 1920 px rendition the BBC's image service always has: the larger one that downloads stands for both."""
+    pids = bbc_pids_for(ctx)
+    if not pids:
+        return [], record("bbc", [], [], skipped="no BBC programme known for this listen")
+    items, notes = [], []
+    for pid in pids:
+        r = net.get(f"https://www.bbc.co.uk/programmes/{urllib.parse.quote(pid)}.json")
+        if r.status == 404:
+            notes.append(f"{pid}: not on the BBC")
+        elif not r.ok:
+            notes.append(failed_note(pid, r))
+            if r.limited:
+                break
+        else:
+            try:
+                img = ((r.json().get("programme") or {}).get("image") or {}).get("pid") or ""
+            except ValueError:
+                notes.append(f"error: {pid}: unreadable answer")
+                continue
+            if not re.fullmatch(r"p[0-9a-z]{7}", img):
+                notes.append(f"{pid}: the BBC lists no image")
+                continue
+            for size in ("raw", "1920x1080"):
+                items.append(
+                    Item("bbc", pid, f"BBC programme {pid}", f"https://ichef.bbci.co.uk/images/ic/{size}/{img}.jpg")
+                )
+    return items, record("bbc", items, notes)
+
+
+def wikidata(ctx: Context) -> tuple[list[Item], dict]:
+    """The image Wikidata lists for each programme (`P18`, or its logo `P154`), served by Wikimedia Commons at up to 2000 px wide."""
+    if not ctx.wikidata:
+        return [], record("wikidata", [], [], skipped="no Wikidata item known for this listen")
+    items, notes = [], []
+    for q in ctx.wikidata[:MAX_PIDS]:
+        if not re.fullmatch(r"Q\d+", q):
+            continue
+        r = net.get(f"https://www.wikidata.org/wiki/Special:EntityData/{q}.json")
+        if r.status == 404:
+            notes.append(f"{q}: not on Wikidata")
+        elif not r.ok:
+            notes.append(failed_note(q, r))
+            if r.limited:
+                break
+        else:
+            try:
+                claims = ((r.json().get("entities") or {}).get(q) or {}).get("claims") or {}
+            except ValueError:
+                notes.append(f"error: {q}: unreadable answer")
+                continue
+            files = [
+                v
+                for prop in ("P18", "P154")
+                for c in claims.get(prop, [])
+                if isinstance(v := ((c.get("mainsnak") or {}).get("datavalue") or {}).get("value"), str)
+            ]
+            if not files:
+                notes.append(f"{q}: no image")
+            for name in files[:2]:
+                items.append(
+                    Item(
+                        "wikidata",
+                        q,
+                        name,
+                        f"https://commons.wikimedia.org/wiki/Special:FilePath/{urllib.parse.quote(name.replace(' ', '_'))}?width=2000",
+                    )
+                )
+    return items, record("wikidata", items, notes)
+
+
+def podcast(ctx: Context) -> tuple[list[Item], dict]:
+    """Apple Podcasts' artwork of programmes whose title matches (broadcasters publish their programmes as podcasts), asked at 3000 pixels. Only for radio listens."""
+    if not ctx.radio:
+        return [], record("podcast", [], [], skipped="not a radio listen")
+    if not ctx.title:
+        return [], record("podcast", [], [], skipped="no title known for this listen")
+    from app.identify import textkeys as tk
+
+    r = net.get(
+        f"https://itunes.apple.com/search?term={urllib.parse.quote(ctx.title)}&media=podcast&entity=podcast&limit=8"
+    )
+    if not r.ok:
+        return [], record("podcast", [], [failed_note("search", r)])
+    try:
+        results = r.json().get("results") or []
+    except ValueError:
+        return [], record("podcast", [], ["error: unreadable answer"])
+    want = tk.title_key(ctx.title)
+    items = []
+    for x in results:
+        got = x.get("collectionName") or x.get("trackName") or ""
+        key = tk.title_key(got)
+        url = x.get("artworkUrl600") or x.get("artworkUrl100")
+        if want and key and (want == key or want in key or key in want) and url:
+            items.append(Item("podcast", str(x.get("collectionId") or ""), got, apple_large(url)))
+    return items, record("podcast", items, [f"{len(results)} results, none with a matching title"] if not items else [])
+
+
 SOURCES: list[tuple[str, Callable[[Context], tuple[list[Item], dict]]]] = [
     ("audible", audible),
     ("audnexus", audnexus),
     ("openlibrary", openlibrary),
     ("apple", apple),
+    ("bbc", bbc),
+    ("podcast", podcast),
+    ("wikidata", wikidata),
     ("google", google),
     ("local", local),
 ]

@@ -10,12 +10,12 @@ from pictures import jpeg, png
 from sqlalchemy import select
 
 from app.covers import api as capi
-from app.covers import imaging
+from app.covers import fit, imaging
 from app.covers import run as R
 from app.covers import sources as S
 from app.store import api as store_api
 from app.store import listens as L
-from app.store.models import CoverCandidate, CoverImage, ListenEvent, Work, WorkIdentifier
+from app.store.models import CoverCandidate, CoverImage, ListenChoice, ListenEvent, Work, WorkIdentifier
 
 
 @pytest.fixture
@@ -26,15 +26,30 @@ def s(db_session, db_backend):
 
 
 @pytest.fixture(autouse=True)
+def relearns(monkeypatch):
+    """Choosing a cover refits the ranking in a background thread on its own session; here it only records that it was asked (the fit itself is tested through `R.learn`)."""
+    calls = []
+    monkeypatch.setattr(capi, "relearn", lambda: calls.append(1))
+    return calls
+
+
+@pytest.fixture(autouse=True)
+def isolated_model(monkeypatch, tmp_path):
+    monkeypatch.setattr(fit.settings, "data_dir", lambda: str(tmp_path))
+
+
+@pytest.fixture(autouse=True)
 def content_hash(monkeypatch):
     """Without a decoder the perceptual hash of a made-up picture is a hash of its bytes: different pictures are far apart; a test that wants near-duplicates sets its own."""
     monkeypatch.setattr(imaging, "dhash", lambda b: hashlib.sha256(b).hexdigest()[:16])
 
 
-def make_listen(s, title="Glass Orchard", asins=("B0A",), isbns=("9780000000002",), accepted=True, kind="book"):
+def make_listen(
+    s, title="Glass Orchard", asins=("B0A",), isbns=("9780000000002",), accepted=True, kind="book", detail=None, ids=()
+):
     listen = L.create_listen(s, kind)
     listen.label = title
-    w = Work(kind="written", title=title)
+    w = Work(kind="written" if kind == "book" else "radio_programme", title=title)
     s.add(w)
     s.flush()
     for a in asins:
@@ -42,6 +57,8 @@ def make_listen(s, title="Glass Orchard", asins=("B0A",), isbns=("9780000000002"
     for i in isbns:
         s.add(WorkIdentifier(work_id=w.id, scheme="isbn", value=i))
     s.add(WorkIdentifier(work_id=w.id, scheme="work", value="/works/OL1W"))
+    for scheme, value in ids:
+        s.add(WorkIdentifier(work_id=w.id, scheme=scheme, value=value))
     s.flush()
     if accepted:
         L.link(
@@ -51,10 +68,25 @@ def make_listen(s, title="Glass Orchard", asins=("B0A",), isbns=("9780000000002"
             work_id=w.id,
             state="accepted",
             score=0.99,
-            detail={"authors": ["Mara Quill"]},
+            detail={"authors": ["Mara Quill"], **(detail or {})},
             actor_kind="model",
         )
     return listen
+
+
+def input_part(s, listen, minutes, ordinal=1):
+    """An input part (a folder of files) whose detail carries the copy's runtime."""
+    from app.store import filegroups as fg
+
+    run = s.scalars(select(fg.PartFilegroup)).first()
+    g = fg.PartFilegroup(
+        run_id=run.run_id if run else fg.new_run(s, "group_folders").id,
+        kind="folder",
+        label=f"copy {listen.id}-{ordinal}",
+    )
+    s.add(g)
+    s.flush()
+    return L.link(s, listen, "input", filegroup_id=g.id, ordinal=ordinal, detail={"minutes": minutes})
 
 
 def later(s, seconds=5):
@@ -83,18 +115,22 @@ def fake_sources(*pictures):
 def test_pending_is_accepted_book_listens_without_a_cover_or_a_search_since_the_last_change(s):
     a = make_listen(s, "A")
     make_listen(s, "B", accepted=False)
-    make_listen(s, "Radio", kind="radio_series")
+    make_listen(s, "Other", kind="other")  # not a book or a programme: nothing to find a cover for
+    radio = make_listen(s, "Radio", kind="radio_series")  # a programme with an accepted match is searched too
+    assert R.pending(s) == [a.id, radio.id]
+    assert R.pending(s, listen_ids=[a.id]) == [a.id]
+    R.search(s, radio, run_sources=fake_sources())
     assert R.pending(s) == [a.id]
     assert R.pending(s, listen_ids=[999]) == []
     run = R.search(s, a, run_sources=fake_sources())
-    assert run.sources == [] and R.pending(s) == []  # searched, nothing changed since
-    assert R.pending(s, force=True) == [a.id] and R.pending(s, listen_ids=[a.id], force=True) == [a.id]
+    assert run.sources == [] and R.pending(s, listen_ids=[a.id]) == []  # searched, nothing changed since
+    assert R.pending(s, force=True) == [a.id, radio.id] and R.pending(s, listen_ids=[a.id], force=True) == [a.id]
     L.choose(s, a, "title", "A Better Title")  # a metadata choice is a change: search again
     later(s)
-    assert R.pending(s) == [a.id]
+    assert R.pending(s, listen_ids=[a.id]) == [a.id]
     R.search(s, a, run_sources=fake_sources())
     R.choose(s, a, None)  # clearing a cover that was never chosen is a no-op
-    assert R.pending(s) == []
+    assert R.pending(s, listen_ids=[a.id]) == []
 
 
 def test_choosing_a_cover_does_not_make_the_listen_look_changed_and_takes_it_off_the_list(s):
@@ -347,3 +383,139 @@ def test_rebuilding_listens_clears_their_cover_searches_and_keeps_the_pictures(s
     s.flush()
     build.clear(s)
     assert s.scalars(select(CoverCandidate)).all() == [] and len(s.scalars(select(CoverImage)).all()) == 1
+
+
+def client_for(s):
+    app = FastAPI()
+    app.include_router(capi.router)
+    app.dependency_overrides[store_api.get_session] = lambda: s
+    return TestClient(app)
+
+
+def test_radio_listens_are_searched_with_the_programme_ids_of_their_accepted_work(s):
+    prog = make_listen(
+        s, "The Glass Hour", asins=(), isbns=(), kind="radio_show", ids=(("bbc_pid", "b0aaaaaa"), ("wikidata", "Q7"))
+    )
+    make_listen(s, "Unidentified Show", kind="radio_series", accepted=False)
+    make_listen(s, "Not a programme", kind="other")
+    assert R.pending(s) == [prog.id]
+    ctx = R.context(s, prog)
+    assert (ctx.radio, ctx.bbc_pids, ctx.wikidata, ctx.title) == (True, ["b0aaaaaa"], ["Q7"], "The Glass Hour")
+    assert R.context(s, make_listen(s, "A Book")).radio is False
+
+
+def test_the_target_is_the_listen_its_work_and_its_closest_recording_with_the_listens_runtime(s):
+    a = make_listen(
+        s,
+        "Glass Orchard",
+        detail={
+            "recording": "B0A",
+            "recordings": [{"asin": "B0A", "minutes": 598}, {"asin": "B0B", "minutes": 800}, {"asin": "B0C"}],
+        },
+    )
+    input_part(s, a, 600.0)
+    input_part(s, a, 610.0, 2)
+    t = R.target(s, a)
+    assert (t.kind, t.title, t.minutes, t.recording, t.recordings) == (
+        "book",
+        "Glass Orchard",
+        600.0,
+        "B0A",
+        {"B0A": 598.0, "B0B": 800.0},
+    )
+    radio = make_listen(s, "The Glass Hour", kind="play", asins=(), isbns=())
+    assert R.target(s, radio).kind == "radio" and R.target(s, radio).minutes == 0.0
+
+
+def test_the_page_lists_the_best_fit_first_with_its_reasons_and_each_sources_size(s):
+    a = make_listen(s, detail={"recording": "B0A", "recordings": [{"asin": "B0A", "minutes": 600}]})
+    input_part(s, a, 601.0)
+    R.search(
+        s,
+        a,
+        run_sources=fake_sources(
+            ("openlibrary", "9780000000002", png(3000, 4500)),  # large, but a print edition's
+            ("audible", "B0A", png(1200, 1200)),
+        ),
+    )
+    s.commit()
+    row = client_for(s).get("/api/covers").json()["rows"][0]
+    assert row["kind"] == "book" and [c["width"] for c in row["covers"]] == [1200, 3000]
+    best, other = row["covers"]
+    assert best["score"] > other["score"] and best["share"] > 0.5 and abs(best["share"] + other["share"] - 1) < 0.01
+    names = {g["name"] for g in best["signals"]}
+    assert {"audiobook cover", "this recording", "recording runtime", "audiobook shape"} <= names
+    assert {g["name"] for g in other["signals"]} >= {"print edition only", "resolution"}
+    assert best["sources"][0]["width"] == 1200 and best["sources"][0]["bytes"] > 0
+
+
+def test_accepting_the_suggestion_and_choosing_another_are_remembered_differently_and_refit_the_ranking(s, relearns):
+    a = make_listen(s)
+    R.search(
+        s, a, run_sources=fake_sources(("audible", "B0A", png(600, 600)), ("openlibrary", "isbn", png(3000, 4500)))
+    )
+    s.commit()
+    client = client_for(s)
+    covers = client.get("/api/covers").json()["rows"][0]["covers"]
+    assert [c["width"] for c in covers] == [600, 3000]
+    client.post(f"/api/covers/{a.id}/choose", json=dict(image_id=covers[0]["image_id"], via="accept"))
+    assert s.scalars(select(ListenChoice).where(ListenChoice.unchosen_at.is_(None))).one().value["via"] == "accept"
+    client.post(f"/api/covers/{a.id}/choose", json=dict(image_id=covers[1]["image_id"]))
+    assert s.scalars(select(ListenChoice).where(ListenChoice.unchosen_at.is_(None))).one().value["via"] == "pick"
+    client.post(f"/api/covers/{a.id}/choose", json=dict(image_id=None))
+    assert len(relearns) == 3  # a cleared choice refits too: its influence must leave the weights
+
+
+def test_learning_from_chosen_covers_moves_the_weights_and_the_page_ranks_with_them(s):
+    listens = [make_listen(s, f"Book {n}") for n in range(6)]
+    for listen in listens:
+        R.search(
+            s,
+            listen,
+            run_sources=fake_sources(("audible", "B0A", png(600, 600)), ("openlibrary", "isbn", png(3000, 4500))),
+        )
+    s.commit()
+    client = client_for(s)
+    before = client.get("/api/covers").json()["rows"][0]["covers"]
+    assert before[0]["width"] == 600
+    for listen in listens:  # this person always takes the large print cover
+        big = max(
+            client.get("/api/covers", params=dict(q=listen.label)).json()["rows"][0]["covers"], key=lambda c: c["width"]
+        )
+        client.post(f"/api/covers/{listen.id}/choose", json=dict(image_id=big["image_id"]))
+    s.commit()
+    params = R.learn(s)
+    assert (
+        params.labels == dict(chosen=6, accepted=0)
+        and params.mult["resolution"] > 1
+        and params.mult["audiobook cover"] < 1
+    )
+    assert fit.load() == params
+    after = client.get("/api/covers", params=dict(state="chosen")).json()["rows"][0]["covers"]
+    share = lambda cs: next(c["share"] for c in cs if c["width"] == 3000)
+    assert share(after) > share(before)
+    assert any(g["learned"] for c in after for g in c["signals"])
+
+
+def test_learning_skips_listens_with_nothing_to_compare_and_cleared_choices(s):
+    only = make_listen(s, "Only One")
+    R.search(s, only, run_sources=fake_sources(("audible", "B0A", png(601, 601))))
+    two = make_listen(s, "Two")
+    R.search(s, two, run_sources=fake_sources(("audible", "B0A", png(602, 602)), ("apple", "1", png(703, 703))))
+    cleared = make_listen(s, "Cleared")
+    R.search(s, cleared, run_sources=fake_sources(("audible", "B0A", png(604, 604)), ("apple", "1", png(705, 705))))
+    by_width = {i.width: i for i in s.scalars(select(CoverImage))}
+    R.choose(s, only, by_width[601], via="accept")  # one picture: nothing to choose between
+    R.choose(s, two, by_width[602], via="accept")
+    R.choose(s, cleared, by_width[604])
+    R.choose(s, cleared, None)
+    params = R.learn(s)
+    assert params.labels == dict(chosen=0, accepted=1) and params.seen["audiobook cover"] == 1
+
+
+def test_the_target_runtime_adds_up_numbered_parts_of_one_recording(s):
+    a = make_listen(s, "Glass Orchard")
+    for n, minutes in enumerate((200.0, 190.0, 210.0), 1):
+        input_part(s, a, minutes, n).detail = {"minutes": minutes, "relation": "part"}
+    s.flush()
+    assert R.target(s, a).minutes == 600.0
