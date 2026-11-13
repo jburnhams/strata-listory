@@ -72,14 +72,26 @@ function Thumb({ p, big, onZoom }: { p: CoverPicture; big?: boolean; onZoom: () 
 
 /** What a picture says about the recording it belongs to (an Audible or Audnexus picture is of one recording: its reader and length), against what the files say. Other sources know only the book. */
 function PictureMeta({ p, row }: { p: CoverPicture; row: CoverRow }) {
-  const rec: CoverRecording | undefined = p.sources.map(s => ['audible', 'audnexus'].includes(s.source) ? row.match?.all_recordings.find(r => r.asin === s.ref) : undefined).find(Boolean)
-  if (!rec) return <p className="type-caption text-muted-foreground">{from(p)}: no reader or length, only the book</p>
-  const reader = agree(row.source.narrator, rec.narrator), len = lengthDelta(row.source.minutes, rec.minutes)
+  // pictures that look alike are merged into one, so it can stand for several recordings: show each
+  const seen = new Set<string>()
+  const recs: CoverRecording[] = []
+  for (const s of p.sources) {
+    const r = ['audible', 'audnexus'].includes(s.source) ? row.match?.all_recordings.find(x => x.asin === s.ref) : undefined
+    if (r && !seen.has(r.asin)) { seen.add(r.asin); recs.push(r) }
+  }
+  if (!recs.length) return <p className="type-caption text-muted-foreground">{from(p)}: no reader or length, only the book</p>
   return (
-    <p className="type-caption" aria-label="Recording of this picture">
-      <span className="text-muted-foreground">Recording {rec.asin}{rec.format && rec.format !== 'unabridged' ? ` · ${rec.format.replace('_', ' ')}` : ''}{rec.year ? ` · ${rec.year}` : ''}: </span>
-      read by {rec.narrator || 'unknown'}{reader && <> <Status tone={MARK[reader][0]}>{MARK[reader][1]}</Status></>} · {rec.minutes ? hours(rec.minutes) : 'length unknown'}{len.tone && <> <Status tone={MARK[len.tone][0]}>{len.text || MARK[len.tone][1]}</Status></>}
-    </p>
+    <ul aria-label="Recordings of this picture" className="space-y-0.5 type-caption">
+      {recs.map(rec => {
+        const reader = agree(row.source.narrator, rec.narrator), len = lengthDelta(row.source.minutes, rec.minutes)
+        return (
+          <li key={rec.asin}>
+            <span className="text-muted-foreground">Recording {rec.asin}{rec.format && rec.format !== 'unabridged' ? ` · ${rec.format.replace('_', ' ')}` : ''}{rec.year ? ` · ${rec.year}` : ''}: </span>
+            read by {rec.narrator || 'unknown'}{reader && <> <Status tone={MARK[reader][0]}>{MARK[reader][1]}</Status></>} · {rec.minutes ? hours(rec.minutes) : 'length unknown'}{len.tone && <> <Status tone={MARK[len.tone][0]}>{len.text || MARK[len.tone][1]}</Status></>}
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 

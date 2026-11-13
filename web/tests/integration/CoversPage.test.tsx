@@ -113,11 +113,24 @@ describe('CoversPage', () => {
   it('says what each choice knows of its recording: reader and length against the files, or that it knows only the book', async () => {
     const { user } = setup(<CoversPage />, { route: '/covers' })
     const card = await screen.findByRole('article', { name: 'Glass Orchard' })
-    expect(within(card).getByLabelText('Recording of this picture')).toHaveTextContent('Recording B0A · 2012: read by Ben Hart differs · 11h 30m −13%')
+    expect(within(card).getByLabelText('Recordings of this picture')).toHaveTextContent('Recording B0A · 2012: read by Ben Hart differs · 11h 30m −13%')
     await user.click(within(card).getByRole('button', { name: /Expand 1\sother choice/ }))
     const all = within(card).getByRole('group', { name: 'Covers for Glass Orchard' })
-    expect(within(all).getAllByLabelText('Recording of this picture')).toHaveLength(1)
+    expect(within(all).getAllByLabelText('Recordings of this picture')).toHaveLength(1)
     expect(within(all).getByText('Google Books: no reader or length, only the book')).toBeInTheDocument()
+  })
+
+  it('lists every recording a merged picture stands for, not only the first', async () => {
+    server.use(http.get('/api/covers', () => {
+      const row = coverState.rows[0]
+      const merged = { ...row.covers[0], sources: [...row.covers[0].sources, { source: 'audnexus', ref: 'B0B', label: '', url: null, image_id: 11, width: 2400, height: 2400, bytes: 1_500_000 }] }
+      return HttpResponse.json({ total: 1, counts: { choose: 1, chosen: 0, none: 0 }, waiting: 0, rows: [{ ...row, covers: [merged] }], job: coverState.job })
+    }))
+    setup(<CoversPage />, { route: '/covers' })
+    const list = await screen.findByLabelText('Recordings of this picture')
+    expect(within(list).getAllByRole('listitem')).toHaveLength(2)
+    expect(list).toHaveTextContent('Recording B0A')
+    expect(list).toHaveTextContent('Recording B0B · abridged · 2015: read by Anna Bell same · 10h 00m same length')
   })
 
   it('collapses again without saving, and says why a picture ranks where it does', async () => {
