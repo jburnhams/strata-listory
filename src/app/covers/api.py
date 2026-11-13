@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -25,6 +26,18 @@ def _latest_runs(s: Session) -> dict[int, CoverRun]:
     return {r.listen_id: r for r in s.scalars(select(CoverRun).where(CoverRun.id.in_(newest)))}
 
 
+def labels(ids) -> dict[int, str]:
+    """The labels of listens by id, or nothing when the catalogue cannot be read: a job row can still be shown by its id."""
+    ids = [i for i in set(ids) if i]
+    if not ids:
+        return {}
+    try:
+        with Session(_engine()) as s:
+            return {r.id: r.label for r in s.scalars(select(Listen).where(Listen.id.in_(ids)))}
+    except Exception:
+        return {}
+
+
 def _job(request: Request, s: Session) -> dict:
     """The searches on the job queue: how many are waiting, which listen is being searched, and how the last one ended if it failed."""
     jobs = request.app.state.jobs
@@ -32,11 +45,16 @@ def _job(request: Request, s: Session) -> dict:
     running = next((t for t in tasks if t["state"] == "running"), None)
     listen = s.get(Listen, running["options"]["listen_id"]) if running else None
     last = jobs.status("covers")["last"].get("search") or {}
+    failed = [(f, json.loads(f["options"]).get("listen_id")) for f in jobs.failures(10, "covers")]
+    names = labels([lid for _, lid in failed])
     return dict(
         running=bool(tasks),
         queued=sum(t["state"] == "queued" for t in tasks),
         current=listen.label if listen else "",
         error=last.get("error", ""),
+        failed=[
+            dict(job_id=f["id"], label=names.get(lid) or f"listen {lid}", error=f["error"] or "") for f, lid in failed
+        ],
     )
 
 

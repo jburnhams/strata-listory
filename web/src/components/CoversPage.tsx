@@ -5,11 +5,22 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router'
 import { ZoomIn } from 'lucide-react'
 import { AsyncButton, Button, DataView, Disclosure, EmptyState, Field, IconButton, Input, Lightbox, PageHeader, Skeleton, Status, Tabs, format, useAsyncAction, useJob, type Tone } from 'strata-react'
-import { coverApi, type CoverPicture, type CoverRow, type CoverStatus } from '../api'
+import { api, coverApi, type CoverJob, type CoverPicture, type CoverRow, type CoverStatus } from '../api'
 import { size } from './FilesPage'
 
 const SOURCE: Record<string, string> = { audible: 'Audible', audnexus: 'Audnexus', openlibrary: 'Open Library', apple: 'Apple Books', google: 'Google Books', folder: 'Your folder', embedded: 'In the audio', local: 'Your files', bbc: 'BBC', podcast: 'Apple Podcasts', wikidata: 'Wikimedia' }
 const name = (s: string) => SOURCE[s] ?? s
+function FailedSearch({ f }: { f: CoverJob['failed'][number] }) {
+  const qc = useQueryClient()
+  const retry = useAsyncAction(async () => { await api.retryJob(f.job_id); await qc.invalidateQueries({ queryKey: ['covers'] }) })
+  return (
+    <div role="alert" className="flex items-center gap-2 type-body-sm text-danger">
+      <span>Search for {f.label} failed: {f.error || 'no reason given'}</span>
+      <AsyncButton variant="outline" size="sm" phase={retry.phase} error={retry.error} onClick={() => void retry.run()} labels={{ idle: `Retry ${f.label}`, pending: 'Queuing…', done: 'Queued' }} />
+    </div>
+  )
+}
+
 const TONE: Record<CoverStatus['status'], Tone> = { found: 'success', none: 'neutral', not_found: 'neutral', error: 'danger', limited: 'warning', skipped: 'neutral' }
 const WORD: Record<CoverStatus['status'], string> = { found: 'found', none: 'nothing', not_found: 'not found', error: 'failed', limited: 'rate limited', skipped: 'not tried' }
 const when = (iso: string | null) => iso ? new Date(iso + (iso.endsWith('Z') ? '' : 'Z')).toLocaleString() : ''
@@ -150,6 +161,7 @@ export default function CoversPage({ pollMs = 2000 }: { pollMs?: number }) {
         <AsyncButton variant="default" phase={start.phase} error={start.error} disabled={running || (d?.waiting ?? 0) === 0} onClick={() => void start.run()} labels={{ idle: `Search for covers (${d?.waiting ?? 0})`, pending: 'Queuing…', done: 'Queued' }} />
         {running && d && <span role="status" className="type-body-sm text-muted-foreground">Searching{d.job.current ? ` ${d.job.current}` : ''} · {d.job.queued} more queued</span>}
         {d?.job.error && <span role="alert" className="type-body-sm text-danger">{d.job.error}</span>}
+        {d?.job.failed.map(f => <FailedSearch key={f.job_id} f={f} />)}
         <span className="type-caption text-muted-foreground">Looks for every confirmed or accepted book without a chosen cover that has not been searched since it last changed. Each search is a job on the queue, run one at a time with the other jobs. From a shell: <code>./app covers --queue</code>.</span>
       </section>
       <Field label="Search covers" hint="Every word must appear in the title">

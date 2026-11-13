@@ -162,7 +162,7 @@ export interface CoverSignal { name: string; weight: number; detail: string; pri
 export interface CoverPicture { image_id: number; width: number; height: number; bytes: number; sources: CoverSource[]; members: number[]; score: number; share: number; signals: CoverSignal[] }
 export interface CoverStatus { source: string; status: 'found' | 'none' | 'error' | 'limited' | 'skipped' | 'not_found'; detail: string; count: number }
 export interface CoverRow { listen_id: number; label: string; kind: string; run_id: number; searched: string | null; state: 'choose' | 'chosen' | 'none'; chosen: number | null; covers: CoverPicture[]; sources: CoverStatus[] }
-export interface CoverJob { running: boolean; queued: number; current: string; error: string }
+export interface CoverJob { running: boolean; queued: number; current: string; error: string; failed: { job_id: string; label: string; error: string }[] }
 export interface CoverList { total: number; counts: Record<'choose' | 'chosen' | 'none', number>; waiting: number; rows: CoverRow[]; job: CoverJob }
 export const coverApi = {
   list: (state = '', q = '', limit = 24) => req<CoverList>(`/api/covers?${new URLSearchParams({ state, q, limit: String(limit) })}`),

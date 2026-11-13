@@ -98,13 +98,23 @@ describe('CoversPage', () => {
   it('starts the job for everything waiting and follows its progress', async () => {
     const { user } = setup(<CoversPage pollMs={30} />, { route: '/covers' })
     const button = await screen.findByRole('button', { name: 'Search for covers (2)' })
-    coverState.job = { running: true, queued: 1, current: 'Glass Orchard', error: '' }   // what the server reports once the click has started it
+    coverState.job = { running: true, queued: 1, current: 'Glass Orchard', error: '', failed: [] }   // what the server reports once the click has started it
     await user.click(button)
     await waitFor(() => expect(coverState.runs).toEqual([{ ids: null }]))
     expect(await screen.findByText('Searching Glass Orchard · 1 more queued')).toBeInTheDocument()
-    coverState.job = { running: false, queued: 0, current: '', error: 'RuntimeError: database gone' }
+    coverState.job = { running: false, queued: 0, current: '', error: 'RuntimeError: database gone', failed: [] }
     expect(await screen.findByRole('alert')).toHaveTextContent('RuntimeError: database gone')
     await waitFor(() => expect(screen.queryByText(/Searching \d/)).toBeNull())
+  })
+
+  it('names a failed search and queues it again', async () => {
+    coverState.job = { running: false, queued: 0, current: '', error: '', failed: [{ job_id: 'j9', label: 'Salt Roads', error: 'database gone' }] }
+    const retried: string[] = []
+    server.use(http.post('/api/jobs/:id/retry', ({ params }) => { retried.push(String(params.id)); return HttpResponse.json({ queued: true }) }))
+    const { user } = setup(<CoversPage />, { route: '/covers' })
+    expect(await screen.findByText('Search for Salt Roads failed: database gone')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Retry Salt Roads' }))
+    await waitFor(() => expect(retried).toEqual(['j9']))
   })
 
   it('searches by title, shows all searched listens, and says when nothing is there', async () => {

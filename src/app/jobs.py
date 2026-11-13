@@ -163,15 +163,15 @@ class JobQueue:
         finally:
             c.close()
 
-    def failures(self, limit=25):
+    def failures(self, limit=25, domain=None):
         c = db.connect()
         owner = "COALESCE(json_extract(j.options,'$.book_id'),json_extract(j.options,'$.ids[0]'),(SELECT book_id FROM ingest_runs WHERE id=COALESCE(json_extract(j.options,'$.run_id'),json_extract(j.options,'$.resume'))),(SELECT CAST(owner AS INTEGER) FROM job_work WHERE job_id=j.id AND kind='plan' LIMIT 1))"
         try:
             return [
                 dict(r)
                 for r in c.execute(
-                    f"SELECT j.id,j.domain,j.kind,j.error,j.finished,b.id AS book_id,b.title FROM jobs j LEFT JOIN books b ON b.id={owner} WHERE j.state='failed' AND NOT EXISTS (SELECT 1 FROM job_work retry WHERE retry.kind='retry' AND retry.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created) ORDER BY j.finished DESC LIMIT ?",
-                    (limit,),
+                    f"SELECT j.id,j.domain,j.kind,j.error,j.finished,j.options,b.id AS book_id,b.title FROM jobs j LEFT JOIN books b ON b.id={owner} WHERE j.state='failed' AND (? IS NULL OR j.domain=?) AND NOT EXISTS (SELECT 1 FROM job_work retry WHERE retry.kind='retry' AND retry.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created) ORDER BY j.finished DESC LIMIT ?",
+                    (domain, domain, limit),
                 )
             ]
         finally:
