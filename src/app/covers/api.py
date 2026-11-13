@@ -69,7 +69,55 @@ def _chosen(s: Session, ids: list[int]) -> dict[int, dict]:
     }
 
 
-def _card(s: Session, listen: Listen, run: CoverRun, chosen: dict | None) -> dict:
+def _info(s: Session, ids: list[int]) -> dict[int, dict]:
+    from app.linkage.api import _listen_info  # the match queue's reading of what a listen says about itself
+
+    return _listen_info(s, ids)
+
+
+def _words(x) -> str:
+    return x if isinstance(x, str) else ", ".join(str(i) for i in x or [])
+
+
+def _compare(info: dict, listen: Listen, found: tuple | None) -> tuple[dict, dict | None]:
+    """What the listen's own files say and what the accepted match says, side by side: title, author, narrator, length, year. The match's narrator and length are those of the recording it was matched to."""
+    tags, folder, chosen = info["tags"], info["folder"], info["chosen"]
+    val = lambda v: v.get("value") if isinstance(v, dict) else v
+    copy = (info["copies"] or [{}])[0]
+    source = dict(
+        title=val(chosen.get("title")) or tags.get("album") or tags.get("title") or folder.get("title") or listen.label,
+        author=val(chosen.get("author"))
+        or tags.get("artist")
+        or tags.get("album_artist")
+        or folder.get("author")
+        or "",
+        narrator=val(chosen.get("narrator")) or tags.get("narratedby") or folder.get("narrator") or "",
+        minutes=copy.get("minutes"),
+        year=val(chosen.get("year")) or tags.get("date") or folder.get("year") or "",
+        files=copy.get("files"),
+        folder=copy.get("folder") or "",
+    )
+    source = {k: (_words(v) if k not in ("minutes", "files") else v) for k, v in source.items()}
+    if not found:
+        return source, None
+    work, part = found
+    d = part.detail or {}
+    recs = d.get("recordings") or []
+    rec = next((r for r in recs if r.get("asin") == d.get("recording")), recs[0] if recs else {})
+    match = dict(
+        title=work.title or "",
+        author=_words(d.get("authors")),
+        narrator=_words(rec.get("narrators")),
+        minutes=rec.get("minutes"),
+        year=str(d.get("year") or rec.get("year") or ""),
+        recordings=len(recs),
+        probability=part.score,
+        accepted_by=part.linked_by,
+    )
+    return source, match
+
+
+def _card(s: Session, listen: Listen, run: CoverRun, chosen: dict | None, info: dict | None = None) -> dict:
     covers = [  # best fit first: the page shows the first one already selected
         dict(
             image_id=x.group["image"].id,
@@ -85,6 +133,7 @@ def _card(s: Session, listen: Listen, run: CoverRun, chosen: dict | None) -> dic
         for x in R.ranked(s, listen, run.id)
     ]
     chosen_id = (chosen or {}).get("image_id")
+    source, match = _compare(info or _info(s, [listen.id])[listen.id], listen, R.accepted_work(s, listen.id))
     state = "chosen" if chosen_id else ("choose" if covers else "none")
     return dict(
         listen_id=listen.id,
@@ -96,6 +145,8 @@ def _card(s: Session, listen: Listen, run: CoverRun, chosen: dict | None) -> dic
         chosen=chosen_id,
         covers=covers,
         sources=run.sources or [],
+        source=source,
+        match=match,
     )
 
 
@@ -108,10 +159,14 @@ def covers(
     runs = _latest_runs(s)
     listens = {l.id: l for l in s.scalars(select(Listen).where(Listen.id.in_(list(runs) or [0])))}
     chosen = _chosen(s, list(runs))
-    has_cover = {
-        lid: bool(s.scalar(select(func.count()).select_from(CoverCandidate).where(CoverCandidate.run_id == r.id)))
-        for lid, r in runs.items()
-    }
+    with_pictures = set(
+        s.scalars(
+            select(CoverCandidate.run_id)
+            .where(CoverCandidate.run_id.in_([r.id for r in runs.values()] or [0]))
+            .distinct()
+        )
+    )
+    has_cover = {lid: r.id in with_pictures for lid, r in runs.items()}
 
     def st(lid):
         return "chosen" if (chosen.get(lid) or {}).get("image_id") else ("choose" if has_cover[lid] else "none")
@@ -130,11 +185,12 @@ def covers(
         reverse=True,
     )
     page = ids[offset : offset + limit]
+    infos = _info(s, page) if page else {}
     return dict(
         total=len(ids),
         counts=counts,
         waiting=len(R.pending(s)),
-        rows=[_card(s, listens[lid], runs[lid], chosen.get(lid)) for lid in page],
+        rows=[_card(s, listens[lid], runs[lid], chosen.get(lid), infos[lid]) for lid in page],
         job=_job(request, s),
     )
 
@@ -142,6 +198,26 @@ def covers(
 class Choice(BaseModel):
     image_id: int | None = None
     via: str = "pick"  # "accept": the suggested best fit as it was; "pick": any other choice (the ranking learns from both, accepting more weakly)
+
+
+AUTO_RELEARN = 25  # like the match queue: the ranking is refitted after this many choices, not after each one
+FIT_AT: dict = dict(decisions=None)
+
+
+def _relearn_every(s: Session) -> bool:
+    """Count the choices people have made and refit in the background once `AUTO_RELEARN` have come since the last fit (the first choice after a start only sets the mark: `./app covers --learn` or the next 25 choices refit). Returns whether a fit was started."""
+    n = s.scalar(
+        select(func.count())
+        .select_from(ListenChoice)
+        .where(ListenChoice.field == R.FIELD, ListenChoice.chosen_by == "user")
+    )
+    if FIT_AT["decisions"] is None:
+        FIT_AT["decisions"] = n - 1
+    if n - FIT_AT["decisions"] < AUTO_RELEARN:
+        return False
+    FIT_AT["decisions"] = n
+    relearn()
+    return True
 
 
 LEARN = threading.Lock()
@@ -181,7 +257,8 @@ def choose(listen_id: int, b: Choice, s: Session = Depends(get_session)):
             raise HTTPException(404, "no such picture")
     R.choose(s, listen, img, via="accept" if b.via == "accept" else "pick")
     s.commit()
-    relearn()  # a cleared choice too: its influence must leave the weights
+    if img is not None:
+        _relearn_every(s)
     return dict(ok=True, chosen=b.image_id)
 
 

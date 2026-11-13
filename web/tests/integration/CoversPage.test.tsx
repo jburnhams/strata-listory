@@ -52,6 +52,24 @@ describe('CoversPage', () => {
     expect(within(chosen).getByRole('group', { name: 'Saved cover for Glass Orchard' })).toHaveTextContent('Saved cover · 500×750')
   })
 
+  it('takes a saved card off the list at once, before the write is answered', async () => {
+    let answer: () => void = () => {}
+    server.use(http.post('/api/covers/:id/choose', async () => { await new Promise<void>(r => { answer = r }); return HttpResponse.json({ ok: true, chosen: 11 }) }))
+    const { user } = setup(<CoversPage />, { route: '/covers' })
+    const card = await screen.findByRole('article', { name: 'Glass Orchard' })
+    await user.click(within(card).getByRole('button', { name: 'Accept' }))
+    await waitFor(() => expect(screen.queryByRole('article', { name: 'Glass Orchard' })).toBeNull())
+    answer()
+  })
+
+  it('shows what the files say beside what the match says, with the narrator and length compared', async () => {
+    setup(<CoversPage />, { route: '/covers' })
+    const table = await screen.findByRole('table', { name: 'Your files against the match' })
+    expect(within(table).getByRole('row', { name: /Read by Anna Bell Ben Hart differs/ })).toBeInTheDocument()
+    expect(within(table).getByRole('row', { name: /Author Mara Quill Mara Quill same/ })).toBeInTheDocument()
+    expect(within(table).getByRole('row', { name: /Length .* −13%/ })).toBeInTheDocument()
+  })
+
   it('collapses again without saving, and says why a picture ranks where it does', async () => {
     const { user } = setup(<CoversPage />, { route: '/covers' })
     const card = await screen.findByRole('article', { name: 'Glass Orchard' })
@@ -136,6 +154,7 @@ describe('CoversPage', () => {
     const { user } = setup(<CoversPage />, { route: '/covers' })
     const card = await screen.findByRole('article', { name: 'Glass Orchard' })
     await user.click(within(card).getByRole('button', { name: 'Accept' }))
-    expect(await within(card).findByRole('alert')).toHaveTextContent('no such picture')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Not saved — Glass Orchard: no such picture')
+    expect(await screen.findByRole('article', { name: 'Glass Orchard' })).toBeInTheDocument()   // the card is back, so it can be tried again
   })
 })

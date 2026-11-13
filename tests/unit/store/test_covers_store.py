@@ -490,7 +490,53 @@ def test_accepting_the_suggestion_and_choosing_another_are_remembered_differentl
     client.post(f"/api/covers/{a.id}/choose", json=dict(image_id=covers[1]["image_id"]))
     assert s.scalars(select(ListenChoice).where(ListenChoice.unchosen_at.is_(None))).one().value["via"] == "pick"
     client.post(f"/api/covers/{a.id}/choose", json=dict(image_id=None))
-    assert len(relearns) == 3  # a cleared choice refits too: its influence must leave the weights
+    assert (
+        relearns == []
+    )  # saving is only a write: the ranking is refitted every AUTO_RELEARN choices, not after each one
+
+
+def test_the_ranking_is_refitted_every_25_choices_not_after_each(s, relearns, monkeypatch):
+    listens = [make_listen(s, f"Book {n}") for n in range(4)]
+    for a in listens:
+        R.search(s, a, run_sources=fake_sources(("audible", "B0A", png(600, 600)), ("apple", "1", png(1200, 1200))))
+    s.commit()
+    monkeypatch.setattr(capi, "AUTO_RELEARN", 3)
+    monkeypatch.setitem(capi.FIT_AT, "decisions", None)
+    client = client_for(s)
+    shown = {r["listen_id"]: r["covers"][0]["image_id"] for r in client.get("/api/covers").json()["rows"]}
+    for a in listens[:2]:
+        client.post(f"/api/covers/{a.id}/choose", json=dict(image_id=shown[a.id], via="accept"))
+    assert relearns == []  # two choices are fewer than three
+    client.post(f"/api/covers/{listens[2].id}/choose", json=dict(image_id=shown[listens[2].id], via="accept"))
+    assert len(relearns) == 1
+    client.post(f"/api/covers/{listens[3].id}/choose", json=dict(image_id=shown[listens[3].id], via="accept"))
+    assert len(relearns) == 1  # the count starts again from the fit
+
+
+def test_a_card_puts_what_the_files_say_beside_what_the_match_says(s):
+    a = make_listen(
+        s,
+        "Glass Orchard",
+        detail=dict(
+            year=1999,
+            recording="B0A",
+            recordings=[dict(asin="B0A", narrators=["Anna Bell"], minutes=600.0, year=2012)],
+        ),
+    )
+    R.search(s, a, run_sources=fake_sources(("audible", "B0A", png(600, 600))))
+    s.commit()
+    row = client_for(s).get("/api/covers").json()["rows"][0]
+    assert row["match"] == dict(
+        title="Glass Orchard",
+        author="Mara Quill",
+        narrator="Anna Bell",
+        minutes=600.0,
+        year="1999",
+        recordings=1,
+        probability=0.99,
+        accepted_by="model",
+    )
+    assert row["source"]["title"] == "Glass Orchard" and row["source"]["minutes"] is None
 
 
 def test_learning_from_chosen_covers_moves_the_weights_and_the_page_ranks_with_them(s):

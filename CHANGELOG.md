@@ -4,6 +4,13 @@ Newest first, grouped by day. One entry per change, in the same commit or PR as 
 
 ## 2026-11-13
 
+**Covers: files against match beside the best fit, instant save, refit every 25 (branch `claude/covers-compare-fast-save`)**
+Jonathan asked to see the source's and the match's metadata next to the best fit (same narrator, length...), for saving to be instant with the work in the background, and for the ranking to be refitted every 25 choices like the matches.
+
+- `src/app/covers/api.py`: each card has `source` (what the files say: chosen fields, tags, folder, first copy's length) and `match` (the accepted work and the recording it was matched to: author, narrator, length, year). The list no longer asks the database once per searched listen (it took 6-8 s with 800 searched). Choosing refits the ranking only every `AUTO_RELEARN` (25) choices, counted like `linkage.api.AUTO_RETRAIN`.
+- `web/src/components/CoversPage.tsx`: a table of the two sides with same/differs marks (words of the shorter name inside the longer one; length within 3%) beside the best fit and in the expanded choices. A saved card leaves the "To choose" list at once and the write follows in the background; a refused save brings the card back with a message. No refetch after a save.
+
+
 **Cover searches run on the job queue (branch `claude/covers-queue-jobs`)**
 Jonathan asked for cover searches to be jobs in the processing queue, to then queue a search for every approved and accepted listen.
 
