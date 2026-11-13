@@ -163,7 +163,8 @@ export interface CoverPicture { image_id: number; width: number; height: number;
 export interface CoverStatus { source: string; status: 'found' | 'none' | 'error' | 'limited' | 'skipped' | 'not_found'; detail: string; count: number }
 export interface CoverSide { title: string; author: string; narrator: string; minutes: number | null; year: string }
 export interface CoverFiles extends CoverSide { files: number | null; folder: string }
-export interface CoverMatch extends CoverSide { recordings: number; probability: number | null; accepted_by: string }
+export interface CoverRecording { asin: string; narrator: string; minutes: number | null; year: string; format: string }
+export interface CoverMatch extends CoverSide { recordings: number; all_recordings: CoverRecording[]; probability: number | null; accepted_by: string }
 export interface CoverRow { listen_id: number; label: string; kind: string; run_id: number; searched: string | null; state: 'choose' | 'chosen' | 'none'; chosen: number | null; covers: CoverPicture[]; sources: CoverStatus[]; source: CoverFiles; match: CoverMatch | null }
 export interface CoverJob { running: boolean; queued: number; current: string; error: string; failed: { job_id: string; label: string; error: string }[] }
 export interface CoverList { total: number; counts: Record<'choose' | 'chosen' | 'none', number>; waiting: number; rows: CoverRow[]; job: CoverJob }

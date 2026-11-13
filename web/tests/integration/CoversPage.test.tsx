@@ -110,6 +110,16 @@ describe('CoversPage', () => {
     answer()
   })
 
+  it('says what each choice knows of its recording: reader and length against the files, or that it knows only the book', async () => {
+    const { user } = setup(<CoversPage />, { route: '/covers' })
+    const card = await screen.findByRole('article', { name: 'Glass Orchard' })
+    expect(within(card).getByLabelText('Recording of this picture')).toHaveTextContent('Recording B0A · 2012: read by Ben Hart differs · 11h 30m −13%')
+    await user.click(within(card).getByRole('button', { name: /Expand 1\sother choice/ }))
+    const all = within(card).getByRole('group', { name: 'Covers for Glass Orchard' })
+    expect(within(all).getAllByLabelText('Recording of this picture')).toHaveLength(1)
+    expect(within(all).getByText('Google Books: no reader or length, only the book')).toBeInTheDocument()
+  })
+
   it('collapses again without saving, and says why a picture ranks where it does', async () => {
     const { user } = setup(<CoversPage />, { route: '/covers' })
     const card = await screen.findByRole('article', { name: 'Glass Orchard' })

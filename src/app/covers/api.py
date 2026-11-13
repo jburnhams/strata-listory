@@ -116,6 +116,16 @@ def _compare(info: dict, listen: Listen, found: tuple | None) -> tuple[dict, dic
         minutes=rec.get("minutes"),
         year=str(d.get("year") or rec.get("year") or ""),
         recordings=len(recs),
+        all_recordings=[
+            dict(
+                asin=r.get("asin") or "",
+                narrator=_words(r.get("narrators")),
+                minutes=r.get("minutes"),
+                year=str(r.get("year") or ""),
+                format=r.get("fmt") or "",
+            )
+            for r in recs
+        ],
         probability=part.score,
         accepted_by=part.linked_by,
     )

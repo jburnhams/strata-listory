@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router'
 import { ZoomIn } from 'lucide-react'
 import { AsyncButton, Button, DataView, Disclosure, EmptyState, Field, IconButton, Input, Lightbox, PageHeader, Skeleton, Status, Tabs, format, useAsyncAction, useJob, type Tone } from 'strata-react'
-import { api, coverApi, type CoverJob, type CoverMatch, type CoverFiles, type CoverPicture, type CoverRow, type CoverStatus } from '../api'
+import { api, coverApi, type CoverJob, type CoverMatch, type CoverRecording, type CoverFiles, type CoverPicture, type CoverRow, type CoverStatus } from '../api'
 import { size } from './FilesPage'
 import { hours } from './ListensPage'
 
@@ -70,7 +70,20 @@ function Thumb({ p, big, onZoom }: { p: CoverPicture; big?: boolean; onZoom: () 
   )
 }
 
-function Option({ p, rank, highlighted, saved, onHighlight, onZoom }: { p: CoverPicture; rank: number; highlighted: boolean; saved: boolean; onHighlight: () => void; onZoom: () => void }) {
+/** What a picture says about the recording it belongs to (an Audible or Audnexus picture is of one recording: its reader and length), against what the files say. Other sources know only the book. */
+function PictureMeta({ p, row }: { p: CoverPicture; row: CoverRow }) {
+  const rec: CoverRecording | undefined = p.sources.map(s => ['audible', 'audnexus'].includes(s.source) ? row.match?.all_recordings.find(r => r.asin === s.ref) : undefined).find(Boolean)
+  if (!rec) return <p className="type-caption text-muted-foreground">{from(p)}: no reader or length, only the book</p>
+  const reader = agree(row.source.narrator, rec.narrator), len = lengthDelta(row.source.minutes, rec.minutes)
+  return (
+    <p className="type-caption" aria-label="Recording of this picture">
+      <span className="text-muted-foreground">Recording {rec.asin}{rec.format && rec.format !== 'unabridged' ? ` · ${rec.format.replace('_', ' ')}` : ''}{rec.year ? ` · ${rec.year}` : ''}: </span>
+      read by {rec.narrator || 'unknown'}{reader && <> <Status tone={MARK[reader][0]}>{MARK[reader][1]}</Status></>} · {rec.minutes ? hours(rec.minutes) : 'length unknown'}{len.tone && <> <Status tone={MARK[len.tone][0]}>{len.text || MARK[len.tone][1]}</Status></>}
+    </p>
+  )
+}
+
+function Option({ p, row, rank, highlighted, saved, onHighlight, onZoom }: { p: CoverPicture; row: CoverRow; rank: number; highlighted: boolean; saved: boolean; onHighlight: () => void; onZoom: () => void }) {
   return (
     <div className={`flex w-48 flex-col gap-1 rounded-surface border p-2 transition-state ${highlighted ? 'border-ring bg-muted' : 'border-border'}`}>
       <Thumb p={p} onZoom={onZoom} />
@@ -78,6 +91,7 @@ function Option({ p, rank, highlighted, saved, onHighlight, onZoom }: { p: Cover
         <span className="type-body-sm">{rank === 0 ? <b>Best fit</b> : `Fit ${rank + 1}`} · {Math.round(p.share * 100)}%{saved && <> · <b>saved</b></>}</span>
       </button>
       <Offered p={p} />
+      <PictureMeta p={p} row={row} />
       <Why p={p} />
     </div>
   )
@@ -155,6 +169,7 @@ function Card({ row, onPick, onChanged }: { row: CoverRow; onPick: (row: CoverRo
           <div className="min-w-0 flex-1 space-y-2">
             <p className="type-body-sm">{saved ? <b>Saved cover</b> : <b>Best fit</b>} · {shown.width}×{shown.height} · {size(shown.bytes)}</p>
             <Offered p={shown} />
+            <PictureMeta p={shown} row={row} />
             <Compare source={row.source} match={row.match} />
             <Why p={shown} />
             <div className="flex flex-wrap items-center gap-2">
@@ -167,7 +182,7 @@ function Card({ row, onPick, onChanged }: { row: CoverRow; onPick: (row: CoverRo
       {shown && open && (
         <div className="space-y-3" role="group" aria-label={`Covers for ${row.label}`}>
           <Compare source={row.source} match={row.match} />
-          <div className="flex flex-wrap gap-3">{row.covers.map((p, i) => <Option key={p.image_id} p={p} rank={i} highlighted={selected === p} saved={saved === p} onHighlight={() => setHighlight(p.image_id)} onZoom={() => setZoom(i)} />)}</div>
+          <div className="flex flex-wrap gap-3">{row.covers.map((p, i) => <Option key={p.image_id} p={p} row={row} rank={i} highlighted={selected === p} saved={saved === p} onHighlight={() => setHighlight(p.image_id)} onZoom={() => setZoom(i)} />)}</div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" disabled={selected === saved || pick.phase === 'pending'} onClick={() => void pick.run({ id: selected.image_id, via: selected === best ? 'accept' : 'pick' })}>Save</Button>
             <Button variant="ghost" aria-expanded onClick={() => { setOpen(false); setHighlight(null) }}>Collapse</Button>
@@ -177,7 +192,7 @@ function Card({ row, onPick, onChanged }: { row: CoverRow; onPick: (row: CoverRo
       {!shown && <p className="type-body-sm text-muted-foreground">No source had a picture for this {row.kind === 'book' ? 'book' : 'programme'}. The reasons are below.</p>}
       {(pick.error || again.error) && <p role="alert" className="type-body-sm text-danger">{pick.error || again.error}</p>}
       {row.covers.length > 0 && <Lightbox title={`Covers for ${row.label}`} items={items} index={Math.max(0, zoom ?? 0)} onIndexChange={setZoom} open={zoom != null} onOpenChange={o => { if (!o) setZoom(null) }} missing="This picture could not be loaded."
-        details={it => { const p = row.covers.find(c => String(c.image_id) === it.id); return p ? <div className="space-y-2"><Offered p={p} /><Why p={p} /></div> : null }} />}
+        details={it => { const p = row.covers.find(c => String(c.image_id) === it.id); return p ? <div className="space-y-2"><Offered p={p} /><PictureMeta p={p} row={row} /><Why p={p} /></div> : null }} />}
       <Sources statuses={row.sources} />
     </article>
   )

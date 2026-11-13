@@ -533,6 +533,7 @@ def test_a_card_puts_what_the_files_say_beside_what_the_match_says(s):
         minutes=600.0,
         year="1999",
         recordings=1,
+        all_recordings=[dict(asin="B0A", narrator="Anna Bell", minutes=600.0, year="2012", format="")],
         probability=0.99,
         accepted_by="model",
     )
