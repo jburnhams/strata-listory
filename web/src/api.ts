@@ -163,7 +163,8 @@ export interface CoverPicture { image_id: number; width: number; height: number;
 export interface CoverStatus { source: string; status: 'found' | 'none' | 'error' | 'limited' | 'skipped' | 'not_found'; detail: string; count: number }
 export interface CoverSide { title: string; author: string; narrator: string; minutes: number | null; year: string }
 export interface CoverFiles extends CoverSide { files: number | null; folder: string }
-export interface CoverMatch extends CoverSide { recordings: number; probability: number | null; accepted_by: string }
+export interface CoverRecording { asin: string; narrator: string; minutes: number | null; year: string; format: string }
+export interface CoverMatch extends CoverSide { recordings: number; all_recordings: CoverRecording[]; probability: number | null; accepted_by: string }
 export interface CoverRow { listen_id: number; label: string; kind: string; run_id: number; searched: string | null; state: 'choose' | 'chosen' | 'none'; chosen: number | null; covers: CoverPicture[]; sources: CoverStatus[]; source: CoverFiles; match: CoverMatch | null }
 export interface CoverJob { running: boolean; queued: number; current: string; error: string; failed: { job_id: string; label: string; error: string }[] }
 export interface CoverList { total: number; counts: Record<'choose' | 'chosen' | 'none', number>; waiting: number; rows: CoverRow[]; job: CoverJob }
@@ -171,6 +172,7 @@ export const coverApi = {
   list: (state = '', q = '', limit = 24) => req<CoverList>(`/api/covers?${new URLSearchParams({ state, q, limit: String(limit) })}`),
   choose: (listenId: number, imageId: number | null, via: 'pick' | 'accept' = 'pick') => req<{ ok: boolean; chosen: number | null }>(`/api/covers/${listenId}/choose`, send('POST', { image_id: imageId, via })),
   run: (listenIds?: number[], force = false) => req<{ queued: number; listen_ids: number[] }>('/api/covers/run', send('POST', { listen_ids: listenIds ?? null, force })),
+  unaccept: (listenId: number) => req<{ ok: boolean }>(`/api/covers/${listenId}/unaccept`, send('POST', {})),
   image: (id: number, w = 0) => withBase(`/api/covers/image/${id}${w ? `?w=${w}` : ''}`),
 }
 

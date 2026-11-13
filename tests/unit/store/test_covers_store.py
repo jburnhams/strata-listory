@@ -17,7 +17,7 @@ from app.covers import sources as S
 from app.jobs import JobQueue
 from app.store import api as store_api
 from app.store import listens as L
-from app.store.models import CoverCandidate, CoverImage, ListenChoice, ListenEvent, Work, WorkIdentifier
+from app.store.models import CoverCandidate, CoverImage, ListenChoice, ListenEvent, ListenPart, Work, WorkIdentifier
 
 
 @pytest.fixture
@@ -539,6 +539,7 @@ def test_a_card_puts_what_the_files_say_beside_what_the_match_says(s):
         minutes=600.0,
         year="1999",
         recordings=1,
+        all_recordings=[dict(asin="B0A", narrator="Anna Bell", minutes=600.0, year="2012", format="")],
         probability=0.99,
         accepted_by="model",
     )
@@ -655,3 +656,89 @@ def test_searching_again_trims_a_padded_picture_stored_before_trimming_existed(s
     again = R.search(s, a, run_sources=[("apple", offer)])
     new = s.scalars(select(CoverCandidate).where(CoverCandidate.run_id == again.id)).one()
     assert s.get(CoverImage, new.image_id).width == 594
+
+
+def _active_parts(s, listen):
+    return list(
+        s.scalars(
+            select(ListenPart).where(
+                ListenPart.listen_id == listen.id,
+                ListenPart.role.in_(("match", "candidate")),
+                ListenPart.unlinked_at.is_(None),
+            )
+        )
+    )
+
+
+def test_taking_back_an_approval_puts_the_listen_and_its_other_candidates_back_on_the_match_queue(s):
+    from app.linkage import api as matches
+    from app.linkage import apply
+
+    a = make_listen(s, "Glass Orchard")
+    other = Work(kind="written", title="Glass Orchards")
+    s.add(other)
+    s.flush()
+    rival = L.link(s, a, "candidate", work_id=other.id, state="candidate", score=0.3, detail={}, actor_kind="model")
+    (mine,) = [p for p in _active_parts(s, a) if p.state == "accepted"]
+    apply.decide(s, a, mine, "approve")
+    assert rival.unlinked_at is not None and a.status == "identified"
+    assert a.id not in [i["listen_id"] for i in matches.queue_items(s)]
+    apply.reopen(s, a)
+    assert a.status == "review" and mine.state == "candidate" and rival.unlinked_at is None
+    assert a.id in [i["listen_id"] for i in matches.queue_items(s)]
+    assert R.accepted_work(s, a.id) is None and R.pending(s, listen_ids=[a.id]) == []
+    with pytest.raises(ValueError, match="no accepted match"):
+        apply.reopen(s, a)
+
+
+def test_the_covers_page_can_take_a_match_back_and_the_listen_leaves_it(s):
+    a = make_listen(s, "Glass Orchard")
+    R.search(s, a, run_sources=fake_sources(("audible", "B0A", png(800, 800))))
+    s.commit()
+    client = client_for(s)
+    assert client.get("/api/covers").json()["total"] == 1
+    assert client.post(f"/api/covers/{a.id}/unaccept").json() == dict(ok=True)
+    assert client.get("/api/covers").json()["total"] == 0
+    assert client.post(f"/api/covers/{a.id}/unaccept").status_code == 409
+    assert client.post("/api/covers/9999/unaccept").status_code == 404
+
+
+def test_the_sweep_queues_a_search_for_each_accepted_listen_that_was_never_searched(s, monkeypatch, tmp_path):
+    from app import settings
+
+    monkeypatch.setattr(settings, "data_dir", lambda: str(tmp_path))
+    fresh, searched, chosen, undecided = (make_listen(s, n) for n in ("Fresh", "Searched", "Chosen", "Undecided"))
+    undecided_part = _active_parts(s, undecided)[0]
+    undecided_part.state = "candidate"
+    R.search(s, searched, run_sources=fake_sources(("audible", "B0A", png(800, 800))))
+    R.search(s, chosen, run_sources=fake_sources(("audible", "B0A", png(900, 900))))
+    img = s.scalars(select(CoverImage)).first()
+    R.choose(s, chosen, img)
+    s.flush()
+    assert R.unsearched(s) == [fresh.id]
+    queued = []
+    jobs = type("J", (), {"submit": lambda self, *a, **k: queued.append((a, k))})()
+    assert R.sweep(jobs, s) == 1
+    assert queued == [(("covers", "search"), dict(listen_id=fresh.id))]
+
+
+def test_the_sweep_loop_runs_until_stopped_and_survives_a_database_that_is_not_there(s, monkeypatch):
+    import threading
+
+    make_listen(s, "Fresh")
+    s.commit()
+    stop = threading.Event()
+    rounds = []
+
+    class Jobs:
+        def submit(self, *a, **k):
+            rounds.append(k)
+            stop.set()
+
+    monkeypatch.setattr(store_api, "_engine", lambda: s.get_bind())
+    R.sweep_forever(Jobs(), stop, 0.01)
+    assert rounds == [dict(listen_id=1)] or len(rounds) == 1
+    stop.clear()
+    monkeypatch.setattr(store_api, "_engine", lambda: (_ for _ in ()).throw(RuntimeError("no database")))
+    threading.Timer(0.05, stop.set).start()
+    R.sweep_forever(Jobs(), stop, 0.01)  # returns when stopped, whatever the database said

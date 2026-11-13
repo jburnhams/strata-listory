@@ -107,6 +107,62 @@ def pending(
     return out
 
 
+def unsearched(s: Session) -> list[int]:
+    """Ids of book and radio listens with an accepted work, no chosen cover and no cover search at all yet: the ones whose match was accepted (by the model or by a person) since the last sweep. One query; a listen that changed since its search is left to `pending`."""
+    accepted = (
+        select(ListenPart.id)
+        .where(
+            ListenPart.listen_id == Listen.id,
+            ListenPart.role.in_(("match", "candidate")),
+            ListenPart.state == "accepted",
+            ListenPart.unlinked_at.is_(None),
+            ListenPart.work_id.is_not(None),
+        )
+        .exists()
+    )
+    chosen = (
+        select(ListenChoice.id)
+        .where(ListenChoice.listen_id == Listen.id, ListenChoice.field == FIELD, ListenChoice.unchosen_at.is_(None))
+        .exists()
+    )
+    searched = select(CoverRun.id).where(CoverRun.listen_id == Listen.id).exists()
+    return list(
+        s.scalars(
+            select(Listen.id)
+            .where(
+                Listen.kind.in_(KINDS),
+                Listen.merged_into_id.is_(None),
+                Listen.retired_at.is_(None),
+                accepted,
+                ~chosen,
+                ~searched,
+            )
+            .order_by(Listen.id)
+        )
+    )
+
+
+def sweep(jobs, s: Session) -> int:
+    """Queue a search for every listen `unsearched` finds (a listen already queued is not queued twice); returns how many were new to the queue's eye."""
+    ids = unsearched(s)
+    for lid in ids:
+        jobs.submit("covers", "search", listen_id=lid)
+    return len(ids)
+
+
+def sweep_forever(jobs, stop, every: float) -> None:
+    """Sweep now and then until `stop` is set, so a listen whose match is accepted by any path (the model's own acceptance, a person's, a rebuild) gets its cover search without anyone pressing a button. Errors (no database yet) wait for the next round."""
+    from app.store.api import _engine
+
+    while not stop.is_set():
+        try:
+            with Session(_engine()) as s:
+                sweep(jobs, s)
+        except Exception:
+            pass
+        stop.wait(every)
+
+
 def search_job(listen_id: int) -> dict:
     """What a queued `covers`/`search` job does: search one listen on its own session and commit, so the Covers page shows the result as soon as the job ends."""
     from app.store.api import _engine

@@ -4,6 +4,13 @@ Newest first, grouped by day. One entry per change, in the same commit or PR as 
 
 ## 2026-11-13
 
+**Covers: searched when a match is accepted, and a way back to the matches (branch `claude/covers-sweep-unaccept`)**
+Jonathan asked for a cover search as soon as a match is accepted (not only approved) and a button on the Covers page to take a match back to the Matches page.
+
+- `src/app/covers/run.py`: `unsearched`, `sweep`, `sweep_forever`; `src/app/server/app.py` runs the sweep in a thread (`APP_COVER_SWEEP_SECONDS`, default 60, 0 off; tests set 0).
+- `src/app/linkage/apply.py` `reopen`, `POST /api/covers/{id}/unaccept`; the list leaves out listens with no accepted match. Covers page: "Back to matches" on each card, gone at once, the card returns with a message if refused.
+
+
 **Covers: cut plain bands off pictures (branch `claude/covers-crop-padding`)**
 Jonathan pointed out that pictures like image 6190 count as square but are a book cover centred on a plain square canvas.
 

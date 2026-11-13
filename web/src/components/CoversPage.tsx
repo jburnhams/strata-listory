@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router'
 import { ZoomIn } from 'lucide-react'
 import { AsyncButton, Button, DataView, Disclosure, EmptyState, Field, IconButton, Input, Lightbox, PageHeader, Skeleton, Status, Tabs, format, useAsyncAction, useJob, type Tone } from 'strata-react'
-import { api, coverApi, type CoverJob, type CoverMatch, type CoverFiles, type CoverPicture, type CoverRow, type CoverStatus } from '../api'
+import { api, coverApi, type CoverJob, type CoverMatch, type CoverRecording, type CoverFiles, type CoverPicture, type CoverRow, type CoverStatus } from '../api'
 import { size } from './FilesPage'
 import { hours } from './ListensPage'
 
@@ -70,7 +70,32 @@ function Thumb({ p, big, onZoom }: { p: CoverPicture; big?: boolean; onZoom: () 
   )
 }
 
-function Option({ p, rank, highlighted, saved, onHighlight, onZoom }: { p: CoverPicture; rank: number; highlighted: boolean; saved: boolean; onHighlight: () => void; onZoom: () => void }) {
+/** What a picture says about the recording it belongs to (an Audible or Audnexus picture is of one recording: its reader and length), against what the files say. Other sources know only the book. */
+function PictureMeta({ p, row }: { p: CoverPicture; row: CoverRow }) {
+  // pictures that look alike are merged into one, so it can stand for several recordings: show each
+  const seen = new Set<string>()
+  const recs: CoverRecording[] = []
+  for (const s of p.sources) {
+    const r = ['audible', 'audnexus'].includes(s.source) ? row.match?.all_recordings.find(x => x.asin === s.ref) : undefined
+    if (r && !seen.has(r.asin)) { seen.add(r.asin); recs.push(r) }
+  }
+  if (!recs.length) return <p className="type-caption text-muted-foreground">{from(p)}: no reader or length, only the book</p>
+  return (
+    <ul aria-label="Recordings of this picture" className="space-y-0.5 type-caption">
+      {recs.map(rec => {
+        const reader = agree(row.source.narrator, rec.narrator), len = lengthDelta(row.source.minutes, rec.minutes)
+        return (
+          <li key={rec.asin}>
+            <span className="text-muted-foreground">Recording {rec.asin}{rec.format && rec.format !== 'unabridged' ? ` · ${rec.format.replace('_', ' ')}` : ''}{rec.year ? ` · ${rec.year}` : ''}: </span>
+            read by {rec.narrator || 'unknown'}{reader && <> <Status tone={MARK[reader][0]}>{MARK[reader][1]}</Status></>} · {rec.minutes ? hours(rec.minutes) : 'length unknown'}{len.tone && <> <Status tone={MARK[len.tone][0]}>{len.text || MARK[len.tone][1]}</Status></>}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function Option({ p, row, rank, highlighted, saved, onHighlight, onZoom }: { p: CoverPicture; row: CoverRow; rank: number; highlighted: boolean; saved: boolean; onHighlight: () => void; onZoom: () => void }) {
   return (
     <div onClick={onHighlight} className={`flex w-48 flex-col gap-1 rounded-surface border p-2 transition-state ${highlighted ? 'border-ring bg-muted ring-2 ring-ring' : 'cursor-pointer border-border hover:bg-muted/50'}`}>
       <Thumb p={p} onZoom={onZoom} />
@@ -78,6 +103,7 @@ function Option({ p, rank, highlighted, saved, onHighlight, onZoom }: { p: Cover
         <span className="type-body-sm">{rank === 0 ? <b>Best fit</b> : `Fit ${rank + 1}`} · {Math.round(p.share * 100)}%{saved && <> · <b>saved</b></>}</span>
       </button>
       <Offered p={p} />
+      <PictureMeta p={p} row={row} />
       <Why p={p} />
     </div>
   )
@@ -125,7 +151,7 @@ function Compare({ source, match }: { source: CoverFiles; match: CoverMatch | nu
   )
 }
 
-function Card({ row, onPick, onChanged }: { row: CoverRow; onPick: (row: CoverRow, id: number | null, via: 'pick' | 'accept') => Promise<void>; onChanged: () => void }) {
+function Card({ row, onPick, onBack, onChanged }: { row: CoverRow; onPick: (row: CoverRow, id: number | null, via: 'pick' | 'accept') => Promise<void>; onBack: (row: CoverRow) => void; onChanged: () => void }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)   // all the choices listed, or only the one that stands
   const [highlight, setHighlight] = useState<number | null>(null)   // an alternative clicked, not yet saved
@@ -146,6 +172,7 @@ function Card({ row, onPick, onChanged }: { row: CoverRow; onPick: (row: CoverRo
         <span className="type-caption text-muted-foreground">searched {when(row.searched)}</span>
         <span className="ml-auto flex gap-2">
           {row.chosen != null && <Button variant="ghost" onClick={() => void pick.run({ id: null, via: 'pick' })}>Clear choice</Button>}
+          <Button variant="ghost" title="Take the match back: this listen returns to the Matches page to be decided again" onClick={() => onBack(row)}>Back to matches</Button>
           <AsyncButton variant="outline" phase={again.phase} error={again.error} onClick={() => void again.run()} labels={{ idle: 'Search again', pending: 'Queuing…', done: 'Queued' }} />
         </span>
       </header>
@@ -155,6 +182,7 @@ function Card({ row, onPick, onChanged }: { row: CoverRow; onPick: (row: CoverRo
           <div className="min-w-0 flex-1 space-y-2">
             <p className="type-body-sm">{saved ? <b>Saved cover</b> : <b>Best fit</b>} · {shown.width}×{shown.height} · {size(shown.bytes)}</p>
             <Offered p={shown} />
+            <PictureMeta p={shown} row={row} />
             <Compare source={row.source} match={row.match} />
             <Why p={shown} />
             <div className="flex flex-wrap items-center gap-2">
@@ -167,7 +195,7 @@ function Card({ row, onPick, onChanged }: { row: CoverRow; onPick: (row: CoverRo
       {shown && open && (
         <div className="space-y-3" role="group" aria-label={`Covers for ${row.label}`}>
           <Compare source={row.source} match={row.match} />
-          <div className="flex flex-wrap gap-3">{row.covers.map((p, i) => <Option key={p.image_id} p={p} rank={i} highlighted={selected === p} saved={saved === p} onHighlight={() => setHighlight(p.image_id)} onZoom={() => setZoom(i)} />)}</div>
+          <div className="flex flex-wrap gap-3">{row.covers.map((p, i) => <Option key={p.image_id} p={p} row={row} rank={i} highlighted={selected === p} saved={saved === p} onHighlight={() => setHighlight(p.image_id)} onZoom={() => setZoom(i)} />)}</div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" disabled={selected === saved || pick.phase === 'pending'} onClick={() => void pick.run({ id: selected.image_id, via: selected === best ? 'accept' : 'pick' })}>Save</Button>
             <Button variant="ghost" aria-expanded onClick={() => { setOpen(false); setHighlight(null) }}>Collapse</Button>
@@ -177,7 +205,7 @@ function Card({ row, onPick, onChanged }: { row: CoverRow; onPick: (row: CoverRo
       {!shown && <p className="type-body-sm text-muted-foreground">No source had a picture for this {row.kind === 'book' ? 'book' : 'programme'}. The reasons are below.</p>}
       {(pick.error || again.error) && <p role="alert" className="type-body-sm text-danger">{pick.error || again.error}</p>}
       {row.covers.length > 0 && <Lightbox title={`Covers for ${row.label}`} items={items} index={Math.max(0, zoom ?? 0)} onIndexChange={setZoom} open={zoom != null} onOpenChange={o => { if (!o) setZoom(null) }} missing="This picture could not be loaded."
-        details={it => { const p = row.covers.find(c => String(c.image_id) === it.id); return p ? <div className="space-y-2"><Offered p={p} /><Why p={p} /></div> : null }} />}
+        details={it => { const p = row.covers.find(c => String(c.image_id) === it.id); return p ? <div className="space-y-2"><Offered p={p} /><PictureMeta p={p} row={row} /><Why p={p} /></div> : null }} />}
       <Sources statuses={row.sources} />
     </article>
   )
@@ -216,6 +244,15 @@ export default function CoversPage({ pollMs = 2000 }: { pollMs?: number }) {
       setFailed(f => ({ ...f, [row.listen_id]: `${row.label}: ${e instanceof Error ? e.message : 'could not be saved'}` }))
     })
   }
+  const [sentBack, setSentBack] = useState<Set<number>>(new Set())   // listens whose match was taken back leave the page at once
+  const onBack = (row: CoverRow) => {
+    setSentBack(b => new Set(b).add(row.listen_id))
+    setFailed(f => { const { [row.listen_id]: _, ...rest } = f; return rest })
+    coverApi.unaccept(row.listen_id).then(() => { void qc.invalidateQueries({ queryKey: ['match-summary'] }) }, (e: unknown) => {
+      setSentBack(b => { const n = new Set(b); n.delete(row.listen_id); return n })
+      setFailed(f => ({ ...f, [row.listen_id]: `${row.label}: ${e instanceof Error ? e.message : 'could not be sent back'}` }))
+    })
+  }
   const shownRow = (r: CoverRow): CoverRow => { const o = over[r.listen_id]; return o ? { ...r, chosen: o.image, state: o.image != null ? 'chosen' : r.covers.length ? 'choose' : 'none' } : r }
   const d = load.status === 'ready' ? load.data : null
   const running = !!d?.job.running
@@ -239,7 +276,7 @@ export default function CoversPage({ pollMs = 2000 }: { pollMs?: number }) {
         {() => (
           <DataView state={load} isEmpty={x => x.rows.length === 0} skeleton={<div className="space-y-3">{[0, 1].map(i => <Skeleton key={i} className="h-48 w-full" />)}</div>}
             empty={<EmptyState title="Nothing here yet">{(d?.waiting ?? 0) > 0 ? 'Press Search for covers to look for the pictures.' : 'No search has run on a listen like this.'}</EmptyState>}>
-            {x => <div className="space-y-4">{Object.entries(failed).map(([id, m]) => <p key={id} role="alert" className="type-body-sm text-danger">Not saved — {m}</p>)}{x.rows.map(shownRow).filter(r => state === 'all' || r.state === (state || 'choose')).map(r => <Card key={r.listen_id} row={r} onPick={onPick} onChanged={reload} />)}{x.total > x.rows.length && <p className="type-caption text-muted-foreground">Showing {x.rows.length} of {x.total}; search to narrow it.</p>}</div>}
+            {x => <div className="space-y-4">{Object.entries(failed).map(([id, m]) => <p key={id} role="alert" className="type-body-sm text-danger">Not saved — {m}</p>)}{x.rows.map(shownRow).filter(r => !sentBack.has(r.listen_id)).filter(r => state === 'all' || r.state === (state || 'choose')).map(r => <Card key={r.listen_id} row={r} onPick={onPick} onBack={onBack} onChanged={reload} />)}{x.total > x.rows.length && <p className="type-caption text-muted-foreground">Showing {x.rows.length} of {x.total}; search to narrow it.</p>}</div>}
           </DataView>
         )}
       </Tabs>

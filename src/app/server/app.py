@@ -9,6 +9,7 @@ The page at / serves `src/app/server/static/index.html` when built (`cd web && n
 
 import json
 import os
+import threading
 from contextlib import asynccontextmanager
 from typing import Literal
 
@@ -76,9 +77,18 @@ def create_app():
         jobs.start()
         jobs.submit("system", "bootstrap")
         reconcile_identification_reviews()
+        sweeping = threading.Event()
+        every = float(os.environ.get("APP_COVER_SWEEP_SECONDS", "60"))
+        if every > 0:
+            from app.covers import run as covers_run
+
+            threading.Thread(
+                target=covers_run.sweep_forever, args=(jobs, sweeping, every), daemon=True, name="cover-sweep"
+            ).start()
         try:
             yield
         finally:
+            sweeping.set()
             jobs.stop()
 
     app = FastAPI(title="strata-listory", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=lifespan)
