@@ -76,7 +76,12 @@ def _info(s: Session, ids: list[int]) -> dict[int, dict]:
 
 
 def _words(x) -> str:
-    return x if isinstance(x, str) else ", ".join(str(i) for i in x or [])
+    """A chosen field or a detail value as text: a string as it is, a list joined, a number (a chosen year is stored as one) written out."""
+    if isinstance(x, str):
+        return x
+    if isinstance(x, int | float):
+        return str(x)
+    return ", ".join(str(i) for i in x or [])
 
 
 def _compare(info: dict, listen: Listen, found: tuple | None) -> tuple[dict, dict | None]:

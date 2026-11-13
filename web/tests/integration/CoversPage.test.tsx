@@ -1,10 +1,39 @@
 import { describe, expect, it } from 'vitest'
 import { http, HttpResponse } from 'msw'
-import CoversPage from '../../src/components/CoversPage'
+import CoversPage, { agree, lengthDelta } from '../../src/components/CoversPage'
 import { setup, screen, waitFor, within } from '../utils/render'
 import { coverState, server } from '../utils/server'
 
+describe('comparing the files with the match', () => {
+  it('agrees when the words of the shorter reading are in the longer, differs when both speak and differ, and is silent when one is empty', () => {
+    expect(agree('Stephen Fry', 'Fry, Stephen')).toBe('same')
+    expect(agree('S. Fry', 'Stephen Fry')).toBe('same')
+    expect(agree('Anna Bell', 'Ben Hart')).toBe('differs')
+    expect(agree('', 'Ben Hart')).toBeNull()
+  })
+
+  it('compares lengths within 3 percent and says how far apart they are otherwise', () => {
+    expect(lengthDelta(null, 600)).toEqual({ tone: null, text: '' })
+    expect(lengthDelta(600, 600)).toEqual({ tone: 'same', text: 'same length' })
+    expect(lengthDelta(610, 600)).toEqual({ tone: 'same', text: '+2%' })
+    expect(lengthDelta(540, 600)).toEqual({ tone: 'differs', text: '−10%' })
+    expect(lengthDelta(700, 600)).toEqual({ tone: 'differs', text: '+17%' })
+  })
+})
+
 describe('CoversPage', () => {
+  it('still shows what the files say when there is no match to compare with, and dashes for what is unknown', async () => {
+    server.use(http.get('/api/covers', ({ request }) => {
+      const rows = coverState.rows.filter(r => r.listen_id === 1).map(r => ({ ...r, match: null, source: { ...r.source, narrator: '', minutes: null, year: '' } }))
+      return HttpResponse.json({ total: 1, counts: { choose: 1, chosen: 0, none: 0 }, waiting: 0, rows, job: coverState.job, url: request.url })
+    }))
+    setup(<CoversPage />, { route: '/covers' })
+    const table = await screen.findByRole('table', { name: 'Your files against the match' })
+    expect(within(table).getByRole('row', { name: /Title Glass Orchard/ })).toBeInTheDocument()
+    expect(within(table).getByRole('row', { name: /Read by –/ })).toBeInTheDocument()
+    expect(within(table).queryByText('differs')).toBeNull()
+  })
+
   it('opens on the best fit already selected, with its sources, why and the count of other choices', async () => {
     setup(<CoversPage />, { route: '/covers' })
     expect(await screen.findByText('2 listens waiting for a search · 1 to choose · 1 chosen · 1 with none found')).toBeInTheDocument()

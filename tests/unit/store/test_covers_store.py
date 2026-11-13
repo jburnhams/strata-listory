@@ -539,6 +539,14 @@ def test_a_card_puts_what_the_files_say_beside_what_the_match_says(s):
     assert row["source"]["title"] == "Glass Orchard" and row["source"]["minutes"] is None
 
 
+def test_a_chosen_year_stored_as_a_number_does_not_break_the_list(s):
+    a = make_listen(s, "Glass Orchard")
+    L.choose(s, a, "year", 1999, actor_kind="user", actor_ref="t", reason="typed")
+    R.search(s, a, run_sources=fake_sources(("audible", "B0A", png(600, 600))))
+    s.commit()
+    assert client_for(s).get("/api/covers").json()["rows"][0]["source"]["year"] == "1999"
+
+
 def test_learning_from_chosen_covers_moves_the_weights_and_the_page_ranks_with_them(s):
     listens = [make_listen(s, f"Book {n}") for n in range(6)]
     for listen in listens:

@@ -1,6 +1,6 @@
 // The one question: "Which cover does each listen get?" The finding: how many listens are waiting for a search, how many have pictures to choose from and how many found none.
 // Why it is shaped this way: the cover job (src/app/covers) searches every source for each confirmed or accepted listen and ranks what it found by fit (covers/fit.py: audiobook over print, the same recording, resolution, shape...). Most listens only need a yes, so a card opens on the best fit already selected with its sources and an Accept button; the other choices are one Expand away, where a click highlights an alternative and Save keeps it. Any picture can be magnified in the Lightbox (arrow keys step through the choices). The saved cover is for the next stage.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router'
 import { ZoomIn } from 'lucide-react'
@@ -199,10 +199,19 @@ export default function CoversPage({ pollMs = 2000 }: { pollMs?: number }) {
   // a choice shows at once and the write follows in the background: the page answers from what was clicked, never from a refetch of the whole list
   const [over, setOver] = useState<Record<number, { image: number | null; from: CoverRow['state'] }>>({})
   const [failed, setFailed] = useState<Record<number, string>>({})
+  const pending = useRef(0)   // writes still on their way: the clicked state stands until the last one has been read back
+  const qc = useQueryClient()
   const onPick = async (row: CoverRow, id: number | null, via: 'pick' | 'accept') => {
     setOver(o => ({ ...o, [row.listen_id]: { image: id, from: o[row.listen_id]?.from ?? row.state } }))
     setFailed(f => { const { [row.listen_id]: _, ...rest } = f; return rest })
-    coverApi.choose(row.listen_id, id, via).catch((e: unknown) => {
+    pending.current++
+    coverApi.choose(row.listen_id, id, via).then(async () => {
+      pending.current--
+      if (pending.current > 0) return
+      await qc.refetchQueries({ queryKey: ['covers'], type: 'active' })   // in the background: brings in the next listens and the server's own counts
+      if (pending.current === 0) setOver({})
+    }, (e: unknown) => {
+      pending.current--
       setOver(o => { const { [row.listen_id]: _, ...rest } = o; return rest })
       setFailed(f => ({ ...f, [row.listen_id]: `${row.label}: ${e instanceof Error ? e.message : 'could not be saved'}` }))
     })
