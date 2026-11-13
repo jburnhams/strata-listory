@@ -192,6 +192,11 @@ def store_image(s: Session, data: bytes) -> CoverImage | None:
     dims = imaging.size(data) if ext else None
     if not ext or len(data) < imaging.MIN_BYTES or not dims or min(dims) < imaging.MIN_SIDE:
         return None
+    trimmed = imaging.trim_padding(
+        data
+    )  # a book on a plain square canvas is stored as the book: its shape and size are what count when pictures are ranked and merged
+    if trimmed:
+        data, dims = trimmed, imaging.size(trimmed) or dims
     sha = hashlib.sha256(data).hexdigest()
     img = s.scalars(select(CoverImage).where(CoverImage.sha256 == sha)).first()
     if img:
@@ -204,6 +209,16 @@ def store_image(s: Session, data: bytes) -> CoverImage | None:
     s.add(img)
     s.flush()
     return img
+
+
+def retrimmed(s: Session, img: CoverImage) -> CoverImage:
+    """A picture downloaded before plain bands were cut off, as it would be stored now (the same row when it has none): searching again reuses a known address's picture without downloading it, and must not keep the padded one."""
+    try:
+        with open(image_path(img), "rb") as f:
+            data = f.read()
+    except OSError:
+        return img
+    return store_image(s, data) or img
 
 
 def search(s: Session, listen: Listen, *, run_sources=None) -> CoverRun:
@@ -234,6 +249,8 @@ def search(s: Session, listen: Listen, *, run_sources=None) -> CoverRun:
                     select(CoverCandidate).where(CoverCandidate.url == it.url).order_by(CoverCandidate.id.desc())
                 ).first()
                 img = s.get(CoverImage, known.image_id) if known else None
+                if img is not None:
+                    img = retrimmed(s, img)
                 if img is None:
                     r = net.get(it.url)
                     if r.status == 404:

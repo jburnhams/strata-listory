@@ -4,6 +4,12 @@ Newest first, grouped by day. One entry per change, in the same commit or PR as 
 
 ## 2026-11-13
 
+**Covers: cut plain bands off pictures (branch `claude/covers-crop-padding`)**
+Jonathan pointed out that pictures like image 6190 count as square but are a book cover centred on a plain square canvas.
+
+- `src/app/covers/imaging.py`: `padding` (pure, on a 256x256 RGB copy) and `trim_padding` (ffmpeg crop of the original, same format); `src/app/covers/run.py` `store_image` stores the cropped picture. Pictures already stored are unchanged: `./app covers --force --queue` searches again.
+
+
 **Covers: files against match beside the best fit, instant save, refit every 25 (branch `claude/covers-compare-fast-save`)**
 Jonathan asked to see the source's and the match's metadata next to the best fit (same narrator, length...), for saving to be instant with the work in the background, and for the ranking to be refitted every 25 choices like the matches.
 
