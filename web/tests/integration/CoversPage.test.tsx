@@ -98,11 +98,11 @@ describe('CoversPage', () => {
   it('starts the job for everything waiting and follows its progress', async () => {
     const { user } = setup(<CoversPage pollMs={30} />, { route: '/covers' })
     const button = await screen.findByRole('button', { name: 'Search for covers (2)' })
-    coverState.job = { running: true, done: 1, total: 2, current: 'Glass Orchard', finished: null, error: '' }   // what the server reports once the click has started it
+    coverState.job = { running: true, queued: 1, current: 'Glass Orchard', error: '' }   // what the server reports once the click has started it
     await user.click(button)
     await waitFor(() => expect(coverState.runs).toEqual([{ ids: null }]))
-    expect(await screen.findByText('Searching 1 of 2 · Glass Orchard')).toBeInTheDocument()
-    coverState.job = { running: false, done: 2, total: 2, current: '', finished: 1, error: 'RuntimeError: database gone' }
+    expect(await screen.findByText('Searching Glass Orchard · 1 more queued')).toBeInTheDocument()
+    coverState.job = { running: false, queued: 0, current: '', error: 'RuntimeError: database gone' }
     expect(await screen.findByRole('alert')).toHaveTextContent('RuntimeError: database gone')
     await waitFor(() => expect(screen.queryByText(/Searching \d/)).toBeNull())
   })

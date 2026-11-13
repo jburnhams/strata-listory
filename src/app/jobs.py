@@ -72,9 +72,10 @@ class JobQueue:
                         for r in c.execute("SELECT book_id FROM ingest_members WHERE run_id=?", (options["run_id"],))
                     )
                 # Derived evidence reads immutable event snapshots; it must not block a human decision.
-                resources = json.dumps(
-                    [] if domain == "system" and kind == "training_features" else sorted(f"book:{bid}" for bid in ids)
-                )
+                owned = sorted(f"book:{bid}" for bid in ids)
+                if options.get("listen_id"):  # listens live in the Postgres catalogue, a different id space from books
+                    owned.append(f"listen:{options['listen_id']}")
+                resources = json.dumps([] if domain == "system" and kind == "training_features" else owned)
                 c.execute(
                     "INSERT OR IGNORE INTO jobs(id,domain,kind,options,dedupe,state,created,resources,timeout_seconds) VALUES (?,?,?,?,?,'queued',?,?,?)",
                     (ident, domain, kind, payload, key, now(), resources, self.timeout_seconds),

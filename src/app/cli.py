@@ -216,7 +216,7 @@ def cmd_filegroups(args):
 
 
 def cmd_covers(args):
-    """Search for covers: every confirmed or accepted book or radio listen that has no chosen cover and was not searched since it last changed (or the listens given, or all with --force). Downloads each source's largest picture into data/covers/; choose the preferred one on the Covers page."""
+    """Search for covers: every confirmed or accepted book or radio listen that has no chosen cover and was not searched since it last changed (or the listens given, or all with --force). Downloads each source's largest picture into data/covers/; choose the preferred one on the Covers page. With --queue the searches go on the server's job queue (one job per listen) instead of running here."""
     from omarchy_db import connect
     from sqlalchemy.orm import Session
 
@@ -230,6 +230,14 @@ def cmd_covers(args):
                 f"ranking learned from {params.labels}: "
                 + ", ".join(f"{k} x{v}" for k, v in sorted(params.mult.items()))
             )
+            return 0
+        if args.queue:
+            from app.jobs import JobQueue
+
+            queued = R.enqueue(
+                JobQueue(None), s, listen_ids=args.ids or None, force=args.force or bool(args.ids), limit=args.limit
+            )
+            print(f"{len(queued)} searches queued; the server runs them with the other jobs (see the Covers page)")
             return 0
         todo = R.pending(s, listen_ids=args.ids or None, force=args.force or bool(args.ids), limit=args.limit)
         print(f"{len(todo)} listens to search")
@@ -1027,6 +1035,11 @@ def main(argv=None):
     cvp.add_argument("ids", nargs="*", type=int, help="listen ids (default: every listen that needs a search)")
     cvp.add_argument("--force", action="store_true", help="search again even if searched since the listen last changed")
     cvp.add_argument("--limit", type=int, help="stop after this many listens")
+    cvp.add_argument(
+        "--queue",
+        action="store_true",
+        help="put one search job per listen on the server's job queue instead of running them here",
+    )
     cvp.add_argument(
         "--learn",
         action="store_true",

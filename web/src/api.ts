@@ -162,12 +162,12 @@ export interface CoverSignal { name: string; weight: number; detail: string; pri
 export interface CoverPicture { image_id: number; width: number; height: number; bytes: number; sources: CoverSource[]; members: number[]; score: number; share: number; signals: CoverSignal[] }
 export interface CoverStatus { source: string; status: 'found' | 'none' | 'error' | 'limited' | 'skipped' | 'not_found'; detail: string; count: number }
 export interface CoverRow { listen_id: number; label: string; kind: string; run_id: number; searched: string | null; state: 'choose' | 'chosen' | 'none'; chosen: number | null; covers: CoverPicture[]; sources: CoverStatus[] }
-export interface CoverJob { running: boolean; done: number; total: number; current: string; finished: number | null; error: string }
+export interface CoverJob { running: boolean; queued: number; current: string; error: string }
 export interface CoverList { total: number; counts: Record<'choose' | 'chosen' | 'none', number>; waiting: number; rows: CoverRow[]; job: CoverJob }
 export const coverApi = {
   list: (state = '', q = '', limit = 24) => req<CoverList>(`/api/covers?${new URLSearchParams({ state, q, limit: String(limit) })}`),
   choose: (listenId: number, imageId: number | null, via: 'pick' | 'accept' = 'pick') => req<{ ok: boolean; chosen: number | null }>(`/api/covers/${listenId}/choose`, send('POST', { image_id: imageId, via })),
-  run: (listenIds?: number[], force = false) => req<{ started: boolean }>('/api/covers/run', send('POST', { listen_ids: listenIds ?? null, force })),
+  run: (listenIds?: number[], force = false) => req<{ queued: number; listen_ids: number[] }>('/api/covers/run', send('POST', { listen_ids: listenIds ?? null, force })),
   image: (id: number, w = 0) => withBase(`/api/covers/image/${id}${w ? `?w=${w}` : ''}`),
 }
 

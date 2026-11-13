@@ -2,6 +2,14 @@
 
 Newest first, grouped by day. One entry per change, in the same commit or PR as the change.
 
+## 2026-11-13
+
+**Cover searches run on the job queue (branch `claude/covers-queue-jobs`)**
+Jonathan asked for cover searches to be jobs in the processing queue, to then queue a search for every approved and accepted listen.
+
+- `src/app/covers/run.py`: `enqueue` (one `covers`/`search` job per listen `pending` names) and `search_job` (what the job does, one listen per job). `src/app/server/tasks.py` runs them; `src/app/jobs.py` locks `listen:<id>` for a job with a `listen_id`.
+- `src/app/covers/api.py`: `POST /api/covers/run` queues instead of starting a thread (the in-process `STATE` and lock are gone); the list's `job` is now `running`, `queued`, `current`, `error` from the queue. The Covers page shows the queue; `./app covers --queue` queues from a shell.
+
 ## 2026-11-09
 
 **Move the Python side to uv, ruff, pyright and the shared strata-python gate (branch `claude/project-thread-iw7199`)**

@@ -73,6 +73,11 @@ def _execute(jobs, domain, kind, options):
             if changed:
                 jobs.submit("process", "propose", ids=changed, limit=len(changed))
             return dict(changed=changed)
+    if domain == "covers":
+        if kind == "search":
+            from app.covers import run as covers
+
+            return covers.search_job(options["listen_id"])
     if domain == "system":
         if kind == "bootstrap":
             return bootstrap()

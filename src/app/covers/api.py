@@ -6,9 +6,8 @@ import os
 import shutil
 import subprocess
 import threading
-import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -19,13 +18,26 @@ from app.store.api import _engine, get_session
 from app.store.models import CoverCandidate, CoverImage, CoverRun, Listen, ListenChoice
 
 router = APIRouter(prefix="/api/covers")
-STATE: dict = dict(running=False, done=0, total=0, current="", finished=None, error="")
-_lock = threading.Lock()
 
 
 def _latest_runs(s: Session) -> dict[int, CoverRun]:
     newest = select(func.max(CoverRun.id)).where(CoverRun.finished_at.is_not(None)).group_by(CoverRun.listen_id)
     return {r.listen_id: r for r in s.scalars(select(CoverRun).where(CoverRun.id.in_(newest)))}
+
+
+def _job(request: Request, s: Session) -> dict:
+    """The searches on the job queue: how many are waiting, which listen is being searched, and how the last one ended if it failed."""
+    jobs = request.app.state.jobs
+    tasks = jobs.tasks("covers")
+    running = next((t for t in tasks if t["state"] == "running"), None)
+    listen = s.get(Listen, running["options"]["listen_id"]) if running else None
+    last = jobs.status("covers")["last"].get("search") or {}
+    return dict(
+        running=bool(tasks),
+        queued=sum(t["state"] == "queued" for t in tasks),
+        current=listen.label if listen else "",
+        error=last.get("error", ""),
+    )
 
 
 def _chosen(s: Session, ids: list[int]) -> dict[int, dict]:
@@ -70,7 +82,9 @@ def _card(s: Session, listen: Listen, run: CoverRun, chosen: dict | None) -> dic
 
 
 @router.get("")
-def covers(state: str = "", q: str = "", limit: int = 24, offset: int = 0, s: Session = Depends(get_session)):
+def covers(
+    request: Request, state: str = "", q: str = "", limit: int = 24, offset: int = 0, s: Session = Depends(get_session)
+):
     """Listens a cover search has run on, newest search first. `state`: choose (covers found, none chosen), chosen, none (nothing found); empty = all."""
     limit = max(1, min(limit, 100))
     runs = _latest_runs(s)
@@ -103,7 +117,7 @@ def covers(state: str = "", q: str = "", limit: int = 24, offset: int = 0, s: Se
         counts=counts,
         waiting=len(R.pending(s)),
         rows=[_card(s, listens[lid], runs[lid], chosen.get(lid)) for lid in page],
-        job={k: v for k, v in STATE.items()},
+        job=_job(request, s),
     )
 
 
@@ -184,30 +198,8 @@ class RunIn(BaseModel):
     limit: int | None = None
 
 
-def run_job(listen_ids: list[int] | None, force: bool, limit: int | None) -> None:
-    """Search every pending listen (or the given ones; `force` searches again), one commit each so the page shows results as they arrive."""
-    try:
-        with Session(_engine()) as s:
-            todo = R.pending(s, listen_ids=listen_ids, force=force or bool(listen_ids), limit=limit)
-            STATE.update(total=len(todo), done=0)
-            for lid in todo:
-                listen = s.get(Listen, lid)
-                STATE.update(current=listen.label if listen else "")
-                if listen:
-                    R.search(s, listen)
-                    s.commit()
-                STATE["done"] += 1
-    except Exception as e:  # shown on the page; the next run starts clean
-        STATE["error"] = f"{type(e).__name__}: {e}"
-    finally:
-        STATE.update(running=False, current="", finished=time.time())
-        _lock.release()
-
-
 @router.post("/run", status_code=202)
-def start(b: RunIn, s: Session = Depends(get_session)):
-    if not _lock.acquire(blocking=False):
-        raise HTTPException(409, "a cover search is already running")
-    STATE.update(running=True, done=0, total=0, current="", error="", finished=None)
-    threading.Thread(target=run_job, args=(b.listen_ids, b.force, b.limit), daemon=True).start()
-    return dict(started=True)
+def start(b: RunIn, request: Request, s: Session = Depends(get_session)):
+    """Queue a search for each listen that needs one (or the given ones; `force` searches again). The durable job queue runs them one at a time, with the other jobs, and they survive a restart."""
+    queued = R.enqueue(request.app.state.jobs, s, listen_ids=b.listen_ids, force=b.force, limit=b.limit)
+    return dict(queued=len(queued), listen_ids=queued)

@@ -107,6 +107,35 @@ def pending(
     return out
 
 
+def search_job(listen_id: int) -> dict:
+    """What a queued `covers`/`search` job does: search one listen on its own session and commit, so the Covers page shows the result as soon as the job ends."""
+    from app.store.api import _engine
+
+    with Session(_engine()) as s:
+        listen = s.get(Listen, listen_id)
+        if listen is None:
+            raise ValueError(f"no listen {listen_id}")
+        run = search(s, listen)
+        s.commit()
+        return dict(
+            listen_id=listen_id,
+            label=listen.label,
+            run_id=run.id,
+            covers=len(distinct(s, run.id)),
+            sources={x["source"]: x["status"] for x in run.sources},
+        )
+
+
+def enqueue(
+    jobs, s: Session, *, listen_ids: list[int] | None = None, force: bool = False, limit: int | None = None
+) -> list[int]:
+    """Put one `covers`/`search` job on the durable queue for each listen `pending` names (the given ones are searched again; `force` includes every listen). A listen already queued or running is not queued twice. Returns the listen ids."""
+    todo = pending(s, listen_ids=listen_ids, force=force or bool(listen_ids), limit=limit)
+    for lid in todo:
+        jobs.submit("covers", "search", retry=True, listen_id=lid)
+    return todo
+
+
 def first_file(s: Session, group_id: int) -> int | None:
     """The first file in listening order of a group, looking down through its discs and folders."""
     for m in s.scalars(

@@ -2,6 +2,7 @@
 
 import hashlib
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -13,6 +14,7 @@ from app.covers import api as capi
 from app.covers import fit, imaging
 from app.covers import run as R
 from app.covers import sources as S
+from app.jobs import JobQueue
 from app.store import api as store_api
 from app.store import listens as L
 from app.store.models import CoverCandidate, CoverImage, ListenChoice, ListenEvent, Work, WorkIdentifier
@@ -277,6 +279,7 @@ def test_api_lists_searched_listens_with_their_covers_and_reasons_and_saves_the_
     s.commit()
     app = FastAPI()
     app.include_router(capi.router)
+    app.state.jobs = JobQueue(None)
     app.dependency_overrides[store_api.get_session] = lambda: s
     client = TestClient(app)
     d = client.get("/api/covers").json()
@@ -303,34 +306,57 @@ def test_api_lists_searched_listens_with_their_covers_and_reasons_and_saves_the_
     assert client.get(f"/api/covers/image/{big}", params=dict(w=100)).status_code == 200  # no ffmpeg: the full picture
 
 
-def test_the_job_runs_in_the_background_and_refuses_a_second_start(s, monkeypatch):
-    a = make_listen(s, "Alpha")
+def test_searches_go_on_the_job_queue_one_per_listen_and_run_as_jobs(s, monkeypatch, tmp_path):
+    from app import db, settings
+    from app.server import tasks
+
+    monkeypatch.setattr(settings, "data_dir", lambda: str(tmp_path))
+    a, b = make_listen(s, "Alpha"), make_listen(s, "Beta")
     s.commit()
-    searched = []
-    monkeypatch.setattr(capi, "_engine", lambda: s.get_bind())
-    monkeypatch.setattr(R, "search", lambda sess, listen, **k: searched.append(listen.id))
-    capi.STATE.update(running=False)
-    capi._lock.acquire()
-    capi.run_job([a.id], False, None)  # what the thread does: releases the lock when it ends
-    assert searched == [a.id] and capi.STATE["done"] == 1 and capi.STATE["running"] is False
-    monkeypatch.setattr(
-        capi.threading, "Thread", lambda target, args, daemon: type("T", (), {"start": lambda self: target(*args)})()
-    )
+    jobs = JobQueue(lambda domain, kind, options: tasks.execute(jobs, domain, kind, options))
     app = FastAPI()
     app.include_router(capi.router)
+    app.state.jobs = jobs
     app.dependency_overrides[store_api.get_session] = lambda: s
     client = TestClient(app)
-    assert client.post("/api/covers/run", json=dict(listen_ids=[a.id])).status_code == 202
-    assert searched == [a.id, a.id]
-    capi._lock.acquire()
+    d = client.post("/api/covers/run", json={}).json()
+    assert d == dict(queued=2, listen_ids=[a.id, b.id])
+    assert client.post("/api/covers/run", json={}).json()["queued"] == 2  # still waiting: the same jobs, not four
+    assert [t["options"] for t in jobs.tasks("covers")] == [dict(listen_id=a.id), dict(listen_id=b.id)]
+    assert client.get("/api/covers").json()["job"] == dict(running=True, queued=2, current="", error="")
+    c = db.connect()
     try:
-        assert client.post("/api/covers/run", json={}).status_code == 409
+        assert [r[0] for r in c.execute("SELECT resources FROM jobs ORDER BY created")] == [
+            f'["listen:{a.id}"]',
+            f'["listen:{b.id}"]',
+        ]
     finally:
-        capi._lock.release()
-    monkeypatch.setattr(capi, "_engine", lambda: (_ for _ in ()).throw(RuntimeError("no database")))
-    capi._lock.acquire()
-    capi.run_job(None, False, None)
-    assert "no database" in capi.STATE["error"]
+        c.close()
+    searched = []
+    monkeypatch.setattr(store_api, "_engine", lambda: s.get_bind())
+
+    def fake(sess, listen, **k):
+        searched.append(listen.id)
+        return SimpleNamespace(id=1, sources=[dict(source="apple", status="none")])
+
+    monkeypatch.setattr(R, "search", fake)
+    monkeypatch.setattr(R, "distinct", lambda sess, run_id: [])
+    assert jobs.run_one() and jobs.run_one() and not jobs.run_one()
+    assert searched == [a.id, b.id]
+    assert jobs.status("covers")["last"]["search"] == dict(
+        listen_id=b.id, label="Beta", run_id=1, covers=0, sources=dict(apple="none")
+    )
+    assert client.get("/api/covers").json()["job"]["running"] is False
+    assert (
+        client.post("/api/covers/run", json=dict(listen_ids=[a.id])).json()["queued"] == 1
+    )  # searched again on request
+    jobs.submit("covers", "search", listen_id=9999)
+    monkeypatch.undo()
+    monkeypatch.setattr(store_api, "_engine", lambda: s.get_bind())
+    monkeypatch.setattr(settings, "data_dir", lambda: str(tmp_path))
+    while jobs.run_one():
+        pass
+    assert "no listen 9999" in client.get("/api/covers").json()["job"]["error"]
 
 
 def test_a_second_source_offering_the_same_address_keeps_its_candidate_without_a_second_download(s, monkeypatch):
@@ -388,6 +414,7 @@ def test_rebuilding_listens_clears_their_cover_searches_and_keeps_the_pictures(s
 def client_for(s):
     app = FastAPI()
     app.include_router(capi.router)
+    app.state.jobs = JobQueue(None)
     app.dependency_overrides[store_api.get_session] = lambda: s
     return TestClient(app)
 

@@ -92,7 +92,7 @@ function Card({ row, onChanged }: { row: CoverRow; onChanged: () => void }) {
         <span className="type-caption text-muted-foreground">searched {when(row.searched)}</span>
         <span className="ml-auto flex gap-2">
           {row.chosen != null && <Button variant="ghost" onClick={() => void pick.run({ id: null, via: 'pick' })}>Clear choice</Button>}
-          <AsyncButton variant="outline" phase={again.phase} error={again.error} onClick={() => void again.run()} labels={{ idle: 'Search again', pending: 'Searching…', done: 'Started' }} />
+          <AsyncButton variant="outline" phase={again.phase} error={again.error} onClick={() => void again.run()} labels={{ idle: 'Search again', pending: 'Queuing…', done: 'Queued' }} />
         </span>
       </header>
       {shown && !open && (
@@ -147,10 +147,10 @@ export default function CoversPage({ pollMs = 2000 }: { pollMs?: number }) {
     <div className="space-y-5">
       <PageHeader title="Covers" scope="A picture for each listen, from every source that knows the book" finding={finding ? { text: finding } : undefined} />
       <section aria-label="Cover search" className="flex flex-wrap items-center gap-3 rounded-surface border border-border bg-card p-3">
-        <AsyncButton variant="default" phase={start.phase} error={start.error} disabled={running || (d?.waiting ?? 0) === 0} onClick={() => void start.run()} labels={{ idle: `Search for covers (${d?.waiting ?? 0})`, pending: 'Starting…', done: 'Started' }} />
-        {running && d && <span role="status" className="type-body-sm text-muted-foreground">Searching {d.job.done} of {d.job.total}{d.job.current ? ` · ${d.job.current}` : ''}</span>}
+        <AsyncButton variant="default" phase={start.phase} error={start.error} disabled={running || (d?.waiting ?? 0) === 0} onClick={() => void start.run()} labels={{ idle: `Search for covers (${d?.waiting ?? 0})`, pending: 'Queuing…', done: 'Queued' }} />
+        {running && d && <span role="status" className="type-body-sm text-muted-foreground">Searching{d.job.current ? ` ${d.job.current}` : ''} · {d.job.queued} more queued</span>}
         {d?.job.error && <span role="alert" className="type-body-sm text-danger">{d.job.error}</span>}
-        <span className="type-caption text-muted-foreground">Looks for every confirmed or accepted book without a chosen cover that has not been searched since it last changed. From a shell: <code>./app covers</code>.</span>
+        <span className="type-caption text-muted-foreground">Looks for every confirmed or accepted book without a chosen cover that has not been searched since it last changed. Each search is a job on the queue, run one at a time with the other jobs. From a shell: <code>./app covers --queue</code>.</span>
       </section>
       <Field label="Search covers" hint="Every word must appear in the title">
         <Input type="search" value={typed} onChange={e => setTyped(e.target.value)} placeholder="e.g. glass orchard" />
