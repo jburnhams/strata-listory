@@ -171,6 +171,7 @@ export const coverApi = {
   list: (state = '', q = '', limit = 24) => req<CoverList>(`/api/covers?${new URLSearchParams({ state, q, limit: String(limit) })}`),
   choose: (listenId: number, imageId: number | null, via: 'pick' | 'accept' = 'pick') => req<{ ok: boolean; chosen: number | null }>(`/api/covers/${listenId}/choose`, send('POST', { image_id: imageId, via })),
   run: (listenIds?: number[], force = false) => req<{ queued: number; listen_ids: number[] }>('/api/covers/run', send('POST', { listen_ids: listenIds ?? null, force })),
+  unaccept: (listenId: number) => req<{ ok: boolean }>(`/api/covers/${listenId}/unaccept`, send('POST', {})),
   image: (id: number, w = 0) => withBase(`/api/covers/image/${id}${w ? `?w=${w}` : ''}`),
 }
 
