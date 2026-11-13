@@ -346,6 +346,38 @@ def decide(s: Session, listen: Listen, part: ListenPart | None, action: str, *, 
     s.flush()
 
 
+def reopen(s: Session, listen: Listen, *, actor_ref: str = "web") -> None:
+    """Take back an acceptance (the model's or a person's): the accepted work is a candidate again, the candidates unlinked when it was approved are linked again, and the listen is `review`, so it is on the match queue to be decided. A person's own earlier answer on it stays in the log but is no longer a label (labels read the accepted state)."""
+    part = s.scalars(
+        select(ListenPart).where(
+            ListenPart.listen_id == listen.id,
+            ListenPart.role.in_(("match", "candidate")),
+            ListenPart.state == "accepted",
+            ListenPart.unlinked_at.is_(None),
+        )
+    ).first()
+    if part is None:
+        raise ValueError("this listen has no accepted match to take back")
+    L.set_state(s, part, "candidate", actor_kind="user", actor_ref=actor_ref, reason="sent back to the match queue")
+    dropped = s.scalars(
+        select(ListenEvent.listen_part_id).where(
+            ListenEvent.listen_id == listen.id,
+            ListenEvent.action == "unlink",
+            ListenEvent.reason == "another work was approved",
+        )
+    ).all()
+    for pid in {d for d in dropped if d is not None}:
+        other = s.get(ListenPart, pid)
+        if other is not None and other.id != part.id and other.unlinked_at is not None and other.state != "rejected":
+            other.unlinked_at = None
+            s.flush()
+            L._event(s, listen, "relink", "user", part=other, actor_ref=actor_ref, reason="the approval was taken back")
+    L.set_status(
+        s, listen, "review", actor_kind="user", actor_ref=actor_ref, reason="the match was sent back to the queue"
+    )
+    s.flush()
+
+
 def same_work_groups(s: Session) -> dict[int, list[int]]:
     """{work id: [listen ids]} for works more than one live listen is accepted as: different recordings or copies of one book."""
     rows = s.execute(

@@ -151,7 +151,7 @@ function Compare({ source, match }: { source: CoverFiles; match: CoverMatch | nu
   )
 }
 
-function Card({ row, onPick, onChanged }: { row: CoverRow; onPick: (row: CoverRow, id: number | null, via: 'pick' | 'accept') => Promise<void>; onChanged: () => void }) {
+function Card({ row, onPick, onBack, onChanged }: { row: CoverRow; onPick: (row: CoverRow, id: number | null, via: 'pick' | 'accept') => Promise<void>; onBack: (row: CoverRow) => void; onChanged: () => void }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)   // all the choices listed, or only the one that stands
   const [highlight, setHighlight] = useState<number | null>(null)   // an alternative clicked, not yet saved
@@ -172,6 +172,7 @@ function Card({ row, onPick, onChanged }: { row: CoverRow; onPick: (row: CoverRo
         <span className="type-caption text-muted-foreground">searched {when(row.searched)}</span>
         <span className="ml-auto flex gap-2">
           {row.chosen != null && <Button variant="ghost" onClick={() => void pick.run({ id: null, via: 'pick' })}>Clear choice</Button>}
+          <Button variant="ghost" title="Take the match back: this listen returns to the Matches page to be decided again" onClick={() => onBack(row)}>Back to matches</Button>
           <AsyncButton variant="outline" phase={again.phase} error={again.error} onClick={() => void again.run()} labels={{ idle: 'Search again', pending: 'Queuing…', done: 'Queued' }} />
         </span>
       </header>
@@ -243,6 +244,15 @@ export default function CoversPage({ pollMs = 2000 }: { pollMs?: number }) {
       setFailed(f => ({ ...f, [row.listen_id]: `${row.label}: ${e instanceof Error ? e.message : 'could not be saved'}` }))
     })
   }
+  const [sentBack, setSentBack] = useState<Set<number>>(new Set())   // listens whose match was taken back leave the page at once
+  const onBack = (row: CoverRow) => {
+    setSentBack(b => new Set(b).add(row.listen_id))
+    setFailed(f => { const { [row.listen_id]: _, ...rest } = f; return rest })
+    coverApi.unaccept(row.listen_id).then(() => { void qc.invalidateQueries({ queryKey: ['match-summary'] }) }, (e: unknown) => {
+      setSentBack(b => { const n = new Set(b); n.delete(row.listen_id); return n })
+      setFailed(f => ({ ...f, [row.listen_id]: `${row.label}: ${e instanceof Error ? e.message : 'could not be sent back'}` }))
+    })
+  }
   const shownRow = (r: CoverRow): CoverRow => { const o = over[r.listen_id]; return o ? { ...r, chosen: o.image, state: o.image != null ? 'chosen' : r.covers.length ? 'choose' : 'none' } : r }
   const d = load.status === 'ready' ? load.data : null
   const running = !!d?.job.running
@@ -266,7 +276,7 @@ export default function CoversPage({ pollMs = 2000 }: { pollMs?: number }) {
         {() => (
           <DataView state={load} isEmpty={x => x.rows.length === 0} skeleton={<div className="space-y-3">{[0, 1].map(i => <Skeleton key={i} className="h-48 w-full" />)}</div>}
             empty={<EmptyState title="Nothing here yet">{(d?.waiting ?? 0) > 0 ? 'Press Search for covers to look for the pictures.' : 'No search has run on a listen like this.'}</EmptyState>}>
-            {x => <div className="space-y-4">{Object.entries(failed).map(([id, m]) => <p key={id} role="alert" className="type-body-sm text-danger">Not saved — {m}</p>)}{x.rows.map(shownRow).filter(r => state === 'all' || r.state === (state || 'choose')).map(r => <Card key={r.listen_id} row={r} onPick={onPick} onChanged={reload} />)}{x.total > x.rows.length && <p className="type-caption text-muted-foreground">Showing {x.rows.length} of {x.total}; search to narrow it.</p>}</div>}
+            {x => <div className="space-y-4">{Object.entries(failed).map(([id, m]) => <p key={id} role="alert" className="type-body-sm text-danger">Not saved — {m}</p>)}{x.rows.map(shownRow).filter(r => !sentBack.has(r.listen_id)).filter(r => state === 'all' || r.state === (state || 'choose')).map(r => <Card key={r.listen_id} row={r} onPick={onPick} onBack={onBack} onChanged={reload} />)}{x.total > x.rows.length && <p className="type-caption text-muted-foreground">Showing {x.rows.length} of {x.total}; search to narrow it.</p>}</div>}
           </DataView>
         )}
       </Tabs>

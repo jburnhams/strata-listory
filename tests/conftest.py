@@ -24,6 +24,7 @@ def isolated_env(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("USERPROFILE", str(base / "home"))
     monkeypatch.setenv("APP_HOME", str(base / "app-home"))
     monkeypatch.setenv("APP_DATA", str(base / "data"))
+    monkeypatch.setenv("APP_COVER_SWEEP_SECONDS", "0")  # no background sweep of the live catalogue from a test
     # Tests that explicitly unset APP_DATA must still never reach the real catalogue.
     from app import settings
 

@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.covers import run as R
 from app.store.api import _engine, get_session
-from app.store.models import CoverCandidate, CoverImage, CoverRun, Listen, ListenChoice
+from app.store.models import CoverCandidate, CoverImage, CoverRun, Listen, ListenChoice, ListenPart
 
 router = APIRouter(prefix="/api/covers")
 
@@ -172,6 +172,20 @@ def covers(
     """Listens a cover search has run on, newest search first. `state`: choose (covers found, none chosen), chosen, none (nothing found); empty = all."""
     limit = max(1, min(limit, 100))
     runs = _latest_runs(s)
+    accepted = set(
+        s.scalars(
+            select(ListenPart.listen_id).where(
+                ListenPart.listen_id.in_(list(runs) or [0]),
+                ListenPart.role.in_(("match", "candidate")),
+                ListenPart.state == "accepted",
+                ListenPart.unlinked_at.is_(None),
+                ListenPart.work_id.is_not(None),
+            )
+        )
+    )
+    runs = {
+        lid: r for lid, r in runs.items() if lid in accepted
+    }  # a match taken back leaves the page until it is accepted again
     listens = {l.id: l for l in s.scalars(select(Listen).where(Listen.id.in_(list(runs) or [0])))}
     chosen = _chosen(s, list(runs))
     with_pictures = set(
@@ -275,6 +289,22 @@ def choose(listen_id: int, b: Choice, s: Session = Depends(get_session)):
     if img is not None:
         _relearn_every(s)
     return dict(ok=True, chosen=b.image_id)
+
+
+@router.post("/{listen_id}/unaccept")
+def unaccept(listen_id: int, s: Session = Depends(get_session)):
+    """Take back the listen's accepted or approved match: it goes back to the match queue and leaves this page."""
+    from app.linkage import apply
+
+    listen = s.get(Listen, listen_id)
+    if listen is None:
+        raise HTTPException(404, "no such listen")
+    try:
+        apply.reopen(s, listen)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    s.commit()
+    return dict(ok=True)
 
 
 @router.get("/image/{image_id}")

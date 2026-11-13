@@ -85,7 +85,7 @@ const listenRows = [
   { id: 2, label: 'Persuader', kind: 'book', status: 'grouped', files: 99, bytes: 5e8, minutes: 45, group_id: 3, path: '/audio/Lee Child/Persuader', copies: 1, parts: 2, author: 'Lee Child', narrator: null, year: null, kind_info: kindInfos.close },
   { id: 3, label: 'Dead Ringers (season 11)', kind: 'radio_series', status: 'grouped', files: 6, bytes: 1e8, minutes: 0, group_id: null, path: null, copies: 1, parts: 0, author: null, narrator: null, year: null, kind_info: kindInfos.series },
 ]
-export const coverState: { rows: import('../../src/api').CoverRow[]; waiting: number; chosen: { listen: number; image: number | null; via?: string }[]; runs: { ids: number[] | null }[]; job: import('../../src/api').CoverJob } = { rows: [], waiting: 0, chosen: [], runs: [], job: { running: false, queued: 0, current: '', error: '', failed: [] } }
+export const coverState: { rows: import('../../src/api').CoverRow[]; waiting: number; chosen: { listen: number; image: number | null; via?: string }[]; runs: { ids: number[] | null }[]; sentBack: number[]; job: import('../../src/api').CoverJob } = { rows: [], waiting: 0, chosen: [], runs: [], sentBack: [], job: { running: false, queued: 0, current: '', error: '', failed: [] } }
 export function resetCovers() {
   const src = (source: string, ref: string, image_id: number, width = 500, height = 500, bytes = 80_000) => ({ source, ref, label: '', url: null, image_id, width, height, bytes })
   const sig = (name: string, weight: number, detail = '') => ({ name, weight, detail })
@@ -96,7 +96,7 @@ export function resetCovers() {
     { listen_id: 2, label: 'Salt Roads', kind: 'book', run_id: 2, searched: '2026-11-12T10:05:00', state: 'none', chosen: null, covers: [], sources: [{ source: 'audible', status: 'skipped', detail: 'no ASIN known for this book', count: 0 }, { source: 'apple', status: 'none', detail: '8 results, none with a matching title', count: 0 }], source: { title: 'Salt Roads', author: '', narrator: '', minutes: null, year: '', files: null, folder: '' }, match: null },
     { listen_id: 3, label: 'Third Book', kind: 'radio_show', run_id: 3, searched: '2026-11-12T10:09:00Z', state: 'chosen', chosen: 31, covers: [{ image_id: 31, width: 800, height: 800, bytes: 90_000, sources: [src('folder', 'cover.jpg', 31, 800, 800, 90_000)], members: [31, 32], score: 1.8, share: 1, signals: [sig('from the listen\'s files', 1)] }], sources: [], source: { title: 'Third Book', author: 'Mara Quill', narrator: 'Anna Bell', minutes: 600, year: '1999', files: 12, folder: 'Glass Orchard' }, match: { title: 'Glass Orchard', author: 'Mara Quill', narrator: 'Ben Hart', minutes: 690, year: '1999', recordings: 2, all_recordings: [{ asin: 'B0A', narrator: 'Ben Hart', minutes: 690, year: '2012', format: 'unabridged' }, { asin: 'B0B', narrator: 'Anna Bell', minutes: 600, year: '2015', format: 'abridged' }], probability: 0.99, accepted_by: 'model' } },
   ]
-  coverState.waiting = 2; coverState.chosen = []; coverState.runs = []; coverState.job = { running: false, queued: 0, current: '', error: '', failed: [] }
+  coverState.waiting = 2; coverState.chosen = []; coverState.runs = []; coverState.sentBack = []; coverState.job = { running: false, queued: 0, current: '', error: '', failed: [] }
 }
 resetCovers()
 
@@ -134,6 +134,7 @@ export const handlers = [
     return HttpResponse.json({ total: rows.length + (q === 'big' ? 30 : 0), counts: { choose: count('choose'), chosen: count('chosen'), none: count('none') }, waiting: coverState.waiting, rows, job: coverState.job })
   }),
   http.post('/api/covers/run', async ({ request }) => { const b = await request.json() as { listen_ids: number[] | null }; coverState.runs.push({ ids: b.listen_ids }); return HttpResponse.json({ queued: 1, listen_ids: b.listen_ids ?? [] }, { status: 202 }) }),
+  http.post('/api/covers/:id/unaccept', ({ params }) => { coverState.sentBack.push(Number(params.id)); return HttpResponse.json({ ok: true }) }),
   http.post('/api/covers/:id/choose', async ({ request, params }) => {
     const b = await request.json() as { image_id: number | null; via: string }
     coverState.chosen.push({ listen: Number(params.id), image: b.image_id, via: b.via })

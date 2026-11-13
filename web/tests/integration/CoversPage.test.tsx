@@ -143,6 +143,23 @@ describe('CoversPage', () => {
     expect(within(all).getByRole('button', { name: /^Selected cover 500 by 750/, pressed: true })).toBeInTheDocument()
   })
 
+  it('takes a match back from the card: the listen leaves at once and goes back to the matches', async () => {
+    const { user } = setup(<CoversPage />, { route: '/covers' })
+    const card = await screen.findByRole('article', { name: 'Glass Orchard' })
+    await user.click(within(card).getByRole('button', { name: 'Back to matches' }))
+    await waitFor(() => expect(screen.queryByRole('article', { name: 'Glass Orchard' })).toBeNull())
+    await waitFor(() => expect(coverState.sentBack).toEqual([1]))
+  })
+
+  it('brings the card back with a message when taking the match back is refused', async () => {
+    server.use(http.post('/api/covers/:id/unaccept', () => HttpResponse.json({ detail: 'this listen has no accepted match to take back' }, { status: 409 })))
+    const { user } = setup(<CoversPage />, { route: '/covers' })
+    const card = await screen.findByRole('article', { name: 'Glass Orchard' })
+    await user.click(within(card).getByRole('button', { name: 'Back to matches' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Glass Orchard: this listen has no accepted match to take back')
+    expect(await screen.findByRole('article', { name: 'Glass Orchard' })).toBeInTheDocument()
+  })
+
   it('collapses again without saving, and says why a picture ranks where it does', async () => {
     const { user } = setup(<CoversPage />, { route: '/covers' })
     const card = await screen.findByRole('article', { name: 'Glass Orchard' })
