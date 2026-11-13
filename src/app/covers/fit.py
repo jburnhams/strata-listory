@@ -196,12 +196,24 @@ Example = tuple[
 ]  # each picture's hand-set signals, the index of the chosen one, the sample weight
 
 
+def _loss(xs, m, names) -> float:
+    """The documented objective: the weighted log loss of the chosen pictures plus the pull toward the hand-set weights."""
+    out = PRIOR_STRENGTH / 2 * sum((m[n] - 1) ** 2 for n in names)
+    for pics, chosen, w in xs:
+        z = [sum(m[n] * v for n, v in p.items()) for p in pics]
+        top = max(z)
+        out += w * (top + math.log(sum(math.exp(t - top) for t in z)) - z[chosen])
+    return out
+
+
 def fit_params(examples: list[Example], labels: dict[str, int] | None = None) -> Params:
-    """Fit the multipliers on the examples (one per labelled listen with at least two pictures), regularised toward the hand-set weights."""
+    """Fit the multipliers on the examples (one per labelled listen with at least two pictures), regularised toward the hand-set weights. Every multiplier moves by its own Newton step (the curvature is the diagonal only, so signals that always occur together could overshoot as a set); the step is halved until the objective goes down, so it never oscillates, and stops when no step helps."""
     xs = [([{s.name: s.weight for s in sigs} for sigs in pics], chosen, w) for pics, chosen, w in examples]
     names = sorted({n for pics, _, _ in xs for p in pics for n in p})
     m = dict.fromkeys(names, 1.0)
     seen = {n: sum(1 for pics, _, _ in xs if any(n in p for p in pics)) for n in names}
+    lo, hi = MULT_RANGE
+    here = _loss(xs, m, names)
     for _ in range(STEPS):
         g = {n: PRIOR_STRENGTH * (m[n] - 1) for n in names}
         h = dict.fromkeys(names, PRIOR_STRENGTH)
@@ -216,8 +228,15 @@ def fit_params(examples: list[Example], labels: dict[str, int] | None = None) ->
                 var = sum(pj * p.get(n, 0.0) ** 2 for pj, p in zip(pr, pics, strict=True)) - mean * mean
                 g[n] += w * (mean - pics[chosen].get(n, 0.0))
                 h[n] += w * var
-        for n in names:
-            m[n] = min(MULT_RANGE[1], max(MULT_RANGE[0], m[n] - g[n] / h[n]))
+        step = {n: g[n] / h[n] for n in names}
+        for damp in (1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125):
+            trial = {n: min(hi, max(lo, m[n] - damp * step[n])) for n in names}
+            after = _loss(xs, trial, names)
+            if after < here - 1e-12:
+                m, here = trial, after
+                break
+        else:
+            break  # no step lowers the objective: converged
     return Params(
         mult={n: round(v, 4) for n, v in m.items()}, seen=seen, labels=dict(labels or {}), trained=time.time()
     )

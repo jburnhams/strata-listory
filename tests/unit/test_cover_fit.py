@@ -131,3 +131,25 @@ def test_the_learned_weights_are_saved_and_read_back(tmp_path, monkeypatch):
     assert fit.load() == p
     fit.path().write_text("{nope")
     assert fit.load() is None
+
+
+def test_signals_that_occur_together_do_not_make_the_fit_oscillate():
+    # the shape a reviewer reproduced: a large print cover always chosen over an audiobook cover that matches in title, recording and runtime
+    audio = pic(600, 600, ("audible", "B0AAA", "The Glass Orchard"), id=1)
+    big = pic(3000, 4500, ("openlibrary", "isbn", "ISBN"), id=2)
+    examples = [example(1, audio, big) for _ in range(4)]
+    params = fit.fit_params(examples)
+    loss = lambda p: fit._loss(
+        [([{s.name: s.weight for s in sigs} for sigs in pics], c, w) for pics, c, w in examples],
+        {n: p.mult.get(n, 1.0) for n in params.mult},
+        sorted(params.mult),
+    )
+    assert loss(params) < loss(fit.Params(mult={}))  # the fit is better than the hand-set weights
+    longer = fit.STEPS
+    try:
+        fit.STEPS = longer + 1  # one more iteration must not flip the answer
+        again = fit.fit_params(examples)
+    finally:
+        fit.STEPS = longer
+    shares = lambda p: next(r.share for r in fit.rank([audio, big], BOOK, p) if r.group is big)
+    assert abs(shares(params) - shares(again)) < 0.05
