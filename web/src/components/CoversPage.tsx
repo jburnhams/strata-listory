@@ -65,14 +65,14 @@ function Thumb({ p, big, onZoom }: { p: CoverPicture; big?: boolean; onZoom: () 
   return (
     <div className={`relative ${big ? 'w-48' : 'w-full'} shrink-0`}>
       <img src={coverApi.image(p.image_id, big ? 480 : 320)} alt="" loading="lazy" className="aspect-[2/3] w-full rounded-control bg-muted object-contain" />
-      <IconButton icon={ZoomIn} label={`Magnify cover ${p.width} by ${p.height}, from ${from(p)}`} variant="ghost" size="sm" className="absolute right-1 top-1 bg-card/80" onClick={onZoom} />
+      <IconButton icon={ZoomIn} label={`Magnify cover ${p.width} by ${p.height}, from ${from(p)}`} variant="ghost" size="sm" className="absolute right-1 top-1 bg-card/80" onClick={e => { e.stopPropagation(); onZoom() }} />
     </div>
   )
 }
 
 function Option({ p, rank, highlighted, saved, onHighlight, onZoom }: { p: CoverPicture; rank: number; highlighted: boolean; saved: boolean; onHighlight: () => void; onZoom: () => void }) {
   return (
-    <div className={`flex w-48 flex-col gap-1 rounded-surface border p-2 transition-state ${highlighted ? 'border-ring bg-muted' : 'border-border'}`}>
+    <div onClick={onHighlight} className={`flex w-48 flex-col gap-1 rounded-surface border p-2 transition-state ${highlighted ? 'border-ring bg-muted ring-2 ring-ring' : 'cursor-pointer border-border hover:bg-muted/50'}`}>
       <Thumb p={p} onZoom={onZoom} />
       <button type="button" aria-pressed={highlighted} aria-label={`${highlighted ? 'Selected cover' : 'Select cover'} ${p.width} by ${p.height}, from ${from(p)}`} onClick={onHighlight} className="space-y-0.5 rounded-control text-left transition-state hover:text-foreground">
         <span className="type-body-sm">{rank === 0 ? <b>Best fit</b> : `Fit ${rank + 1}`} · {Math.round(p.share * 100)}%{saved && <> · <b>saved</b></>}</span>
