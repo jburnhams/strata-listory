@@ -192,6 +192,11 @@ def store_image(s: Session, data: bytes) -> CoverImage | None:
     dims = imaging.size(data) if ext else None
     if not ext or len(data) < imaging.MIN_BYTES or not dims or min(dims) < imaging.MIN_SIDE:
         return None
+    trimmed = imaging.trim_padding(
+        data
+    )  # a book on a plain square canvas is stored as the book: its shape and size are what count when pictures are ranked and merged
+    if trimmed:
+        data, dims = trimmed, imaging.size(trimmed) or dims
     sha = hashlib.sha256(data).hexdigest()
     img = s.scalars(select(CoverImage).where(CoverImage.sha256 == sha)).first()
     if img:

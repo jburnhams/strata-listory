@@ -619,3 +619,12 @@ def test_confirming_a_match_queues_its_cover_search_once(s):
     assert [t["options"] for t in jobs.tasks("covers")] == [dict(listen_id=a.id)]
     client.post("/api/matches/decide", json=body)
     assert len(jobs.tasks("covers")) == 1  # the same job, not a second
+
+
+def test_a_picture_with_plain_bands_is_stored_without_them(s, monkeypatch):
+    padded, book = jpeg(1000, 1000), jpeg(594, 1000)
+    monkeypatch.setattr(imaging, "trim_padding", lambda b: book if b == padded else None)
+    img = R.store_image(s, padded)
+    assert (img.width, img.height, img.size) == (594, 1000, len(book))
+    assert img.sha256 == hashlib.sha256(book).hexdigest()
+    assert R.store_image(s, book).id == img.id  # the same cover offered without the bands is the same picture
