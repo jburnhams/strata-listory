@@ -449,3 +449,96 @@ def test_podcast_artwork_is_for_radio_listens_whose_title_matches(monkeypatch):
     assert sources.podcast(sources.Context(radio=True, title="T"))[1]["status"] == "limited"
     monkeypatch.setattr(net, "get", lambda url, **k: reply(200, b"nope"))
     assert sources.podcast(sources.Context(radio=True, title="T"))[1]["status"] == "error"
+
+
+def _canvas(n, left=0, right=0, top=0, bottom=0, band=(245, 243, 225), art=(20, 30, 60), corner=None):
+    """Raw RGB of an n x n copy: `art` inside, `band` in the given widths at the edges (`corner` paints the top-left cell another colour)."""
+    rows = []
+    for y in range(n):
+        row = []
+        for x in range(n):
+            padded = x < left or x >= n - right or y < top or y >= n - bottom
+            row.append(band if padded else art)
+        rows.append(row)
+    if corner:
+        rows[0][0] = corner
+    return b"".join(bytes(p) for r in rows for p in r)
+
+
+def test_padding_finds_a_plain_band_down_both_sides_of_a_book_on_a_square_canvas():
+    n = imaging.GRID
+    found = imaging.padding(_canvas(n, left=n // 5, right=n // 5), n)
+    assert found == pytest.approx((0.2, 0.0, 0.2, 0.0), abs=0.01)
+    assert imaging.padding(_canvas(n, top=n // 6, bottom=n // 6), n) == pytest.approx((0, 1 / 6, 0, 1 / 6), abs=0.01)
+
+
+def test_padding_tolerates_compression_noise_in_the_band():
+    n = imaging.GRID
+    px = bytearray(_canvas(n, left=n // 5, right=n // 5))
+    for i in range(0, len(px), 7):
+        px[i] = max(0, px[i] - 6)
+    assert imaging.padding(bytes(px), n) is not None
+
+
+def test_padding_leaves_alone_what_is_not_a_centred_canvas():
+    n = imaging.GRID
+    assert imaging.padding(_canvas(n), n) is None  # no band
+    assert imaging.padding(_canvas(n, left=2, right=2), n) is None  # too thin
+    assert (
+        imaging.padding(_canvas(n, left=n // 5, right=n // 5, top=n // 5, bottom=n // 5), n) is None
+    )  # plain all round: a white cover or a logo, not a canvas
+    assert (
+        imaging.padding(_canvas(n, left=n // 3, right=n // 8), n) is None
+    )  # one side only, or lopsided: art that happens to be plain at one edge
+    assert (
+        imaging.padding(_canvas(n, left=n // 5, right=n // 5, corner=(0, 0, 0)), n) is None
+    )  # the corners are not one colour
+    assert (
+        imaging.padding(_canvas(n, left=n * 2 // 5 + 4, right=n * 2 // 5 + 4), n) is None
+    )  # nothing much left of the picture
+    assert (
+        imaging.padding(_canvas(n, left=n // 2, right=n // 2, art=(245, 243, 225)), n) is None
+    )  # nothing but the band's colour
+    assert imaging.padding(b"short", n) is None
+
+
+def test_trim_padding_crops_the_original_and_keeps_it_when_anything_fails(monkeypatch):
+    monkeypatch.setattr(imaging.shutil, "which", lambda n: "/usr/bin/ffmpeg")
+    big = jpeg(1000, 1000)
+    n = imaging.GRID
+    calls = []
+
+    def run(cmd, **k):
+        calls.append(cmd)
+        if "rawvideo" in cmd:
+            return _Done(_canvas(n, left=n // 5, right=n // 5))
+        w, h = (int(v) for v in next(a for a in cmd if a.startswith("crop="))[5:].split(":")[:2])
+        return _Done(jpeg(w, h))  # what the encoder would give: the cropped size
+
+    monkeypatch.setattr(imaging.subprocess, "run", run)
+    out = imaging.trim_padding(big)
+    assert imaging.size(out) == (594, 1000)
+    crop = next(a for a in calls[-1] if a.startswith("crop="))
+    w, h, x, y = (int(v) for v in crop[5:].split(":"))
+    assert (
+        (h, y) == (1000, 0) and 590 <= w <= 600 and 195 <= x <= 205
+    )  # the band's width plus one cell each side is cut
+    monkeypatch.setattr(
+        imaging.subprocess,
+        "run",
+        lambda cmd, **k: _Done(_canvas(n, left=n // 5, right=n // 5)) if "rawvideo" in cmd else _Done(jpeg(300, 300)),
+    )
+    assert imaging.trim_padding(big) is None  # an encoder that gave the wrong size
+    monkeypatch.setattr(imaging.subprocess, "run", lambda cmd, **k: _Done(_canvas(n)))
+    assert imaging.trim_padding(big) is None  # nothing to cut
+    monkeypatch.setattr(imaging.subprocess, "run", lambda cmd, **k: _Done(b"x", 1))
+    assert imaging.trim_padding(big) is None
+
+    def boom(*a, **k):
+        raise OSError("gone")
+
+    monkeypatch.setattr(imaging.subprocess, "run", boom)
+    assert imaging.trim_padding(big) is None
+    assert imaging.trim_padding(b"not a picture") is None
+    monkeypatch.setattr(imaging.shutil, "which", lambda n: None)
+    assert imaging.trim_padding(big) is None

@@ -46,6 +46,12 @@ def content_hash(monkeypatch):
     monkeypatch.setattr(imaging, "dhash", lambda b: hashlib.sha256(b).hexdigest()[:16])
 
 
+@pytest.fixture(autouse=True)
+def no_trimming(monkeypatch):
+    """Made-up pictures cannot be decoded, so no decoder is started for them; a test about plain bands sets its own."""
+    monkeypatch.setattr(imaging, "trim_padding", lambda b: None)
+
+
 def make_listen(
     s, title="Glass Orchard", asins=("B0A",), isbns=("9780000000002",), accepted=True, kind="book", detail=None, ids=()
 ):
@@ -620,3 +626,33 @@ def test_confirming_a_match_queues_its_cover_search_once(s):
     assert [t["options"] for t in jobs.tasks("covers")] == [dict(listen_id=a.id)]
     client.post("/api/matches/decide", json=body)
     assert len(jobs.tasks("covers")) == 1  # the same job, not a second
+
+
+def test_a_picture_with_plain_bands_is_stored_without_them(s, monkeypatch):
+    padded, book = jpeg(1000, 1000), jpeg(594, 1000)
+    monkeypatch.setattr(imaging, "trim_padding", lambda b: book if b == padded else None)
+    img = R.store_image(s, padded)
+    assert (img.width, img.height, img.size) == (594, 1000, len(book))
+    assert img.sha256 == hashlib.sha256(book).hexdigest()
+    assert R.store_image(s, book).id == img.id  # the same cover offered without the bands is the same picture
+
+
+def test_searching_again_trims_a_padded_picture_stored_before_trimming_existed(s, monkeypatch, tmp_path):
+    monkeypatch.setattr(imaging, "trim_padding", lambda b: None)
+    padded, book = png(1000, 1000), png(594, 1000)
+    a = make_listen(s)
+
+    def offer(ctx):
+        return [S.Item("apple", "1", "Glass Orchard", "https://example.test/c.png")], S.record("apple", [1], [])
+
+    monkeypatch.setattr(
+        R.net, "get", lambda url, **k: type("Got", (), dict(ok=True, status=200, body=padded, error=""))()
+    )
+    first = R.search(s, a, run_sources=[("apple", offer)])
+    old = s.scalars(select(CoverCandidate).where(CoverCandidate.run_id == first.id)).one()
+    assert s.get(CoverImage, old.image_id).width == 1000
+    monkeypatch.setattr(imaging, "trim_padding", lambda b: book if b == padded else None)
+    monkeypatch.setattr(R.net, "get", lambda url, **k: (_ for _ in ()).throw(AssertionError("not downloaded again")))
+    again = R.search(s, a, run_sources=[("apple", offer)])
+    new = s.scalars(select(CoverCandidate).where(CoverCandidate.run_id == again.id)).one()
+    assert s.get(CoverImage, new.image_id).width == 594
