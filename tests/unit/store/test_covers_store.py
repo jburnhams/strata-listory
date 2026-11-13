@@ -546,3 +546,22 @@ def test_the_target_runtime_adds_up_numbered_parts_of_one_recording(s):
         input_part(s, a, minutes, n).detail = {"minutes": minutes, "relation": "part"}
     s.flush()
     assert R.target(s, a).minutes == 600.0
+
+
+def test_confirming_a_match_queues_its_cover_search_once(s):
+    from app.linkage import api as linkage_api
+    from app.store.models import ListenPart
+
+    a = make_listen(s, "Alpha")
+    s.commit()
+    part = s.scalars(select(ListenPart).where(ListenPart.listen_id == a.id, ListenPart.role == "match")).one()
+    app = FastAPI()
+    app.include_router(linkage_api.router)
+    app.state.jobs = jobs = JobQueue(None)
+    app.dependency_overrides[store_api.get_session] = lambda: s
+    client = TestClient(app)
+    body = dict(listen_id=a.id, action="approve", part_id=part.id)
+    assert client.post("/api/matches/decide", json=body).json()["ok"]
+    assert [t["options"] for t in jobs.tasks("covers")] == [dict(listen_id=a.id)]
+    client.post("/api/matches/decide", json=body)
+    assert len(jobs.tasks("covers")) == 1  # the same job, not a second
