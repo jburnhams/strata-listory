@@ -1,12 +1,13 @@
 // The one question: "Which cover does each listen get?" The finding: how many listens are waiting for a search, how many have pictures to choose from and how many found none.
 // Why it is shaped this way: the cover job (src/app/covers) searches every source for each confirmed or accepted listen and ranks what it found by fit (covers/fit.py: audiobook over print, the same recording, resolution, shape...). Most listens only need a yes, so a card opens on the best fit already selected with its sources and an Accept button; the other choices are one Expand away, where a click highlights an alternative and Save keeps it. Any picture can be magnified in the Lightbox (arrow keys step through the choices). The saved cover is for the next stage.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router'
 import { ZoomIn } from 'lucide-react'
 import { AsyncButton, Button, DataView, Disclosure, EmptyState, Field, IconButton, Input, Lightbox, PageHeader, Skeleton, Status, Tabs, format, useAsyncAction, useJob, type Tone } from 'strata-react'
-import { api, coverApi, type CoverJob, type CoverPicture, type CoverRow, type CoverStatus } from '../api'
+import { api, coverApi, type CoverJob, type CoverMatch, type CoverFiles, type CoverPicture, type CoverRow, type CoverStatus } from '../api'
 import { size } from './FilesPage'
+import { hours } from './ListensPage'
 
 const SOURCE: Record<string, string> = { audible: 'Audible', audnexus: 'Audnexus', openlibrary: 'Open Library', apple: 'Apple Books', google: 'Google Books', folder: 'Your folder', embedded: 'In the audio', local: 'Your files', bbc: 'BBC', podcast: 'Apple Podcasts', wikidata: 'Wikimedia' }
 const name = (s: string) => SOURCE[s] ?? s
@@ -82,12 +83,54 @@ function Option({ p, rank, highlighted, saved, onHighlight, onZoom }: { p: Cover
   )
 }
 
-function Card({ row, onChanged }: { row: CoverRow; onChanged: () => void }) {
+const words = (s: string) => new Set(s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(w => w.length > 1))
+/** Agree when every word of the shorter reading is in the longer (initials and order do not matter), differ when both say something, nothing to say when one is empty. */
+export function agree(a: string, b: string): 'same' | 'differs' | null {
+  const x = words(a), y = words(b)
+  if (!x.size || !y.size) return null
+  const [small, big] = x.size <= y.size ? [x, y] : [y, x]
+  return [...small].every(w => big.has(w)) ? 'same' : 'differs'
+}
+export function lengthDelta(a: number | null, b: number | null): { tone: 'same' | 'differs' | null; text: string } {
+  if (!a || !b) return { tone: null, text: '' }
+  const pct = (a - b) / b * 100
+  return { tone: Math.abs(pct) <= 3 ? 'same' : 'differs', text: Math.abs(pct) < 0.5 ? 'same length' : `${pct > 0 ? '+' : '−'}${Math.abs(pct).toFixed(0)}%` }
+}
+const MARK = { same: ['success', 'same'], differs: ['danger', 'differs'] } as const
+
+/** The listen's own files against the match it was accepted with, so one look says whether the best fit is the right recording (same reader, same length). */
+function Compare({ source, match }: { source: CoverFiles; match: CoverMatch | null }) {
+  const len = lengthDelta(source.minutes, match?.minutes ?? null)
+  const rows: { label: string; mine: string; theirs: string; tone: 'same' | 'differs' | null; note?: string }[] = [
+    { label: 'Title', mine: source.title, theirs: match?.title ?? '', tone: match ? agree(source.title, match.title) : null },
+    { label: 'Author', mine: source.author, theirs: match?.author ?? '', tone: match ? agree(source.author, match.author) : null },
+    { label: 'Read by', mine: source.narrator, theirs: match?.narrator ?? '', tone: match ? agree(source.narrator, match.narrator) : null },
+    { label: 'Length', mine: source.minutes ? hours(source.minutes) : '', theirs: match?.minutes ? hours(match.minutes) : '', tone: len.tone, note: len.text },
+    { label: 'Year', mine: source.year.slice(0, 4), theirs: match?.year.slice(0, 4) ?? '', tone: match ? agree(source.year.slice(0, 4), match.year.slice(0, 4)) : null },
+  ]
+  return (
+    <table aria-label="Your files against the match" className="type-caption">
+      <thead><tr className="text-left text-muted-foreground"><th className="pr-3 font-normal" /><th className="pr-3 font-normal">Your files</th><th className="pr-3 font-normal">Matched work</th><th className="font-normal" /></tr></thead>
+      <tbody>
+        {rows.map(r => (
+          <tr key={r.label} className="align-baseline">
+            <th scope="row" className="pr-3 text-left font-normal text-muted-foreground">{r.label}</th>
+            <td className="pr-3">{r.mine || '–'}</td>
+            <td className="pr-3">{r.theirs || (match ? '–' : '')}</td>
+            <td>{r.tone && <Status tone={MARK[r.tone][0]}>{r.note || MARK[r.tone][1]}</Status>}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function Card({ row, onPick, onChanged }: { row: CoverRow; onPick: (row: CoverRow, id: number | null, via: 'pick' | 'accept') => Promise<void>; onChanged: () => void }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)   // all the choices listed, or only the one that stands
   const [highlight, setHighlight] = useState<number | null>(null)   // an alternative clicked, not yet saved
   const [zoom, setZoom] = useState<number | null>(null)
-  const pick = useAsyncAction(async ({ id, via }: { id: number | null; via: 'pick' | 'accept' }) => { await coverApi.choose(row.listen_id, id, via); setHighlight(null); setOpen(false); onChanged(); void qc.invalidateQueries({ queryKey: ['covers'] }) }, { settleMs: 800 })
+  const pick = useAsyncAction(async ({ id, via }: { id: number | null; via: 'pick' | 'accept' }) => { setHighlight(null); setOpen(false); await onPick(row, id, via) }, { settleMs: 800 })   // the page decides whether the card goes at once and the write follows in the background
   const again = useAsyncAction(async () => { await coverApi.run([row.listen_id]); onChanged() }, { settleMs: 800 })
   const best = row.covers[0]   // best fit first: the server ranks them
   const saved = row.covers.find(p => row.chosen != null && p.members.includes(row.chosen))
@@ -112,6 +155,7 @@ function Card({ row, onChanged }: { row: CoverRow; onChanged: () => void }) {
           <div className="min-w-0 flex-1 space-y-2">
             <p className="type-body-sm">{saved ? <b>Saved cover</b> : <b>Best fit</b>} · {shown.width}×{shown.height} · {size(shown.bytes)}</p>
             <Offered p={shown} />
+            <Compare source={row.source} match={row.match} />
             <Why p={shown} />
             <div className="flex flex-wrap items-center gap-2">
               {!saved && <Button variant="outline" onClick={() => void pick.run({ id: shown.image_id, via: 'accept' })}>Accept</Button>}
@@ -122,6 +166,7 @@ function Card({ row, onChanged }: { row: CoverRow; onChanged: () => void }) {
       )}
       {shown && open && (
         <div className="space-y-3" role="group" aria-label={`Covers for ${row.label}`}>
+          <Compare source={row.source} match={row.match} />
           <div className="flex flex-wrap gap-3">{row.covers.map((p, i) => <Option key={p.image_id} p={p} rank={i} highlighted={selected === p} saved={saved === p} onHighlight={() => setHighlight(p.image_id)} onZoom={() => setZoom(i)} />)}</div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" disabled={selected === saved || pick.phase === 'pending'} onClick={() => void pick.run({ id: selected.image_id, via: selected === best ? 'accept' : 'pick' })}>Save</Button>
@@ -151,9 +196,32 @@ export default function CoversPage({ pollMs = 2000 }: { pollMs?: number }) {
   const load = useJob({ queryKey: ['covers', state, q], queryFn: () => coverApi.list(state === 'all' ? '' : state, q), staleTime: 0, every: pollMs, isRunning: x => x.job.running })   // polled while a search runs: the page fills as each listen is finished
   const reload = load.poll
   const start = useAsyncAction(async () => { await coverApi.run(); reload() }, { settleMs: 800 })
+  // a choice shows at once and the write follows in the background: the page answers from what was clicked, never from a refetch of the whole list
+  const [over, setOver] = useState<Record<number, { image: number | null; from: CoverRow['state'] }>>({})
+  const [failed, setFailed] = useState<Record<number, string>>({})
+  const pending = useRef(0)   // writes still on their way: the clicked state stands until the last one has been read back
+  const qc = useQueryClient()
+  const onPick = async (row: CoverRow, id: number | null, via: 'pick' | 'accept') => {
+    setOver(o => ({ ...o, [row.listen_id]: { image: id, from: o[row.listen_id]?.from ?? row.state } }))
+    setFailed(f => { const { [row.listen_id]: _, ...rest } = f; return rest })
+    pending.current++
+    coverApi.choose(row.listen_id, id, via).then(async () => {
+      pending.current--
+      if (pending.current > 0) return
+      await qc.refetchQueries({ queryKey: ['covers'], type: 'active' })   // in the background: brings in the next listens and the server's own counts
+      if (pending.current === 0) setOver({})
+    }, (e: unknown) => {
+      pending.current--
+      setOver(o => { const { [row.listen_id]: _, ...rest } = o; return rest })
+      setFailed(f => ({ ...f, [row.listen_id]: `${row.label}: ${e instanceof Error ? e.message : 'could not be saved'}` }))
+    })
+  }
+  const shownRow = (r: CoverRow): CoverRow => { const o = over[r.listen_id]; return o ? { ...r, chosen: o.image, state: o.image != null ? 'chosen' : r.covers.length ? 'choose' : 'none' } : r }
   const d = load.status === 'ready' ? load.data : null
   const running = !!d?.job.running
-  const finding = d ? `${format.count(d.waiting, 'listen')} waiting for a search · ${d.counts.choose} to choose · ${d.counts.chosen} chosen · ${d.counts.none} with none found` : undefined
+  const counts = { ...(d?.counts ?? { choose: 0, chosen: 0, none: 0 }) }
+  for (const o of Object.values(over)) { const now = o.image != null ? 'chosen' : o.from === 'chosen' ? 'choose' : o.from; if (now !== o.from) { counts[o.from]--; counts[now]++ } }
+  const finding = d ? `${format.count(d.waiting, 'listen')} waiting for a search · ${counts.choose} to choose · ${counts.chosen} chosen · ${counts.none} with none found` : undefined
   return (
     <div className="space-y-5">
       <PageHeader title="Covers" scope="A picture for each listen, from every source that knows the book" finding={finding ? { text: finding } : undefined} />
@@ -167,11 +235,11 @@ export default function CoversPage({ pollMs = 2000 }: { pollMs?: number }) {
       <Field label="Search covers" hint="Every word must appear in the title">
         <Input type="search" value={typed} onChange={e => setTyped(e.target.value)} placeholder="e.g. glass orchard" />
       </Field>
-      <Tabs param="state" label="Cover state" items={[{ value: '', label: `To choose${d ? ` (${d.counts.choose})` : ''}` }, { value: 'chosen', label: `Chosen${d ? ` (${d.counts.chosen})` : ''}` }, { value: 'none', label: `None found${d ? ` (${d.counts.none})` : ''}` }, { value: 'all', label: 'All searched' }]}>
+      <Tabs param="state" label="Cover state" items={[{ value: '', label: `To choose${d ? ` (${counts.choose})` : ''}` }, { value: 'chosen', label: `Chosen${d ? ` (${counts.chosen})` : ''}` }, { value: 'none', label: `None found${d ? ` (${counts.none})` : ''}` }, { value: 'all', label: 'All searched' }]}>
         {() => (
           <DataView state={load} isEmpty={x => x.rows.length === 0} skeleton={<div className="space-y-3">{[0, 1].map(i => <Skeleton key={i} className="h-48 w-full" />)}</div>}
             empty={<EmptyState title="Nothing here yet">{(d?.waiting ?? 0) > 0 ? 'Press Search for covers to look for the pictures.' : 'No search has run on a listen like this.'}</EmptyState>}>
-            {x => <div className="space-y-4">{x.rows.map(r => <Card key={r.listen_id} row={r} onChanged={reload} />)}{x.total > x.rows.length && <p className="type-caption text-muted-foreground">Showing {x.rows.length} of {x.total}; search to narrow it.</p>}</div>}
+            {x => <div className="space-y-4">{Object.entries(failed).map(([id, m]) => <p key={id} role="alert" className="type-body-sm text-danger">Not saved — {m}</p>)}{x.rows.map(shownRow).filter(r => state === 'all' || r.state === (state || 'choose')).map(r => <Card key={r.listen_id} row={r} onPick={onPick} onChanged={reload} />)}{x.total > x.rows.length && <p className="type-caption text-muted-foreground">Showing {x.rows.length} of {x.total}; search to narrow it.</p>}</div>}
           </DataView>
         )}
       </Tabs>
