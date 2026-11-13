@@ -211,6 +211,16 @@ def store_image(s: Session, data: bytes) -> CoverImage | None:
     return img
 
 
+def retrimmed(s: Session, img: CoverImage) -> CoverImage:
+    """A picture downloaded before plain bands were cut off, as it would be stored now (the same row when it has none): searching again reuses a known address's picture without downloading it, and must not keep the padded one."""
+    try:
+        with open(image_path(img), "rb") as f:
+            data = f.read()
+    except OSError:
+        return img
+    return store_image(s, data) or img
+
+
 def search(s: Session, listen: Listen, *, run_sources=None) -> CoverRun:
     """Search every source for the listen, download what they offer and record the outcome (every source's status, and a candidate for each picture). `run_sources` replaces the source list (tests)."""
     ctx = context(s, listen)
@@ -239,6 +249,8 @@ def search(s: Session, listen: Listen, *, run_sources=None) -> CoverRun:
                     select(CoverCandidate).where(CoverCandidate.url == it.url).order_by(CoverCandidate.id.desc())
                 ).first()
                 img = s.get(CoverImage, known.image_id) if known else None
+                if img is not None:
+                    img = retrimmed(s, img)
                 if img is None:
                     r = net.get(it.url)
                     if r.status == 404:
