@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import TIMESTAMP, cast, func, select
 from sqlalchemy.orm import Session
@@ -273,7 +273,7 @@ class Decision(BaseModel):
 
 
 @router.post("/decide")
-def decide(d: Decision, s: Session = Depends(get_session)):
+def decide(d: Decision, request: Request, s: Session = Depends(get_session)):
     listen = s.get(Listen, d.listen_id)
     if listen is None or listen.merged_into_id is not None:
         raise HTTPException(404, "no such listen")
@@ -307,6 +307,15 @@ def decide(d: Decision, s: Session = Depends(get_session)):
     except ValueError as e:
         raise HTTPException(400, str(e))
     s.commit()
+    if d.action == "approve":
+        # a confirmed listen needs its cover searched: queue it now (a listen already searched since it last changed is left alone)
+        try:
+            from app.covers import run as covers_run
+
+            for lid in covers_run.pending(s, listen_ids=[listen.id]):
+                request.app.state.jobs.submit("covers", "search", retry=True, listen_id=lid)
+        except Exception:  # the match is saved either way; the Covers page can still start the search
+            pass
     decisions = (
         s.scalar(
             select(func.count())
