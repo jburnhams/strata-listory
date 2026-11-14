@@ -70,6 +70,7 @@ export const api = {
   repropose: (ids: number[]) => req<{ changed: number[] }>('/api/process/repropose', send('POST', { ids })),
   runApproved: () => req<Record<string, number>>('/api/process/run', { method: 'POST' }),
   scan: () => req<ScanResult>('/api/scan', send('POST', {})),
+  buildListens: () => req<{ made: number; books: number; radio_series: number; already_had_listens: number; loose_files_left: number; metadata_read: number }>('/api/pipeline/listens-build', send('POST', {})),
   scanFolder: (folder: string) => req<{ files: number; folders: number; bytes: number }>('/api/filegroups/scan', send('POST', { folder })),
   match: (limit = 25) => req<MatchResult>(`/api/match?limit=${limit}`, { method: 'POST' }),
 }
@@ -197,4 +198,5 @@ export const matchApi = {
   queue: (after?: string, limit = 20, filters: Partial<QueueFilters> = {}) => req<QueuePage>(`/api/matches?${new URLSearchParams({ limit: String(limit), ...(after ? { after } : {}), ...Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) })}`),
   decide: (listen_id: number, action: QueueAction, part_id?: number) => req<{ ok: boolean; status: string; retraining: boolean }>('/api/matches/decide', send('POST', { listen_id, action, part_id })),
   retrain: () => req<{ started: boolean }>('/api/matches/retrain', { method: 'POST' }),
+  identifyNew: () => req<{ listens: number; accept: number; review: number; none: number }>('/api/pipeline/identify', send('POST', {})),
 }

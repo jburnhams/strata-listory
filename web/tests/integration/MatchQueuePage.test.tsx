@@ -62,6 +62,13 @@ describe('inputsOf', () => {
 })
 
 describe('MatchQueuePage', () => {
+  it('identifies new listens from a button and says what it found', async () => {
+    const { user } = setup(<MatchQueuePage />)
+    await user.click(await screen.findByRole('button', { name: 'Identify new listens' }))
+    expect(await screen.findByText('Identifying new listens')).toBeInTheDocument()
+    expect(await screen.findByText(/12 listens: 8 accepted by the model, 3 to review, 1 with no candidate/)).toBeInTheDocument()
+  })
+
   it('labels numbered parts as parts and compares the recording with their summed length', async () => {
     const parts = (n: number, relation?: 'copy' | 'part') => ({ minutes: n, files: 1, bytes: 1, folder: 'Mara Quill - Glass Orchard', path: '/x/y', group_id: 7, relation })
     matchState.queue[0].copies = [parts(284, 'part'), parts(281, 'part')]

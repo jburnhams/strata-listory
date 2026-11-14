@@ -4,8 +4,10 @@ A listen is one thing you would listen to in one go; here each one starts as a s
 
 from __future__ import annotations
 
+import os
 import re
 from collections import defaultdict
+from collections.abc import Callable
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
@@ -48,6 +50,117 @@ def clear(s: Session) -> None:
     s.flush()
 
 
+def _make_listen(s: Session, g: PartFilegroup, seconds: float, run: Run, ref: str) -> Listen:
+    """One listen for a book or programme group: its input part, its status and the events of both."""
+    listen = L.create_listen(
+        s,
+        KIND_OF_GROUP[g.kind],
+        actor_kind="rule",
+        actor_ref=ref,
+        run_id=run.id,
+        reason=f"{g.kind} group: {(g.detail or {}).get('reason', '')}",
+    )
+    listen.label = g.label
+    L.link(
+        s,
+        listen,
+        "input",
+        filegroup_id=g.id,
+        ordinal=1,
+        actor_kind="rule",
+        actor_ref=ref,
+        run_id=run.id,
+        reason="the files of this listen",
+        detail={
+            "group_kind": g.kind,
+            "files": g.file_count,
+            "bytes": g.total_bytes,
+            "minutes": round(seconds / 60),
+            "path": g.path,
+        },
+    )
+    L.set_status(
+        s,
+        listen,
+        "grouped",
+        actor_kind="rule",
+        actor_ref=ref,
+        run_id=run.id,
+        reason="made from structure grouping",
+    )
+    return listen
+
+
+def add_listens(
+    s: Session,
+    structure_root: PartFilegroup,
+    *,
+    progress: Callable[[int, int, str], None] | None = None,
+    commit_every: int = 100,
+) -> dict[str, int]:
+    """Make listens for the books and programmes of a structure grouping that have none yet (a group counts as having one when a live listen's input part has its folder path), and leave every existing listen, decision and merge alone. Restartable: each batch is committed, and a rerun skips what is already made. Returns {'book': n, 'radio_series': n, 'existing': n, 'loose_files_skipped': n}."""
+    have = {  # real paths: the library is reached through a symlink (audio-local -> audio), so one folder has two spellings
+        os.path.realpath(p)
+        for (p,) in s.execute(
+            select(ListenPart.detail["path"].astext).where(ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+        )
+        if p
+    }
+    run = new_run(s, "build_listens", {"from_run": structure_root.run_id, "only_new": True})
+    ref = f"structure:{structure_root.run_id[:8]}"
+    groups = {g.id: g for g in s.scalars(select(PartFilegroup).where(PartFilegroup.run_id == structure_root.run_id))}
+    kids: dict[int, list[int]] = {}
+    for m in s.scalars(
+        select(PartFilegroupMember)
+        .where(PartFilegroupMember.group_id.in_(groups), PartFilegroupMember.child_group_id.is_not(None))
+        .order_by(PartFilegroupMember.group_id, PartFilegroupMember.ordinal)
+    ):
+        kids.setdefault(m.group_id, []).append(m.child_group_id)
+    own_seconds = {
+        gid: secs or 0
+        for gid, secs in s.execute(
+            select(PartFilegroupMember.group_id, func.sum(PartFile.duration_s))
+            .join(PartFile, PartFile.id == PartFilegroupMember.file_id)
+            .where(PartFilegroupMember.group_id.in_(groups))
+            .group_by(PartFilegroupMember.group_id)
+        )
+    }
+    seconds: dict[int, float] = {}
+
+    def total(gid: int) -> float:
+        if gid not in seconds:
+            seconds[gid] = own_seconds.get(gid, 0) + sum(total(c) for c in kids.get(gid, []))
+        return seconds[gid]
+
+    counts = {"book": 0, "radio_series": 0, "existing": 0, "loose_files_skipped": 0}
+    todo: list[PartFilegroup] = []
+
+    def walk(gid: int) -> None:
+        g = groups[gid]
+        if g.kind in KIND_OF_GROUP:
+            if g.path and os.path.realpath(g.path) in have:
+                counts["existing"] += 1
+            else:
+                todo.append(g)
+        elif g.kind == "loose":
+            counts["loose_files_skipped"] += g.file_count
+        else:
+            for c in kids.get(gid, []):
+                walk(c)
+
+    walk(structure_root.id)
+    for n, g in enumerate(todo, 1):
+        _make_listen(s, g, total(g.id), run, ref)
+        counts[KIND_OF_GROUP[g.kind]] += 1
+        if progress:
+            progress(n, len(todo), g.path or g.label)
+        if n % commit_every == 0:
+            s.commit()
+    finish_run(s, run, "done")
+    s.commit()
+    return counts
+
+
 def build_listens(s: Session, structure_root: PartFilegroup, *, rebuild: bool = False) -> dict[str, int]:
     """Returns {'book': n, 'radio_series': n, 'loose_files_skipped': n}."""
     if s.scalar(select(func.count()).select_from(Listen)):
@@ -84,42 +197,7 @@ def build_listens(s: Session, structure_root: PartFilegroup, *, rebuild: bool = 
     def walk(gid: int) -> None:
         g = groups[gid]
         if g.kind in KIND_OF_GROUP:
-            listen = L.create_listen(
-                s,
-                KIND_OF_GROUP[g.kind],
-                actor_kind="rule",
-                actor_ref=ref,
-                run_id=run.id,
-                reason=f"{g.kind} group: {(g.detail or {}).get('reason', '')}",
-            )
-            listen.label = g.label
-            L.link(
-                s,
-                listen,
-                "input",
-                filegroup_id=g.id,
-                ordinal=1,
-                actor_kind="rule",
-                actor_ref=ref,
-                run_id=run.id,
-                reason="the files of this listen",
-                detail={
-                    "group_kind": g.kind,
-                    "files": g.file_count,
-                    "bytes": g.total_bytes,
-                    "minutes": round(total(gid) / 60),
-                    "path": g.path,
-                },
-            )
-            L.set_status(
-                s,
-                listen,
-                "grouped",
-                actor_kind="rule",
-                actor_ref=ref,
-                run_id=run.id,
-                reason="made from structure grouping",
-            )
+            _make_listen(s, g, total(gid), run, ref)
             counts[KIND_OF_GROUP[g.kind]] += 1
         elif g.kind == "loose":
             counts["loose_files_skipped"] += g.file_count
