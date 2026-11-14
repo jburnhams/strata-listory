@@ -130,8 +130,8 @@ def _execute(jobs, domain, kind, options):
 
             return getattr(pipeline_steps, {"listens_build": "build_listens"}.get(kind, kind))(report_progress)
         if kind == "filegroups":
-            from omarchy_db import connect
             from sqlalchemy.orm import Session
+            from strata_python.db import connect
 
             from app.store import filegroups as fg
 

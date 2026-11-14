@@ -42,8 +42,8 @@ def test_a_listen_with_no_candidate_is_unidentified_until_it_has_one_or_is_marke
 
 
 def test_the_build_job_makes_listens_with_metadata_and_kinds_and_reruns_cleanly(db_backend, db_env, tmp_path):
-    from omarchy_db import connect
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     if db_backend != "postgres":
         pytest.skip("needs Postgres")

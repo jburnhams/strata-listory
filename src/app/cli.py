@@ -185,8 +185,8 @@ def cmd_filegroups(args):
     for root in roots:
         if not os.path.isdir(root):
             sys.exit(f"not a folder: {root}")
-    from omarchy_db import connect
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     from app.store import filegroups as fg
 
@@ -205,8 +205,8 @@ def cmd_filegroups(args):
 
 def cmd_covers(args):
     """Search for covers: every confirmed or accepted book or radio listen that has no chosen cover and was not searched since it last changed (or the listens given, or all with --force). Downloads each source's largest picture into data/covers/; choose the preferred one on the Covers page. With --queue the searches go on the server's job queue (one job per listen) instead of running here."""
-    from omarchy_db import connect
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     from app.covers import run as R
     from app.store.models import Listen
@@ -243,9 +243,9 @@ def cmd_covers(args):
 
 def cmd_filegroups_structure(args):
     """Infer books, discs and series from the newest folder grouping and store them as a new grouping run (the folder grouping is untouched)."""
-    from omarchy_db import connect
     from sqlalchemy import select
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     from app.store import structure
     from app.store.models import PartFilegroup, Run
@@ -287,9 +287,9 @@ def cmd_filegroups_structure(args):
 
 def cmd_listens_build(args):
     """Make a listen for every book and programme in the newest structure grouping (needs ./app filegroups and ./app filegroups-structure first). Rerunnable with --rebuild."""
-    from omarchy_db import connect
     from sqlalchemy import select
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     from app.store import build
     from app.store.models import PartFilegroup, Run
@@ -339,8 +339,8 @@ def cmd_listens_kinds(args):
     """Classify every live listen as book, radio series, radio programme or play from its tags, names, lengths and the Audible / radio indexes, keeping the signals as the reason. A person's own choice is never changed. --report writes every verdict as JSON (it holds real titles: keep it outside the repo)."""
     import json as _json
 
-    from omarchy_db import connect
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     from app.store import kinds_db
 
@@ -381,8 +381,8 @@ def cmd_listens_kinds(args):
 def cmd_listens_identify_prepare(args):
     """Find candidate works for every book listen in the local Open Library and Audible indexes and cache their comparison vectors (data/linkage/vectors.json; unchanged listens are reused)."""
 
-    from omarchy_db import connect
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     from app.identify import audibleindex
     from app.identify import candidates as olc
@@ -429,8 +429,8 @@ def cmd_listens_identify_prepare(args):
 
 def cmd_listens_metadata_redo(args):
     """Read the metadata of these listens again (after a rule change in `store/metadata.py`); their old record parts are unlinked with events, fields a person chose are kept."""
-    from omarchy_db import connect
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     from app.store import metadata
 
@@ -443,8 +443,8 @@ def cmd_listens_metadata_redo(args):
 
 def cmd_listens_split(args):
     """Move some input parts (e.g. wrongly merged copies) of a listen into a listen of their own; a one-off repair, logged as a user event."""
-    from omarchy_db import connect
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     from app.store import repair
 
@@ -460,8 +460,8 @@ def cmd_listens_split(args):
 
 def cmd_listens_match(args):
     """Give a listen the work a person knows it is, when the model never offered it: an Open Library work key (e.g. a box set with no recording length). Accepted by the user; other candidates are unlinked."""
-    from omarchy_db import connect
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     from app.identify import candidates as olc
     from app.linkage import apply
@@ -494,8 +494,8 @@ def cmd_listens_match(args):
 
 def cmd_listens_restructure(args):
     """Re-read listens' files with the current structure rules after a rule fix (e.g. a full-length file beside its split chapters); the listens, their choices, matches and decisions are kept."""
-    from omarchy_db import connect
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     from app.store import repair
 
@@ -513,8 +513,8 @@ def cmd_listens_restructure(args):
 
 def cmd_listens_explode(args):
     """Give each long file of a folder taken for one book's chapters a listen of its own (after the structure rule for folders of different books); the existing listen keeps the first book."""
-    from omarchy_db import connect
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     from app.store import repair
 
@@ -532,8 +532,8 @@ def cmd_listens_explode(args):
 
 def cmd_listens_discard(args):
     """Retire a listen that is not a book of its own (e.g. a stray second copy of one chapter) by merging it into another listen and unlinking its files; logged as user events."""
-    from omarchy_db import connect
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     from app.store import repair
 
@@ -549,8 +549,8 @@ def cmd_listens_discard(args):
 
 def cmd_listens_identify_train(args):
     """Fit the record-linkage model on every prepared listen (labelled ones clamped: old catalogue approvals and the match queue's answers), cross-validate on the labelled ones and save data/linkage/model.json and report.json."""
-    from omarchy_db import connect
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     from app.linkage import service
 
@@ -572,8 +572,8 @@ def cmd_listens_identify_train(args):
 
 def cmd_listens_identify(args):
     """Decide every prepared listen with the trained model: accept (P >= threshold), candidates for review, or none; writes match/candidate listen-parts and links listens of one work to one work row."""
-    from omarchy_db import connect
     from sqlalchemy.orm import Session
+    from strata_python.db import connect
 
     from app.linkage import apply, dataset, service
 
