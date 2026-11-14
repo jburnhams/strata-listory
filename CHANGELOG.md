@@ -4,6 +4,11 @@ Newest first, grouped by day. One entry per change, in the same commit or PR as 
 
 ## 2026-11-14
 
+**Covers: a listen of parts is compared by all its parts (branch `covers-parts-length`)**
+The joined Sherlock collection showed 4 h (its first book) against the 58 h recording.
+
+- `src/app/covers/api.py` `_compare`: parts (`relation` = part) count as one runtime and file total, and the path shown is their folder.
+
 **Identification: folders of books that are one collection (branch `container-merge`)**
 Jonathan asked for anthologies kept as numbered books to match as the whole collection, using approved sub-matches too, and for a general twin check.
 

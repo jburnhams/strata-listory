@@ -88,7 +88,16 @@ def _compare(info: dict, listen: Listen, found: tuple | None) -> tuple[dict, dic
     """What the listen's own files say and what the accepted match says, side by side: title, author, narrator, length, year. The match's narrator and length are those of the recording it was matched to."""
     tags, folder, chosen = info["tags"], info["folder"], info["chosen"]
     val = lambda v: v.get("value") if isinstance(v, dict) else v
-    copy = (info["copies"] or [{}])[0]
+    copies = info["copies"] or [{}]
+    copy = dict(copies[0])
+    parts = [c for c in copies if c.get("relation") == "part"]
+    if parts:  # a listen of parts runs as long as all of them together (a collection kept as one book per folder)
+        copy.update(
+            minutes=sum(c.get("minutes") or 0 for c in parts),
+            files=sum(c.get("files") or 0 for c in parts) or None,
+            path=os.path.dirname(parts[0].get("path") or "") or parts[0].get("path"),
+        )
+        copy["folder"] = os.path.basename(copy["path"] or "")
     source = dict(
         title=val(chosen.get("title")) or tags.get("album") or tags.get("title") or folder.get("title") or listen.label,
         author=val(chosen.get("author"))
