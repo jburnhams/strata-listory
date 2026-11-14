@@ -344,4 +344,4 @@ def test_a_folder_scan_row_names_the_folder_and_carries_its_progress():
     progress = dict(current="/lib/Book/01.mp3", done=40, total=100)
     task = dict(id="j1", kind="filegroups", options=dict(folder="/lib"), state="running", started="", progress=progress)
     row = operations.view([task], [])["rows"][0]
-    assert row["title"] == "Scan folder /lib" and row["progress"] == progress and row["job_id"] == "j1"
+    assert row["title"] == "Scan audiobook folder /lib" and row["progress"] == progress and row["job_id"] == "j1"

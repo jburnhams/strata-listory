@@ -502,3 +502,21 @@ def test_filegroups_scan_only_accepts_listed_folders(client, tmp_path, monkeypat
     r = client.post("/api/filegroups/scan", json=dict(folder=str(lib)))
     assert r.status_code in (200, 202), r.text
     assert seen == [("filegroups", dict(folder=str(lib)))]
+
+
+def test_failed_jobs_list_the_newest_first_and_can_be_cleared(client):
+    jobs = client.app.state.jobs
+
+    def broken(*args):
+        raise ValueError("boom")
+
+    jobs.handler = broken
+    old = jobs.submit("system", "filegroups", folder="/old")
+    jobs.run_one()
+    new = jobs.submit("system", "filegroups", folder="/new")
+    jobs.run_one()
+    ids = [r["job_id"] for r in client.get("/api/operations").json()["rows"] if r.get("job_id") in (old, new)]
+    assert ids == [new, old]
+    assert client.post(f"/api/jobs/{new}/dismiss").json() == dict(cleared=True)
+    assert [r["job_id"] for r in client.get("/api/operations").json()["rows"] if r.get("job_id")] == [old]
+    assert client.post("/api/jobs/missing/dismiss").status_code == 400
