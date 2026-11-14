@@ -214,7 +214,7 @@ def test_api_search_finds_groups_and_files_and_names_the_group_to_jump_to(s, lib
         "CD1",
         "CD2",
     ]  # every word matches the group's name or folder path, in any case
-    r = c.get("/api/filegroups/search?q=track 10").json()
+    r = c.get("/api/filegroups/search?q=track 10.mp3").json()
     assert [f["name"] for f in r["files"]] == ["Track 10.mp3"] and r["files"][0]["group_label"] == "CD1"
     cd1 = s.scalars(select(PartFilegroup).where(PartFilegroup.label == "CD1")).one()
     assert r["files"][0]["group_id"] == cd1.id

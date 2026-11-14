@@ -31,7 +31,7 @@ router = APIRouter(prefix="/api/filegroups")
 
 @lru_cache(maxsize=1)
 def _engine():
-    from omarchy_db import connect
+    from strata_python.db import connect
 
     return connect("listory")
 

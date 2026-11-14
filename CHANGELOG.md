@@ -4,6 +4,15 @@ Newest first, grouped by day. One entry per change, in the same commit or PR as 
 
 ## 2026-11-14
 
+**strata-python from PyPI (0.2.3), and the database layer moves from omarchy-db to `strata_python.db` (branch `strata-python-pypi`)**
+Jonathan asked to update to the latest release and make the most of it. First step: the dependency and the database layer; the rest follows in small PRs.
+
+- `pyproject.toml`: `strata-python>=0.2.3,<0.3` from PyPI (no git source); dev tools via `strata-python[dev]`, the catalogue via `strata-python[db]`; `omarchy-db` is gone. `[tool.omarchy-db]` is `[tool.strata-db]`. `upgrade-strata-python.yml` is removed (dependabot moves a PyPI pin).
+- Imports: `from strata_python.db import connect`; `Base` is written out as the changelog asks (the naming convention is unchanged: no migration drift, `strata-db check` passes).
+- **Environment (service and CLI):** `strata_python.db` reads `STRATA_DB_LIVE=1` and `STRATA_DB_DATABASE=omarchy` (the old `OMARCHY_DB_LIVE` no longer counts). The strata-listory service drop-in `strata-db-live.conf` sets both; for the CLI prefix `STRATA_DB_LIVE=1 STRATA_DB_DATABASE=omarchy`.
+- `.github/workflows/store.yml` runs `strata-db check` and `tests/unit/store` on a PostgreSQL 18 service instead of the shared workflow, which broke when its fixtures moved ("the strata_python.db fixtures are off").
+- A flaky test fixed on the way: the Files search test matched a number that appears in pytest's temp folder names.
+
 **Identification: a CD set kept as one listen per disc, as long as a listen already accepted elsewhere (branch `numbered-runs-twin`)**
 Jonathan found Just William kept as 28 per-CD listens (a second library copy) beside the 1613-minute Just William Collection listen.
 
