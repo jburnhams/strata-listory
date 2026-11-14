@@ -1,5 +1,7 @@
 """Operations include unfinished batches and durable ingest outcomes across pages."""
 
+import pytest
+
 from app import catalogue
 from app.ingest import operations, store
 from app.ingest import pipeline as P
@@ -345,3 +347,13 @@ def test_a_folder_scan_row_names_the_folder_and_carries_its_progress():
     task = dict(id="j1", kind="filegroups", options=dict(folder="/lib"), state="running", started="", progress=progress)
     row = operations.view([task], [])["rows"][0]
     assert row["title"] == "Scan audiobook folder /lib" and row["progress"] == progress and row["job_id"] == "j1"
+
+
+def test_a_failed_analysis_can_be_cleared_without_touching_the_run():
+    book = catalogue.add_book(title="Interrupted")
+    rid = saved(book, "failed")
+    assert [r["id"] for r in operations.view([], [])["rows"]] == [rid]
+    operations.dismiss_run(rid)
+    assert operations.view([], [])["rows"] == [] and store.get(rid)["state"] == "failed"
+    with pytest.raises(ValueError):
+        operations.dismiss_run("missing")

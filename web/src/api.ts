@@ -59,6 +59,7 @@ export const api = {
   source: (id: number) => req<SourceFilesInfo>(`/api/books/${id}/source`),
   enrichBook: (id: number) => req<{ found: boolean; extras: Extras }>(`/api/books/${id}/enrich`, { method: 'POST' }),
   queue: () => req<QueueView>('/api/process'),
+  dismissRun: (id: string) => req<{ cleared: boolean }>(`/api/ingest/runs/${id}/dismiss`, send('POST', {})),
   dismissJob: (id: string) => req<{ cleared: boolean }>(`/api/jobs/${id}/dismiss`, send('POST', {})),
   retryJob: (id: string) => req<unknown>(`/api/jobs/${id}/retry`, send('POST', {})),
   operations: (completed = false) => req<OperationsView>(`/api/operations?completed=${completed}`),

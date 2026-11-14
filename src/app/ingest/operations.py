@@ -2,9 +2,28 @@
 
 from datetime import UTC, datetime
 
-from app import catalogue
+from app import catalogue, db
 from app.ingest import pipeline as P
 from app.ingest import policy, store
+
+
+def dismiss_run(run_id):
+    """Clear a failed analysis from the Processing page. The run itself is untouched (the book keeps its history); a new run of the book that fails again shows up again."""
+    store.get(run_id)  # raises for an unknown run
+    c = db.connect()
+    try:
+        with c:
+            c.execute("INSERT OR REPLACE INTO job_work VALUES ('dismissed-run',?,?)", (run_id, run_id))
+    finally:
+        c.close()
+
+
+def dismissed_runs():
+    c = db.connect()
+    try:
+        return {r[0] for r in c.execute("SELECT owner FROM job_work WHERE kind='dismissed-run'")}
+    finally:
+        c.close()
 
 
 def view(ingest_tasks, process_tasks, completed=False):
@@ -65,7 +84,10 @@ def view(ingest_tasks, process_tasks, completed=False):
                     progress=task.get("progress"),
                 )
             )
+    hidden = dismissed_runs()
     for run in sorted(runs.values(), key=lambda r: r["created"], reverse=True):
+        if run["id"] in hidden and run["state"] in ("failed", "processing_failed"):
+            continue
         bid = run.get("primary_id") or run["book_id"]
         if latest.get(bid) != run["id"] or any(latest.get(member) == run["id"] for member in pending):
             continue

@@ -186,6 +186,17 @@ it('clears a failed job and says where it stopped', async () => {
   expect(await screen.findByText('No operations in this view.')).toBeInTheDocument()
 })
 
+it('clears a failed analysis', async () => {
+  let cleared = 0
+  server.use(http.get('/api/operations', () => HttpResponse.json({ busy: false, rows: cleared ? [] : [
+    { id: 'r9', book_id: 9, run_id: 'r9', title: 'More William', stage: 'inventory', state: 'failed', phase: null, error: 'job interrupted by server shutdown' },
+  ] })), http.post('/api/ingest/runs/r9/dismiss', () => { cleared++; return HttpResponse.json({ cleared: true }) }))
+  const { user } = setup(<ProcessPage />)
+  await user.click(await screen.findByRole('button', { name: 'Clear More William' }))
+  expect(cleared).toBe(1)
+  expect(await screen.findByText('No operations in this view.')).toBeInTheDocument()
+})
+
 it('filters failed work and searches failure reasons without showing queued work', async () => {
   mock.queue = [{ book_id: 4, title: 'Broken plan', author: 'B', state: 'failed', error: 'Source files missing', updated: '', summary: null }]
   server.use(http.get('/api/operations', () => HttpResponse.json({ busy: false, rows: [
