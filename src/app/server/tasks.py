@@ -128,7 +128,7 @@ def _execute(jobs, domain, kind, options):
         if kind in ("listens_build", "identify", "bbc_details"):
             from app import pipeline_steps
 
-            return getattr(pipeline_steps, kind)(report_progress)
+            return getattr(pipeline_steps, {"listens_build": "build_listens"}.get(kind, kind))(report_progress)
         if kind == "filegroups":
             from omarchy_db import connect
             from sqlalchemy.orm import Session
