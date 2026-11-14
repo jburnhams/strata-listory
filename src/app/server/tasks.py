@@ -137,14 +137,19 @@ def _execute(jobs, domain, kind, options):
             if not fs.reachable(folder) or not os.path.isdir(folder):
                 raise ValueError(f"folder is not reachable: {folder}")
             with Session(connect("listory")) as s:
-                last = [0.0]
+                last, where = [0.0], [("", 0, 0)]
+
+                def staged(text, done, total):  # which subfolder we are in, and how many of them are done
+                    where[0] = (text, done, total)
+                    report_progress(text, done, total)
 
                 def hashed(done, total, path):  # throttled: one write a second at most
                     if time.monotonic() - last[0] >= 1 or done == total:
                         last[0] = time.monotonic()
-                        report_progress(path, done, total)
+                        text, units_done, units = where[0]
+                        report_progress(f"{text} · {path} ({done}/{total} new files in it)", units_done, units)
 
-                top = fg.scan_roots(s, roots, only=folder, progress=hashed, stage=lambda text: report_progress(text))
+                top = fg.scan_roots(s, roots, only=folder, progress=hashed, stage=staged)
                 return dict(files=top.file_count, folders=top.group_count, bytes=top.total_bytes)
         if kind == "match":
             return matcher.match_pending(options["limit"], providers.enabled(options.get("providers")))
