@@ -160,3 +160,14 @@ def test_queued_continuation_cannot_undo_withdrawn_book_consent(monkeypatch):
     monkeypatch.setattr(pipeline, "publish_run", lambda rid: calls.append(rid))
     assert tasks.execute(None, "ingest", "continue", dict(run_id="held")) == dict(held_for_manual_book_review=True)
     assert calls == ["held"]
+
+
+@pytest.mark.parametrize("kind", ["listens_build", "identify", "bbc_details"])
+def test_every_pipeline_job_kind_reaches_a_function_of_pipeline_steps(kind, monkeypatch):
+    from app import pipeline_steps
+
+    called = []
+    for name in ("build_listens", "identify", "bbc_details"):
+        monkeypatch.setattr(pipeline_steps, name, lambda report, name=name: called.append(name) or dict(ok=True))
+    assert tasks.execute(None, "system", kind, {}) == dict(ok=True)
+    assert called == [{"listens_build": "build_listens"}.get(kind, kind)]
