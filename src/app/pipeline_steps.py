@@ -129,3 +129,37 @@ def identify(report: Report) -> dict:
             s.commit()
         report("Done", len(todo), len(todo))
         return dict(listens=len(todo), **counts)
+
+
+def bbc_details(report: Report) -> dict:
+    """The BBC's own record of every candidate radio programme (type, channel, episodes, genre), fetched once and cached on disk; identification uses it when present and never needs it. Restartable: each programme is stored as it arrives and cached ones are skipped."""
+    from app.identify import radioindex
+    from app.linkage import candidates as lc
+    from app.linkage import query
+    from app.providers.base import Http, MatchError
+
+    report("Listing the candidate programmes", 0, 0)
+    with Session(connect("listory")) as s:
+        queries = query.load(s)
+    refs = list(
+        dict.fromkeys(
+            p.ref
+            for q in queries
+            for c in lc.radio_candidates(q, details=lambda refs: {})
+            for p in c.programmes
+            if p.source == "bbc_radio"
+        )
+    )
+    have = radioindex.details(refs)
+    pending = [r for r in refs if r not in have]
+    done = [0]
+
+    def logged(text: str) -> None:
+        done[0] += 1
+        report(text.removeprefix("detail "), done[0], len(pending))
+
+    try:
+        fetched = radioindex.fetch_details(Http("bbc programmes", 0.6), pending, log=logged) if pending else 0
+    except MatchError as e:
+        raise ValueError(f"the BBC programme details are unavailable right now ({e}); run it again later") from e
+    return dict(candidate_programmes=len(refs), already_cached=len(have), fetched=fetched)

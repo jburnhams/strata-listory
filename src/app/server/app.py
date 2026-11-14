@@ -242,6 +242,11 @@ def create_app():
         """Make listens for the books and programmes in the newest folder scan that have none yet (a job; existing listens and decisions are never touched)."""
         return queued("system", "listens_build")
 
+    @app.post("/api/pipeline/bbc-details")
+    def post_bbc_details():
+        """Fetch and cache the BBC's record of every candidate radio programme (a job; run it before identifying radio listens)."""
+        return queued("system", "bbc_details")
+
     @app.post("/api/pipeline/identify")
     def post_identify():
         """Find candidate works for the listens that have none yet and decide them with the saved model (a job)."""

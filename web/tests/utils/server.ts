@@ -158,6 +158,7 @@ export const handlers = [
   }),
   http.post('/api/filegroups/scan', async ({ request }) => { const b = await request.json() as { folder: string }; fgScans.push(b.folder); return HttpResponse.json({ files: 1234, folders: 5, bytes: 1e9 }) }),
   http.post('/api/pipeline/listens-build', () => HttpResponse.json({ made: 12, books: 10, radio_series: 2, already_had_listens: 900, loose_files_left: 3, metadata_read: 12 })),
+  http.post('/api/pipeline/bbc-details', () => HttpResponse.json({ candidate_programmes: 40, already_cached: 30, fetched: 10 })),
   http.post('/api/pipeline/identify', () => HttpResponse.json({ listens: 12, accept: 8, review: 3, none: 1 })),
   http.get('/api/filegroups', () => HttpResponse.json({ root: fgRoot, groupings: 1 })),
   http.get('/api/filegroups/search', ({ request }) => {

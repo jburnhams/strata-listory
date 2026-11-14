@@ -198,5 +198,6 @@ export const matchApi = {
   queue: (after?: string, limit = 20, filters: Partial<QueueFilters> = {}) => req<QueuePage>(`/api/matches?${new URLSearchParams({ limit: String(limit), ...(after ? { after } : {}), ...Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) })}`),
   decide: (listen_id: number, action: QueueAction, part_id?: number) => req<{ ok: boolean; status: string; retraining: boolean }>('/api/matches/decide', send('POST', { listen_id, action, part_id })),
   retrain: () => req<{ started: boolean }>('/api/matches/retrain', { method: 'POST' }),
+  bbcDetails: () => req<{ candidate_programmes: number; already_cached: number; fetched: number }>('/api/pipeline/bbc-details', send('POST', {})),
   identifyNew: () => req<{ listens: number; accept: number; review: number; none: number }>('/api/pipeline/identify', send('POST', {})),
 }

@@ -282,6 +282,17 @@ function IdentifyNew({ onDone }: { onDone: () => void }) {
   return <AsyncButton variant="outline" phase={run.phase} error={run.error} onClick={() => void run.run()} labels={{ idle: 'Identify new listens', pending: 'Identifying…', done: 'Identified' }} />
 }
 
+/** Fetches the BBC's record of each candidate radio programme (cached; identification uses it when it is there): a queued, restartable job whose progress is on the Processing page. */
+function BbcDetails() {
+  const navigate = useNavigate()
+  const run = useAsyncAction(async () => {
+    toast.show({ title: 'Fetching BBC programme details', description: 'It runs in the background; programmes already fetched are skipped, so it can be stopped and resumed.', action: { label: 'Open Processing', onPress: () => void navigate('/processing') } })
+    const r = await matchApi.bbcDetails()
+    toast.show({ title: 'BBC details fetched', tone: 'success', description: `${r.fetched.toLocaleString()} new of ${r.candidate_programmes.toLocaleString()} candidate programmes (${r.already_cached.toLocaleString()} were already cached).` })
+  }, { settleMs: 1500 })
+  return <AsyncButton variant="outline" phase={run.phase} error={run.error} onClick={() => void run.run()} labels={{ idle: 'Fetch BBC programme details', pending: 'Fetching BBC details…', done: 'Fetched' }} />
+}
+
 export default function MatchQueuePage() {
   const qc = useQueryClient()
   const undoable = useUndoable()
@@ -353,7 +364,7 @@ export default function MatchQueuePage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Matches" scope={`Is this the right book? ${order.scope}`} finding={finding} actions={<>{relearned && <Button variant="default" onClick={refresh}>Refresh the list</Button>}{retrainButton('outline')}<IdentifyNew onDone={refresh} /></>} />
+      <PageHeader title="Matches" scope={`Is this the right book? ${order.scope}`} finding={finding} actions={<>{relearned && <Button variant="default" onClick={refresh}>Refresh the list</Button>}{retrainButton('outline')}<BbcDetails /><IdentifyNew onDone={refresh} /></>} />
       {summary && (
         <MetricStrip label="Where identification stands">
           <Metric label="Waiting for you" value={format.integer.format(waiting)} note={`${format.integer.format(summary.auto_unconfirmed)} already accepted by the model`} />

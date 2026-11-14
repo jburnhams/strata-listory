@@ -125,7 +125,7 @@ def _execute(jobs, domain, kind, options):
             finally:
                 c.close()
             return result
-        if kind in ("listens_build", "identify"):
+        if kind in ("listens_build", "identify", "bbc_details"):
             from app import pipeline_steps
 
             return getattr(pipeline_steps, kind)(report_progress)

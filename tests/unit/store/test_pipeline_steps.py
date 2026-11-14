@@ -67,3 +67,27 @@ def test_the_identify_job_needs_a_model(s, db_env, monkeypatch):
     monkeypatch.setattr(service, "load_params", lambda: None)
     with pytest.raises(ValueError, match="no model yet"):
         P.identify(lambda *a, **k: None)
+
+
+def test_the_bbc_job_counts_only_the_programmes_it_has_to_fetch(db_backend, db_env, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.identify import radioindex
+    from app.linkage import candidates as lc
+    from app.linkage import query
+
+    if db_backend != "postgres":
+        pytest.skip("needs Postgres")
+    programmes = [SimpleNamespace(source="bbc_radio", ref=r) for r in ("b001", "b002", "b003")]
+    monkeypatch.setattr(query, "load", lambda s: [object()])
+    monkeypatch.setattr(lc, "radio_candidates", lambda q, details: [SimpleNamespace(programmes=programmes)])
+    monkeypatch.setattr(radioindex, "details", lambda refs: {"b001": {}})
+    fetched = []
+    monkeypatch.setattr(
+        radioindex, "fetch_details", lambda http, refs, log: [log(f"detail {r}") for r in refs] and len(refs)
+    )
+    seen = []
+    out = P.bbc_details(lambda current, done=None, total=None: seen.append((current, done, total)))
+    assert (
+        out == dict(candidate_programmes=3, already_cached=1, fetched=2) and seen[-1] == ("b003", 2, 2) and not fetched
+    )

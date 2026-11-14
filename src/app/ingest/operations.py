@@ -20,6 +20,7 @@ def job_title(kind, options):
         "filegroups": f"Scan audiobook folder {options.get('folder', '')}",
         "listens_build": "Build listens from new folders",
         "identify": "Identify new listens",
+        "bbc_details": "Fetch BBC programme details",
     }.get(kind)
 
 

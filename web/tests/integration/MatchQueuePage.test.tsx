@@ -62,6 +62,12 @@ describe('inputsOf', () => {
 })
 
 describe('MatchQueuePage', () => {
+  it('fetches BBC programme details from a button', async () => {
+    const { user } = setup(<MatchQueuePage />)
+    await user.click(await screen.findByRole('button', { name: 'Fetch BBC programme details' }))
+    expect(await screen.findByText(/10 new of 40 candidate programmes \(30 were already cached\)/)).toBeInTheDocument()
+  })
+
   it('identifies new listens from a button and says what it found', async () => {
     const { user } = setup(<MatchQueuePage />)
     await user.click(await screen.findByRole('button', { name: 'Identify new listens' }))

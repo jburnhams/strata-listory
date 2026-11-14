@@ -543,4 +543,5 @@ def test_pipeline_buttons_queue_their_jobs(client, monkeypatch):
     monkeypatch.setattr(tasks, "_execute", lambda jobs, domain, kind, options: seen.append(kind))
     assert client.post("/api/pipeline/listens-build").status_code in (200, 202)
     assert client.post("/api/pipeline/identify").status_code in (200, 202)
-    assert seen == ["listens_build", "identify"]
+    assert client.post("/api/pipeline/bbc-details").status_code in (200, 202)
+    assert seen == ["listens_build", "identify", "bbc_details"]
