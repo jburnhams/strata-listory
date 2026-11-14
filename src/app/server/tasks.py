@@ -125,6 +125,10 @@ def _execute(jobs, domain, kind, options):
             finally:
                 c.close()
             return result
+        if kind in ("listens_build", "identify"):
+            from app import pipeline_steps
+
+            return getattr(pipeline_steps, kind)(report_progress)
         if kind == "filegroups":
             from omarchy_db import connect
             from sqlalchemy.orm import Session

@@ -357,3 +357,17 @@ def test_a_failed_analysis_can_be_cleared_without_touching_the_run():
     assert operations.view([], [])["rows"] == [] and store.get(rid)["state"] == "failed"
     with pytest.raises(ValueError):
         operations.dismiss_run("missing")
+
+
+def test_pipeline_jobs_have_readable_names_and_report_progress():
+    task = dict(
+        id="j",
+        kind="listens_build",
+        options={},
+        state="running",
+        started="",
+        progress=dict(current="x", done=1, total=2),
+    )
+    row = operations.view([task], [])["rows"][0]
+    assert row["title"] == "Build listens from new folders" and row["progress"]["total"] == 2
+    assert operations.job_title("identify", {}) == "Identify new listens" and operations.job_title("zzz", {}) is None

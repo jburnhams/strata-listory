@@ -431,3 +431,33 @@ def test_explode_listen_leaves_a_listen_where_a_person_confirmed_or_rejected_a_w
     Ls.set_status(s, listen, "identified", actor_kind="user", actor_ref="web", reason="confirmed in the match queue")
     with pytest.raises(ValueError):
         repair.explode_listen(s, listen.id)
+
+
+def test_add_listens_only_makes_the_missing_ones_and_is_restartable(s, structure, tmp_path):
+    build.build_listens(s, structure)
+    keep = s.scalars(select(Listen).where(Listen.label == "Book One")).one()
+    keep.label = "Chosen by a person"
+    seen = []
+    # everything exists already: nothing is made, nothing is touched
+    counts = build.add_listens(s, structure, progress=lambda *a: seen.append(a))
+    assert counts == {"book": 0, "radio_series": 0, "existing": 3, "loose_files_skipped": 4} and not seen
+    assert s.scalars(select(func.count()).select_from(Listen)).one() == 3 and keep.label == "Chosen by a person"
+    # a new book appears in the next structure grouping: only it is made, in one batch, and a rerun makes nothing more
+    for n in (1, 2, 3):
+        (tmp_path / "A/Book Three").mkdir(exist_ok=True)
+        (tmp_path / f"A/Book Three/0{n}.mp3").write_bytes(f"three{n}".encode())
+    ids = fg.scan_files(s, str(tmp_path))
+    top, _ = st.infer(s, fg.group_by_folder(s, str(tmp_path), ids))
+    counts = build.add_listens(s, top, progress=lambda *a: seen.append(a), commit_every=1)
+    assert counts["book"] == 1 and counts["existing"] == 3 and seen == [(1, 1, str(tmp_path / "A/Book Three"))]
+    assert build.add_listens(s, top)["book"] == 0
+    assert s.scalars(select(func.count()).select_from(Listen)).one() == 4
+
+
+def test_add_listens_sees_a_folder_reached_through_a_symlink_as_the_same_folder(s, structure, tmp_path):
+    build.build_listens(s, structure)
+    link = tmp_path.parent / (tmp_path.name + "-audio-local")
+    link.symlink_to(tmp_path)
+    ids = fg.scan_files(s, str(link))
+    top, _ = st.infer(s, fg.group_by_folder(s, str(link), ids))
+    assert build.add_listens(s, top)["book"] == 0 and top.path != str(tmp_path)

@@ -9,6 +9,7 @@ import json
 import os
 import re
 from collections import Counter
+from collections.abc import Callable
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -151,7 +152,14 @@ def name_parts(path: str, label: str, group: PartFilegroup | None) -> tuple[str,
     return os.path.basename(path) or label, os.path.basename(os.path.dirname(path)), os.path.basename(path)
 
 
-def add_metadata(s: Session, *, actor_ref: str = "metadata-v1", redo: list[int] | None = None) -> dict[str, int]:
+def add_metadata(
+    s: Session,
+    *,
+    actor_ref: str = "metadata-v1",
+    redo: list[int] | None = None,
+    progress: Callable[[int, int, str], None] | None = None,
+    commit_every: int = 0,
+) -> dict[str, int]:
     """Records and choices for every live listen that has none yet (so a rerun after more listens appear only does the new ones). Returns counts. `redo`: listen ids whose metadata is read again after a rule change (their record parts are unlinked and new ones linked; fields a person chose are kept)."""
     for part in s.scalars(
         select(ListenPart).where(
@@ -167,13 +175,16 @@ def add_metadata(s: Session, *, actor_ref: str = "metadata-v1", redo: list[int] 
         )
     }
     n = {"listens": 0, "choices": 0, "from_tags": 0, "from_folder": 0}
-    for l in s.scalars(
-        select(Listen)
-        .where(Listen.merged_into_id.is_(None), *([Listen.id.in_(redo)] if redo else []))
-        .order_by(Listen.id)
-    ):
-        if l.id in done:
-            continue
+    todo = [
+        l
+        for l in s.scalars(
+            select(Listen)
+            .where(Listen.merged_into_id.is_(None), *([Listen.id.in_(redo)] if redo else []))
+            .order_by(Listen.id)
+        )
+        if l.id not in done
+    ]
+    for l in todo:
         inputs = list(
             s.scalars(
                 select(ListenPart)
@@ -235,5 +246,9 @@ def add_metadata(s: Session, *, actor_ref: str = "metadata-v1", redo: list[int] 
             if field == "title":
                 l.label = str(value)
         n["listens"] += 1
+        if progress:
+            progress(n["listens"], len(todo), l.label)
+        if commit_every and n["listens"] % commit_every == 0:
+            s.commit()  # restartable: a rerun only does the listens that still have no record
     s.flush()
     return n

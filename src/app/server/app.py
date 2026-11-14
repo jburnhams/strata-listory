@@ -237,6 +237,16 @@ def create_app():
             raise HTTPException(400, "not one of the folders listed under Folders scanned")
         return queued("system", "filegroups", folder=folder)
 
+    @app.post("/api/pipeline/listens-build")
+    def post_listens_build():
+        """Make listens for the books and programmes in the newest folder scan that have none yet (a job; existing listens and decisions are never touched)."""
+        return queued("system", "listens_build")
+
+    @app.post("/api/pipeline/identify")
+    def post_identify():
+        """Find candidate works for the listens that have none yet and decide them with the saved model (a job)."""
+        return queued("system", "identify")
+
     @app.post("/api/match")
     def post_match(limit: int = 25, providers_: str | None = Query(None, alias="providers")):
         names = providers_.split(",") if providers_ else None
@@ -380,7 +390,9 @@ def create_app():
             if job["domain"] == "covers":
                 lid = json.loads(job["options"]).get("listen_id")
                 job["kind"], job["title"] = "search covers", names.get(lid) or f"listen {lid}"
-            label = job["kind"].replace("_", " ")
+            from app.ingest.operations import job_title
+
+            label = job_title(job["kind"], json.loads(job["options"])) or job["kind"].replace("_", " ")
             view["rows"].append(
                 dict(
                     id="job-" + job["id"],

@@ -39,6 +39,13 @@ describe('FilesPage', () => {
     expect(fgScans).toEqual(['/more'])
   })
 
+  it('builds listens from new folders and says what it made', async () => {
+    const { user } = setup(<FilesPage />, { route: '/files' })
+    await user.click(await screen.findByRole('button', { name: 'Build listens from new folders' }))
+    expect(await screen.findByText('Building listens')).toBeInTheDocument()
+    expect(await screen.findByText(/12 new listens \(10 books, 2 radio series\)/)).toBeInTheDocument()
+  })
+
   it('opens on the newest grouping and walks down and back up the tree', async () => {
     const { user } = setup(<FilesPage />, { route: '/files' })
     expect(await screen.findByText('3 files in 1 group, 3.0 GB')).toBeInTheDocument()
