@@ -8,6 +8,7 @@ Newest first, grouped by day. One entry per change, in the same commit or PR as 
 Jonathan found Just William kept as 28 per-CD listens (a second library copy) beside the 1613-minute Just William Collection listen.
 
 - `src/app/linkage/containers.py` `find_sequences`, `twin_of`: within a folder, numbered folders of one name (`Title 01`..`Title 28`, no gap, at least three) whose runtimes sum to an accepted listen's runtime within 2% (title words in common, every piece under 60% of it) are joined as ordered parts, status review, no match decided. Run `listens-identify-prepare` and `listens-identify --merge-copies` afterwards: the whole-length listen is then a copy of its twin. Part of `--merge-containers`.
+- `./app listens-match <listen> <Open Library work key>` (`apply.assign_work`): gives a listen a work you know it is when the model never offered it (here an Open Library box set with no recording length); accepted by you, other candidates unlinked, and it becomes a label.
 
 **Identification: a CD set kept as one listen per disc, as long as a listen already accepted elsewhere (branch `numbered-runs-twin`)**
 Jonathan found Just William kept as 28 per-CD listens (a second library copy) beside the 1613-minute Just William Collection listen.

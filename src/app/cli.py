@@ -458,6 +458,40 @@ def cmd_listens_split(args):
     return 0
 
 
+def cmd_listens_match(args):
+    """Give a listen the work a person knows it is, when the model never offered it: an Open Library work key (e.g. a box set with no recording length). Accepted by the user; other candidates are unlinked."""
+    from omarchy_db import connect
+    from sqlalchemy.orm import Session
+
+    from app.identify import candidates as olc
+    from app.linkage import apply
+    from app.store.models import Listen
+
+    d = olc.describe(olc.connect(), args.work)
+    if not d:
+        sys.exit(f"no such Open Library work: {args.work}")
+    summary = dict(
+        key=d["key"],
+        title=d["title"],
+        authors=[a["name"] for a in d.get("authors") or []],
+        year=int(d["year"]) if str(d.get("year") or "").isdigit() else None,
+        ol=[d["key"]],
+        editions=d.get("editions") or 0,
+        asins=[],
+        isbns=list(d.get("isbns") or [])[:20],
+        recordings=[],
+        programmes=[],
+    )
+    with Session(connect("listory")) as s:
+        listen = s.get(Listen, args.listen)
+        if listen is None or listen.merged_into_id is not None:
+            sys.exit(f"no live listen {args.listen}")
+        apply.assign_work(s, listen, summary, actor_ref="cli")
+        s.commit()
+    print(f"listen {args.listen} is now {summary['title']} ({summary['key']}), accepted by you")
+    return 0
+
+
 def cmd_listens_restructure(args):
     """Re-read listens' files with the current structure rules after a rule fix (e.g. a full-length file beside its split chapters); the listens, their choices, matches and decisions are kept."""
     from omarchy_db import connect
@@ -1028,6 +1062,13 @@ def main(argv=None):
     sp.add_argument("parts", nargs="+", type=int, help="input listen-part ids (see the listen's parts)")
     sp.add_argument("--reason", default="split by request", help="why, for the event log")
     sp.set_defaults(fn=cmd_listens_split)
+    lm = sub.add_parser(
+        "listens-match",
+        help="give a listen the Open Library work you know it is, when the model never offered it (accepted by you; other candidates unlinked)",
+    )
+    lm.add_argument("listen", type=int)
+    lm.add_argument("work", help="Open Library work key, e.g. /works/OL123W")
+    lm.set_defaults(fn=cmd_listens_match)
     mr = sub.add_parser(
         "listens-metadata-redo",
         help="read the metadata of these listens again after a rule change (record parts are unlinked with events; fields a person chose are kept)",

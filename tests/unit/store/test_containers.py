@@ -232,3 +232,30 @@ def test_a_numbered_run_with_no_twin_or_with_a_gap_is_left_alone(s, tmp_path, mo
         p.path = f"{p.path.rsplit('/', 1)[0]}/Quill Tale {n:02d}"
     monkeypatch.setattr(containers, "find_groups_raw", lambda s: [containers.Group("/x", pieces)])
     assert containers.find_sequences(s) == []
+
+
+def test_a_person_can_give_a_listen_a_work_the_model_never_offered(s, tmp_path):
+    (a, *_) = build_folder(s, tmp_path, {"First Tale": 240}, folder="Books/Single Tale")
+    box = dict(
+        key="/works/OL1W",
+        title="The Quill Box Set",
+        authors=["Quill Author"],
+        year=2005,
+        ol=["/works/OL1W"],
+        editions=1,
+        asins=[],
+        isbns=["9780000000001"],
+        recordings=[],
+        programmes=[],
+    )
+    part = apply.assign_work(s, a, box)
+    assert (part.state, a.status, part.detail["manual"]) == ("accepted", "identified", True)
+    again = apply.assign_work(
+        s, a, dict(box, key="/works/OL2W", title="Another", ol=["/works/OL2W"])
+    )  # a second answer replaces the first
+    live_matches = s.scalars(
+        select(ListenPart).where(
+            ListenPart.listen_id == a.id, ListenPart.role.in_(("match", "candidate")), ListenPart.unlinked_at.is_(None)
+        )
+    ).all()
+    assert [p.id for p in live_matches] == [again.id] and again.state == "accepted"
