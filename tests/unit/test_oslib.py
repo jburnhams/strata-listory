@@ -36,6 +36,7 @@ def test_a_job_runs_at_idle_cpu_and_disk_priority(monkeypatch):
     calls = []
     monkeypatch.setattr(oslib._os, "lower_priority", lambda nice, io=False: calls.append((nice, io)))
     monkeypatch.setattr(oslib, "WIN", False)
+    monkeypatch.setattr(oslib.os, "PRIO_PROCESS", 0, raising=False)  # absent on Windows
     monkeypatch.setattr(oslib.os, "setpriority", lambda which, who, value: calls.append(("nice", value)), raising=False)
     monkeypatch.setattr(oslib.os, "getpriority", lambda which, who: 0, raising=False)
     oslib.lower_job_priority()
@@ -45,6 +46,7 @@ def test_a_job_runs_at_idle_cpu_and_disk_priority(monkeypatch):
 def test_priority_is_absolute_and_never_raised(monkeypatch):
     values = []
     monkeypatch.setattr(oslib, "WIN", False)
+    monkeypatch.setattr(oslib.os, "PRIO_PROCESS", 0, raising=False)  # absent on Windows
     monkeypatch.setattr(oslib.os, "getpriority", lambda which, who: 5, raising=False)
     monkeypatch.setattr(oslib.os, "setpriority", lambda which, who, value: values.append(value), raising=False)
     oslib.lower_priority(19)
