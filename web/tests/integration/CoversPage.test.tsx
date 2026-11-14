@@ -39,6 +39,7 @@ describe('CoversPage', () => {
     expect(await screen.findByText('2 listens waiting for a search · 1 to choose · 1 chosen · 1 with none found')).toBeInTheDocument()
     const card = await screen.findByRole('article', { name: 'Glass Orchard' })
     expect(within(card).getByText('2 to choose from')).toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: '/x/Glass Orchard' })).toHaveAttribute('href', expect.stringContaining('/files?group=7'))   // where the files are, linked to the whole file group
     const best = within(card).getByRole('group', { name: 'Best fit cover for Glass Orchard' })
     expect(within(best).getAllByText(/2400×2400 · 2\sMB/)).toHaveLength(3)   // the heading and one line for each source
     const sources = within(best).getByRole('list', { name: 'Sources of this picture' })
@@ -229,7 +230,9 @@ describe('CoversPage', () => {
     const { user } = setup(<CoversPage />, { route: '/covers' })
     await screen.findByRole('article', { name: 'Glass Orchard' })
     await user.click(screen.getByRole('tab', { name: 'All searched' }))
-    expect(await screen.findByRole('article', { name: 'Third Book' })).toBeInTheDocument()
+    const third = await screen.findByRole('article', { name: 'Third Book' })
+    expect(within(third).getByText('/x/Third Book')).toBeInTheDocument()   // a listen with no file group shows its path as plain text
+    expect(within(third).queryByRole('link', { name: '/x/Third Book' })).toBeNull()
     expect(screen.getByRole('article', { name: 'Salt Roads' })).toBeInTheDocument()
     await user.type(screen.getByLabelText('Search covers'), 'zzz')
     expect(await screen.findByText('Nothing here yet')).toBeInTheDocument()

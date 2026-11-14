@@ -442,6 +442,16 @@ def create_app():
             headers={"Cache-Control": "private, no-cache"},
         )
 
+    @app.post("/api/ingest/runs/{run_id}/dismiss")
+    def dismiss_ingest_run(run_id: str):
+        from app.ingest import operations
+
+        try:
+            operations.dismiss_run(run_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return dict(cleared=True)
+
     @app.post("/api/ingest/runs/{run_id}/resume")
     def resume_ingest(run_id: str):
         ingest_guard(ingest_store.run_book_id, run_id)

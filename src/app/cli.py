@@ -556,6 +556,31 @@ def cmd_listens_identify(args):
         joined = apply.merge_parts(s, actor_ref=params.version()) if args.merge_parts else []
         if args.merge_parts:
             print(f"{len(joined)} listens joined as parts of one recording")
+        if args.merge_containers:
+            from app.identify import audibleindex
+            from app.identify import candidates as olc
+            from app.linkage import containers
+
+            try:
+                oc = olc.connect()
+            except FileNotFoundError:
+                oc = None
+            verdicts = containers.merge_containers(
+                s,
+                oc,
+                audibleindex.connect(),
+                params,
+                threshold=args.threshold,
+                actor_ref=params.version(),
+                only=set(args.ids) if args.ids else None,
+                dry_run=args.dry_run,
+            )
+            for v in verdicts:
+                print(f"container {v.action}: listens {v.group.listens}: {v.reason}")
+            for lid, minutes, longest, title in containers.overlong(s):
+                print(
+                    f"over-long: listen {lid} runs {minutes:.0f} min, the longest recording of its work ({title}) {longest:.0f}"
+                )
         merged = apply.merge_copies(s, actor_ref=params.version()) if args.merge_copies else []
         groups = apply.same_work_groups(s)
         if merged:
@@ -1096,6 +1121,11 @@ def main(argv=None):
         "--merge-parts",
         action="store_true",
         help="join listens whose group names differ only by a number and whose runtimes add up to one recording of their common work (the parts of one recording); run before --merge-copies and identify again afterwards",
+    )
+    lid.add_argument(
+        "--merge-containers",
+        action="store_true",
+        help="join the listens of one folder that are the books of a larger collection: the folder is matched as a whole with the summed runtime, and joined when that is a recording of the collection within 2%% (also lists close sums as proposals and listens far longer than their work); with --dry-run only reports",
     )
     lid.add_argument(
         "--merge-copies",

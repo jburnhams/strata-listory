@@ -101,8 +101,10 @@ def _compare(info: dict, listen: Listen, found: tuple | None) -> tuple[dict, dic
         year=val(chosen.get("year")) or tags.get("date") or folder.get("year") or "",
         files=copy.get("files"),
         folder=copy.get("folder") or "",
+        path=copy.get("path") or "",
+        group_id=copy.get("group_id"),
     )
-    source = {k: (_words(v) if k not in ("minutes", "files") else v) for k, v in source.items()}
+    source = {k: (_words(v) if k not in ("minutes", "files", "group_id") else v) for k, v in source.items()}
     if not found:
         return source, None
     work, part = found

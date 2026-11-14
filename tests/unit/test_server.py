@@ -520,3 +520,17 @@ def test_failed_jobs_list_the_newest_first_and_can_be_cleared(client):
     assert client.post(f"/api/jobs/{new}/dismiss").json() == dict(cleared=True)
     assert [r["job_id"] for r in client.get("/api/operations").json()["rows"] if r.get("job_id")] == [old]
     assert client.post("/api/jobs/missing/dismiss").status_code == 400
+
+
+def test_clearing_a_failed_analysis_over_http(client):
+    from app import catalogue
+    from app.ingest import store
+
+    book = catalogue.add_book(title="Interrupted")
+    rid = store.create(book["id"], {})
+    store.event(rid, "inventory", "done", data=dict(primary_id=book["id"], members=[book]))
+    store.finish(rid, "failed")
+    assert any(r["run_id"] == rid for r in client.get("/api/operations").json()["rows"])
+    assert client.post(f"/api/ingest/runs/{rid}/dismiss").json() == dict(cleared=True)
+    assert not any(r["run_id"] == rid for r in client.get("/api/operations").json()["rows"])
+    assert client.post("/api/ingest/runs/missing/dismiss").status_code == 400

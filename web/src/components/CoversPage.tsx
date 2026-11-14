@@ -2,7 +2,7 @@
 // Why it is shaped this way: the cover job (src/app/covers) searches every source for each confirmed or accepted listen and ranks what it found by fit (covers/fit.py: audiobook over print, the same recording, resolution, shape...). Most listens only need a yes, so a card opens on the best fit already selected with its sources and an Accept button; the other choices are one Expand away, where a click highlights an alternative and Save keeps it. Any picture can be magnified in the Lightbox (arrow keys step through the choices). The saved cover is for the next stage.
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { ZoomIn } from 'lucide-react'
 import { AsyncButton, Button, DataView, Disclosure, EmptyState, Field, IconButton, Input, Lightbox, PageHeader, Skeleton, Status, Tabs, format, useAsyncAction, useJob, type Tone } from 'strata-react'
 import { api, coverApi, type CoverJob, type CoverMatch, type CoverRecording, type CoverFiles, type CoverPicture, type CoverRow, type CoverStatus } from '../api'
@@ -170,6 +170,7 @@ function Card({ row, onPick, onBack, onChanged }: { row: CoverRow; onPick: (row:
         <h2 className="type-body font-medium">{row.label}</h2>
         <Status tone={row.state === 'chosen' ? 'success' : row.state === 'choose' ? 'info' : 'warning'}>{row.state === 'chosen' ? 'cover saved' : row.state === 'choose' ? `${row.covers.length} to choose from` : 'no cover found'}</Status>
         <span className="type-caption text-muted-foreground">searched {when(row.searched)}</span>
+        {row.source.path && <p className="type-caption basis-full break-all text-muted-foreground">{row.source.group_id != null ? <Link className="underline" to={`/files?group=${row.source.group_id}`} title="Open this file group on the Files page">{row.source.path}</Link> : row.source.path}</p>}
         <span className="ml-auto flex gap-2">
           {row.chosen != null && <Button variant="ghost" onClick={() => void pick.run({ id: null, via: 'pick' })}>Clear choice</Button>}
           <Button variant="ghost" title="Take the match back: this listen returns to the Matches page to be decided again" onClick={() => onBack(row)}>Back to matches</Button>

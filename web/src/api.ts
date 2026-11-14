@@ -59,6 +59,7 @@ export const api = {
   source: (id: number) => req<SourceFilesInfo>(`/api/books/${id}/source`),
   enrichBook: (id: number) => req<{ found: boolean; extras: Extras }>(`/api/books/${id}/enrich`, { method: 'POST' }),
   queue: () => req<QueueView>('/api/process'),
+  dismissRun: (id: string) => req<{ cleared: boolean }>(`/api/ingest/runs/${id}/dismiss`, send('POST', {})),
   dismissJob: (id: string) => req<{ cleared: boolean }>(`/api/jobs/${id}/dismiss`, send('POST', {})),
   retryJob: (id: string) => req<unknown>(`/api/jobs/${id}/retry`, send('POST', {})),
   operations: (completed = false) => req<OperationsView>(`/api/operations?completed=${completed}`),
@@ -164,7 +165,7 @@ export interface CoverSignal { name: string; weight: number; detail: string; pri
 export interface CoverPicture { image_id: number; width: number; height: number; bytes: number; sources: CoverSource[]; members: number[]; score: number; share: number; signals: CoverSignal[] }
 export interface CoverStatus { source: string; status: 'found' | 'none' | 'error' | 'limited' | 'skipped' | 'not_found'; detail: string; count: number }
 export interface CoverSide { title: string; author: string; narrator: string; minutes: number | null; year: string }
-export interface CoverFiles extends CoverSide { files: number | null; folder: string }
+export interface CoverFiles extends CoverSide { files: number | null; folder: string; path: string; group_id: number | null }
 export interface CoverRecording { asin: string; narrator: string; minutes: number | null; year: string; format: string }
 export interface CoverMatch extends CoverSide { recordings: number; all_recordings: CoverRecording[]; probability: number | null; accepted_by: string }
 export interface CoverRow { listen_id: number; label: string; kind: string; run_id: number; searched: string | null; state: 'choose' | 'chosen' | 'none'; chosen: number | null; covers: CoverPicture[]; sources: CoverStatus[]; source: CoverFiles; match: CoverMatch | null }
