@@ -176,3 +176,22 @@ def test_the_joined_listen_gets_the_collection_vectors_in_the_cache(s, tmp_path)
     containers.merge_containers(s, None, None, params(), vectors=fake_vectors())
     (survivor,) = live(s)
     assert dataset.load_cache()[str(survivor.id)]["clusters"].keys() == {COLLECTION["key"]}
+
+
+def test_a_joined_listen_is_as_long_as_all_its_parts_in_the_listens_list_detail_and_kind_features(s, tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.store import api, kinds_db
+
+    build_folder(s, tmp_path, BOOKS)
+    containers.merge_containers(s, None, None, params(), vectors=fake_vectors())
+    (survivor,) = live(s)
+    app = FastAPI()
+    app.include_router(api.listens_router)
+    app.dependency_overrides[api.get_session] = lambda: s
+    c = TestClient(app)
+    row = next(r for r in c.get("/api/listens").json()["rows"] if r["id"] == survivor.id)
+    assert (row["minutes"], row["files"], row["parts"]) == (1005, 3, 3)
+    assert c.get(f"/api/listens/{survivor.id}").json()["listen"]["minutes"] == 1005
+    assert kinds_db.gather(s, [survivor.id], audible=lambda a: {}, radio=lambda t: [])[survivor.id].minutes == 1005

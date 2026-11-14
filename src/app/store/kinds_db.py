@@ -70,6 +70,7 @@ def gather(s: Session, ids: list[int], *, audible=None, radio=None) -> dict[int,
         elif source == "folder_name":
             f.folder = str(payload.get("folder") or payload.get("title") or "")
     groups: dict[int, list[int]] = {}
+    sums: dict[int, tuple[float, int]] = {}  # listens of parts: all parts together
     for p in s.scalars(
         select(ListenPart)
         .where(ListenPart.listen_id.in_(ids), ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
@@ -81,8 +82,15 @@ def gather(s: Session, ids: list[int], *, audible=None, radio=None) -> dict[int,
             f.minutes = float(d.get("minutes") or 0)
             f.files = int(d.get("files") or 0)
             groups[p.listen_id] = [p.filegroup_id]
+        if d.get("relation") == "part":
+            sums[p.listen_id] = (
+                sums.get(p.listen_id, (0.0, 0))[0] + float(d.get("minutes") or 0),
+                sums.get(p.listen_id, (0.0, 0))[1] + int(d.get("files") or 0),
+            )
         if d.get("group_kind") == "programme":
             f.structure_kind = "programme"
+    for lid, (minutes, files) in sums.items():
+        feats[lid].minutes, feats[lid].files = minutes, files
     for (
         lid,
         gids,

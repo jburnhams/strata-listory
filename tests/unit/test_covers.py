@@ -542,3 +542,24 @@ def test_trim_padding_crops_the_original_and_keeps_it_when_anything_fails(monkey
     assert imaging.trim_padding(b"not a picture") is None
     monkeypatch.setattr(imaging.shutil, "which", lambda n: None)
     assert imaging.trim_padding(big) is None
+
+
+def test_a_listen_of_parts_is_compared_by_the_runtime_of_all_its_parts():
+    from types import SimpleNamespace
+
+    from app.covers.api import _compare
+
+    part = lambda n, m: dict(minutes=m, files=2, path=f"/x/Collection/{n:02d} Tale", group_id=n, relation="part")
+    info = dict(
+        tags={},
+        folder={},
+        chosen={},
+        copies=[part(1, 240), part(2, 225), dict(minutes=999, files=1, path="/y", relation="copy")],
+    )
+    source, _ = _compare(info, SimpleNamespace(label="Collection"), None)
+    assert (source["minutes"], source["files"], source["path"], source["group_id"]) == (
+        465,
+        4,
+        "/x/Collection/01 Tale",
+        1,
+    )  # the first part's path stays with its own file group
