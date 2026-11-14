@@ -143,7 +143,15 @@ class Verdict:
     data: dict | None = None  # the vectors the verdict came from (the cache entry for a listen that is joined)
 
 
-def judge(g: Group, data: dict, params: M.Params, *, threshold: float = A.THRESHOLD) -> Verdict:
+def _same_title(a: str, b: str) -> bool:
+    """Two titles name one work when one's words are all in the other (a bracketed or subtitle tail is ignored)."""
+    x, y = set(tk.title_key(tk.title_main(a) or a).split()), set(tk.title_key(tk.title_main(b) or b).split())
+    return not x or not y or x <= y or y <= x
+
+
+def judge(
+    g: Group, data: dict, params: M.Params, *, threshold: float = A.THRESHOLD, titles: frozenset[str] = frozenset()
+) -> Verdict:
     """Decide one folder from its pseudo-listen's vectors: join, propose (a person should look) or skip."""
     post, none, used = M.posterior(params, data["vectors"])
     if not post:
@@ -163,6 +171,37 @@ def judge(g: Group, data: dict, params: M.Params, *, threshold: float = A.THRESH
         summary=cluster,
         detail=A._detail(key, post[key], post, none, used, data["clusters"]),
     )
+    rec = next((r for r in cluster.get("recordings") or [] if float(r.get("minutes") or 0) == best), {})
+    if (
+        rec.get("title") and rec.get("asin") and not _same_title(cluster.get("title") or "", rec["title"])
+    ):  # the recording that fits is titled differently from its cluster ("Complete X" filed under the work "X: Book One"): the clustering joined them, the match for the whole is the recording itself
+        if tk.title_key(rec["title"]) in titles and off <= TOLERANCE:
+            asin = rec["asin"]
+            base.update(
+                key=f"asin:{asin}",
+                summary=dict(
+                    key=f"asin:{asin}",
+                    title=rec["title"],
+                    authors=cluster.get("authors") or [],
+                    year=rec.get("year"),
+                    ol=[],
+                    editions=0,
+                    asins=[asin],
+                    isbns=[],
+                    recordings=[rec],
+                    programmes=[],
+                ),
+            )
+            base["detail"] = dict(
+                base["detail"], candidate=base["key"], title=rec["title"], recordings=[rec], recording=asin
+            )
+        else:
+            return Verdict(
+                g,
+                "propose" if off <= TOLERANCE else "skip",
+                f"the recording that fits ({rec['title']}) is not titled like the work ({cluster.get('title')})",
+                **base,
+            )
     if not all(p.minutes < SHORTER * best for p in g.pieces):
         return Verdict(g, "skip", "a piece runs as long as the work: copies, not parts", **base)
     if off > PROPOSE_TOLERANCE:
@@ -273,7 +312,14 @@ def merge_containers(  # pragma: no cover - Postgres: tests/unit/store/test_cont
     for g in find_groups(s):
         if only and not only & set(g.listens):
             continue
-        v = judge(g, vectors(oc, ac, group_query(s, g)), params, threshold=threshold)
+        q = group_query(s, g)
+        v = judge(
+            g,
+            vectors(oc, ac, q),
+            params,
+            threshold=threshold,
+            titles=frozenset(tk.title_key(r.title) for r in q.readings),
+        )
         if v.action == "join" and not dry_run:
             survivor = join(s, g, v, actor_ref=actor_ref, run_id=run.id if run else None)
             fresh[str(survivor)] = dict(
@@ -308,6 +354,6 @@ def overlong(
     ):
         runtimes = [float(r.get("minutes") or 0) for r in (detail or {}).get("recordings") or []]
         _, minutes = A.listen_minutes(s, lid)
-        if runtimes and minutes > ratio * max(runtimes) and not (detail or {}).get("container"):
+        if runtimes and max(runtimes) > 0 and minutes > ratio * max(runtimes) and not (detail or {}).get("container"):
             out.append((lid, minutes, max(runtimes), (detail or {}).get("title") or ""))
     return out

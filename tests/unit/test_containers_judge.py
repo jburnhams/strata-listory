@@ -49,3 +49,23 @@ def test_other_sums_pieces_as_long_as_the_work_and_nothing_to_match_are_skipped(
     assert C.judge(group(900, 105), data(1005), params()).action == "skip"  # a piece is the whole work
     assert C.judge(group(240, 225, 540), data(0, recordings=[]), params()).action == "skip"  # no recording length
     assert C.judge(group(240, 225), dict(clusters={}, vectors={}), params()).action == "skip"
+
+
+def test_a_recording_titled_unlike_its_cluster_is_the_work_when_it_names_the_folder():
+    rec = dict(asin="B0COMPLETE1", title="The Complete Quill Tales", minutes=1005, year=2013)
+    d = data(0, recordings=[rec])
+    d["clusters"]["w"]["title"] = "Quill Tale One [3 stories]"  # the clustering filed the whole under one of its books
+    v = C.judge(group(240, 225, 540), d, params(), titles=frozenset({"complete quill tales"}))
+    assert v.action == "join" and v.key == "asin:B0COMPLETE1" and v.summary["title"] == "The Complete Quill Tales"
+    assert v.summary["asins"] == ["B0COMPLETE1"] and v.detail["candidate"] == "asin:B0COMPLETE1"
+    other = C.judge(group(240, 225, 540), d, params(), titles=frozenset({"something else"}))
+    assert (
+        other.action == "propose" and "not titled like the work" in other.reason
+    )  # not the folder's name: a person looks
+    far = C.judge(
+        group(240, 225, 540),
+        data(0, recordings=[dict(rec, minutes=1100)]),
+        params(),
+        titles=frozenset({"something else"}),
+    )
+    assert far.action == "skip"  # a different title and a sum that is only roughly right: nothing to say

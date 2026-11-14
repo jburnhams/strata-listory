@@ -230,7 +230,9 @@ describe('CoversPage', () => {
     const { user } = setup(<CoversPage />, { route: '/covers' })
     await screen.findByRole('article', { name: 'Glass Orchard' })
     await user.click(screen.getByRole('tab', { name: 'All searched' }))
-    expect(await screen.findByRole('article', { name: 'Third Book' })).toBeInTheDocument()
+    const third = await screen.findByRole('article', { name: 'Third Book' })
+    expect(within(third).getByText('/x/Third Book')).toBeInTheDocument()   // a listen with no file group shows its path as plain text
+    expect(within(third).queryByRole('link', { name: '/x/Third Book' })).toBeNull()
     expect(screen.getByRole('article', { name: 'Salt Roads' })).toBeInTheDocument()
     await user.type(screen.getByLabelText('Search covers'), 'zzz')
     expect(await screen.findByText('Nothing here yet')).toBeInTheDocument()
