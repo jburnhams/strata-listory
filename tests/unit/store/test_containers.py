@@ -266,3 +266,22 @@ def test_a_person_can_give_a_listen_a_work_the_model_never_offered(s, tmp_path):
         )
     ).all()
     assert [p.id for p in live_matches] == [again.id] and again.state == "accepted"
+
+
+def test_a_manually_matched_listen_counts_for_the_copy_and_part_rules(s, tmp_path):
+    a, b = build_folder(s, tmp_path, {"First Tale": 240, "Second Tale": 241})[:2]
+    box = dict(
+        key="/works/OL1W",
+        title="The Quill Box Set",
+        authors=["Quill Author"],
+        year=2005,
+        ol=["/works/OL1W"],
+        editions=1,
+        asins=[],
+        isbns=[],
+        recordings=[],
+        programmes=[],
+    )
+    apply.assign_work(s, a, box)
+    apply.assign_work(s, b, box)
+    assert list(apply.same_work_groups(s).values()) == [sorted([a.id, b.id])]
