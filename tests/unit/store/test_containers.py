@@ -195,3 +195,74 @@ def test_a_joined_listen_is_as_long_as_all_its_parts_in_the_listens_list_detail_
     assert (row["minutes"], row["files"], row["parts"]) == (1005, 3, 3)
     assert c.get(f"/api/listens/{survivor.id}").json()["listen"]["minutes"] == 1005
     assert kinds_db.gather(s, [survivor.id], audible=lambda a: {}, radio=lambda t: [])[survivor.id].minutes == 1005
+
+
+def test_a_numbered_run_as_long_as_an_accepted_listen_elsewhere_is_joined_as_parts(s, tmp_path, monkeypatch):
+    listens = build_folder(s, tmp_path, BOOKS, elsewhere={"Books/Whole": {"Quill Tale Collection": 1005}})
+    whole = next(l for l in listens if l.label == "Quill Tale Collection")
+    part = L.link(
+        s, whole, "match", work_id=apply.work_for(s, COLLECTION).id, state="candidate", ordinal=1, actor_kind="user"
+    )
+    L.set_state(s, part, "accepted", actor_kind="user")
+    real = containers.find_groups_raw(s)
+    pieces = [p for g in real for p in g.pieces if p.listen_id != whole.id]
+    for n, p in enumerate(sorted(pieces, key=lambda p: p.path), 1):
+        p.path = f"{p.path.rsplit('/', 1)[0]}/Quill Tale {n:02d}"  # the folders are numbered discs of one name
+    sub = next(l for l in listens if l.id == pieces[0].listen_id)  # one disc already approved as some book of its own
+    approved = L.link(
+        s, sub, "match", work_id=apply.work_for(s, COLLECTION).id, state="candidate", ordinal=1, actor_kind="user"
+    )
+    L.set_state(s, approved, "accepted", actor_kind="user")
+    group = containers.Group(pieces[0].path.rsplit("/", 1)[0], pieces)
+    assert group.total == 1005
+    monkeypatch.setattr(containers, "find_groups_raw", lambda s: [group])
+    out = containers.merge_containers(s, None, None, params(), vectors=lambda oc, ac, q: dict(clusters={}, vectors={}))
+    assert [v.action for v in out] == ["parts"] and str(whole.id) in out[0].reason
+    joined = [l for l in live(s) if l.id != whole.id]
+    assert len(joined) == 1 and joined[0].status == "review"
+    assert not s.scalars(
+        select(ListenPart).where(
+            ListenPart.listen_id == joined[0].id, ListenPart.role == "match", ListenPart.unlinked_at.is_(None)
+        )
+    ).all()  # the disc's approved match is superseded too
+    assert {
+        p.detail["relation"]
+        for p in s.scalars(select(ListenPart).where(ListenPart.listen_id == joined[0].id, ListenPart.role == "input"))
+    } == {"part"}
+
+
+def test_a_numbered_run_with_no_twin_or_with_a_gap_is_left_alone(s, tmp_path, monkeypatch):
+    build_folder(s, tmp_path, BOOKS)
+    real = containers.find_groups_raw(s)
+    pieces = sorted((p for g in real for p in g.pieces), key=lambda p: p.path)
+    for n, p in zip((1, 2, 4), pieces):  # 1, 2, 4: a disc is missing
+        p.path = f"{p.path.rsplit('/', 1)[0]}/Quill Tale {n:02d}"
+    monkeypatch.setattr(containers, "find_groups_raw", lambda s: [containers.Group("/x", pieces)])
+    assert containers.find_sequences(s) == []
+
+
+def test_a_person_can_give_a_listen_a_work_the_model_never_offered(s, tmp_path):
+    (a, *_) = build_folder(s, tmp_path, {"First Tale": 240}, folder="Books/Single Tale")
+    box = dict(
+        key="/works/OL1W",
+        title="The Quill Box Set",
+        authors=["Quill Author"],
+        year=2005,
+        ol=["/works/OL1W"],
+        editions=1,
+        asins=[],
+        isbns=["9780000000001"],
+        recordings=[],
+        programmes=[],
+    )
+    part = apply.assign_work(s, a, box)
+    assert (part.state, a.status, part.detail["manual"]) == ("accepted", "identified", True)
+    again = apply.assign_work(
+        s, a, dict(box, key="/works/OL2W", title="Another", ol=["/works/OL2W"])
+    )  # a second answer replaces the first
+    live_matches = s.scalars(
+        select(ListenPart).where(
+            ListenPart.listen_id == a.id, ListenPart.role.in_(("match", "candidate")), ListenPart.unlinked_at.is_(None)
+        )
+    ).all()
+    assert [p.id for p in live_matches] == [again.id] and again.state == "accepted"

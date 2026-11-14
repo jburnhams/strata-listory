@@ -346,6 +346,38 @@ def decide(s: Session, listen: Listen, part: ListenPart | None, action: str, *, 
     s.flush()
 
 
+def assign_work(s: Session, listen: Listen, summary: dict, *, actor_ref: str = "cli") -> ListenPart:
+    """A person's own answer for a work the model never offered (an Open Library record with no recording length, a box set): link it as a candidate and approve it, so it is accepted by the user, every other candidate is unlinked and the answer becomes a label for the next fit."""
+    work = work_for(s, summary)
+    top = max(
+        (
+            p.ordinal or 0
+            for p in s.scalars(
+                select(ListenPart).where(
+                    ListenPart.listen_id == listen.id, ListenPart.role == "candidate", ListenPart.unlinked_at.is_(None)
+                )
+            )
+        ),
+        default=0,
+    )
+    part = L.link(
+        s,
+        listen,
+        "candidate",
+        work_id=work.id,
+        ordinal=top + 1,
+        state="candidate",
+        score=1.0,
+        detail=_detail(summary["key"], 1.0, {summary["key"]: 1.0}, 0.0, {}, {summary["key"]: summary})
+        | {"manual": True},
+        actor_kind="user",
+        actor_ref=actor_ref,
+        reason="chosen by a person",
+    )
+    decide(s, listen, part, "approve", actor_ref=actor_ref)
+    return part
+
+
 def reopen(s: Session, listen: Listen, *, actor_ref: str = "web") -> None:
     """Take back an acceptance (the model's or a person's): the accepted work is a candidate again, the candidates unlinked when it was approved are linked again, and the listen is `review`, so it is on the match queue to be decided. A person's own earlier answer on it stays in the log but is no longer a label (labels read the accepted state)."""
     part = s.scalars(
