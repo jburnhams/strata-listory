@@ -557,10 +557,9 @@ def test_a_listen_of_parts_is_compared_by_the_runtime_of_all_its_parts():
         copies=[part(1, 240), part(2, 225), dict(minutes=999, files=1, path="/y", relation="copy")],
     )
     source, _ = _compare(info, SimpleNamespace(label="Collection"), None)
-    assert (source["minutes"], source["files"], source["path"], source["folder"], source["group_id"]) == (
+    assert (source["minutes"], source["files"], source["path"], source["group_id"]) == (
         465,
         4,
-        "/x/Collection",
-        "Collection",
+        "/x/Collection/01 Tale",
         1,
-    )
+    )  # the first part's path stays with its own file group

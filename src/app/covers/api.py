@@ -95,9 +95,7 @@ def _compare(info: dict, listen: Listen, found: tuple | None) -> tuple[dict, dic
         copy.update(
             minutes=sum(c.get("minutes") or 0 for c in parts),
             files=sum(c.get("files") or 0 for c in parts) or None,
-            path=os.path.dirname(parts[0].get("path") or "") or parts[0].get("path"),
         )
-        copy["folder"] = os.path.basename(copy["path"] or "")
     source = dict(
         title=val(chosen.get("title")) or tags.get("album") or tags.get("title") or folder.get("title") or listen.label,
         author=val(chosen.get("author"))
