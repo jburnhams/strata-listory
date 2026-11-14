@@ -354,7 +354,7 @@ def assign_work(s: Session, listen: Listen, summary: dict, *, actor_ref: str = "
             p.ordinal or 0
             for p in s.scalars(
                 select(ListenPart).where(
-                    ListenPart.listen_id == listen.id, ListenPart.role == "candidate", ListenPart.unlinked_at.is_(None)
+                    ListenPart.listen_id == listen.id, ListenPart.role == "match", ListenPart.unlinked_at.is_(None)
                 )
             )
         ),
@@ -363,7 +363,7 @@ def assign_work(s: Session, listen: Listen, summary: dict, *, actor_ref: str = "
     part = L.link(
         s,
         listen,
-        "candidate",
+        "match",  # a match, as the model's own acceptances are, so the copy and part rules (`same_work_groups`) see it
         work_id=work.id,
         ordinal=top + 1,
         state="candidate",
