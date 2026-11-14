@@ -2,11 +2,13 @@
 
 import json
 import os
+import time
 from pathlib import Path
 
 from app import catalogue, details, enrich, fs, matcher, mirror, providers, read_models, scan, settings
 from app.ingest import pipeline, previews
 from app.ingest.worker import Worker as IngestWorker
+from app.jobs import report_progress
 from app.process import queue as pq
 
 
@@ -135,7 +137,14 @@ def _execute(jobs, domain, kind, options):
             if not fs.reachable(folder) or not os.path.isdir(folder):
                 raise ValueError(f"folder is not reachable: {folder}")
             with Session(connect("listory")) as s:
-                top = fg.scan_roots(s, roots, only=folder)
+                last = [0.0]
+
+                def hashed(done, total, path):  # throttled: one write a second at most
+                    if time.monotonic() - last[0] >= 1 or done == total:
+                        last[0] = time.monotonic()
+                        report_progress(path, done, total)
+
+                top = fg.scan_roots(s, roots, only=folder, progress=hashed, stage=lambda text: report_progress(text))
                 return dict(files=top.file_count, folders=top.group_count, bytes=top.total_bytes)
         if kind == "match":
             return matcher.match_pending(options["limit"], providers.enabled(options.get("providers")))

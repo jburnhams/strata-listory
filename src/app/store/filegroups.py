@@ -133,7 +133,7 @@ def walk_audio(root: str) -> list[tuple[str, int, int]]:
 
 
 def scan_files(
-    s: Session, root: str, *, workers: int = 4, progress: Callable[[int, int], None] | None = None
+    s: Session, root: str, *, workers: int = 4, progress: Callable[[int, int, str], None] | None = None
 ) -> dict[str, int]:
     """Make sure every audio file under `root` has a PartFile and a current location. Returns {path: part_file_id}. Locations no longer on disk get `gone_at`."""
     found = walk_audio(root)
@@ -171,7 +171,7 @@ def scan_files(
             if done % 200 == 0:
                 s.commit()
             if progress:
-                progress(done, len(todo))
+                progress(done, len(todo), p)
     seen = set(ids)
     for p, loc in known.items():
         if p in seen:
@@ -273,7 +273,8 @@ def scan_roots(
     *,
     only: str | None = None,
     workers: int = 4,
-    progress: Callable[[int, int], None] | None = None,
+    progress: Callable[[int, int, str], None] | None = None,
+    stage: Callable[[str], None] | None = None,
 ) -> PartFilegroup:
     """Scan library roots and make one new grouping over all of them (the Files page shows the newest grouping, so it must always cover every root). With `only`, just that root is walked and hashed again; the others reuse the locations already recorded, so scanning one folder never makes the rest vanish from the page."""
     run = new_run(s, "scan", {"roots": roots, "only": only})
@@ -281,6 +282,8 @@ def scan_roots(
     ids: dict[str, int] = {}
     for root in roots:
         if only is None or root == only:
+            if stage:
+                stage(f"Looking for new and changed files in {root}")
             ids.update(scan_files(s, root, workers=workers, progress=progress))
         else:
             prefix = root.rstrip(os.sep) + os.sep
@@ -296,8 +299,12 @@ def scan_roots(
                 }
             )
         s.commit()
+    if stage:
+        stage("Reading durations and tags of new files")
     probe_missing(s, ids, workers=workers)
     s.commit()
+    if stage:
+        stage("Grouping files by folder")
     top = group_roots(s, roots, ids)
     finish_run(s, run, "done")
     s.commit()

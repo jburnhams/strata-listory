@@ -108,7 +108,7 @@ it('shows ingest queues and failures by default and completed operations on requ
   let retried = 0
   server.use(http.get('/api/operations', ({ request }) => HttpResponse.json({ busy: false, rows: [
     { id: 'pending', book_id: 20, run_id: null, title: 'Next book', stage: 'Ingest analysis', state: 'queued', phase: null, error: '' },
-    { id: 'active', book_id: 21, run_id: 'r1', title: 'Audio analysis', stage: 'quality', state: 'running', phase: 'quality', error: '' },
+    { id: 'active', book_id: 21, run_id: 'r1', title: 'Audio analysis', stage: 'quality', state: 'running', phase: 'quality', error: '', progress: { current: '/lib/Book/03.mp3', done: 40, total: 100 } },
     { id: 'failed', book_id: 22, run_id: 'r2', title: 'Failed metadata', stage: 'providers', state: 'failed', phase: 'metadata', error: 'Provider unavailable' },
     { id: 'waiting', book_id: 23, run_id: 'r3', title: 'Metadata to approve', stage: 'Metadata approval', state: 'waiting', phase: 'metadata', error: '' },
     ...(new URL(request.url).searchParams.get('completed') === 'true' ? [{ id: 'complete', book_id: 24, run_id: 'r4', title: 'Earlier operation', stage: 'Processing', state: 'completed', phase: null, error: '' }] : []),
@@ -116,6 +116,8 @@ it('shows ingest queues and failures by default and completed operations on requ
   const { user } = setup(<ProcessPage />)
   expect(await screen.findByText('Next book')).toBeInTheDocument()
   expect(screen.getByText('Audio analysis')).toBeInTheDocument()
+  expect(screen.getByText(/40 of 100 done, 60 remaining/)).toBeInTheDocument()
+  expect(screen.getByText('/lib/Book/03.mp3')).toBeInTheDocument()
   expect(screen.getByText('Provider unavailable')).toBeInTheDocument()
   expect(screen.queryByText('Earlier operation')).toBeNull()
   expect(screen.queryByText('Metadata to approve')).toBeNull()                           // an old ingest approval waiting for a person is not queued work
