@@ -1,6 +1,7 @@
 name: Postgres store
 
-# The listen catalogue (src/app/store) on a real PostgreSQL 18: migrations from empty, drift check and the model tests.
+# The listen catalogue (src/app/store) on a real PostgreSQL 18, through strata_python.db: the migration checks (`strata-db check`: from empty, one head,
+# downgrading cleanly, matching the models) and tests/unit/store. The unit workflow skips this layer (it needs a server).
 on:
   push:
     branches: [ "main" ]
@@ -9,9 +10,26 @@ on:
 
 jobs:
   store:
-    # dbtool check and tests/unit/store on a throwaway Postgres 18, through the shared workflow in jburnhams/database
-    uses: jburnhams/database/.github/workflows/app-db.yml@main
-    with:
-      install: uv pip install -e . --group dev --group db
-      tests: tests/unit/store
-      pytest-args: "-o addopts= -p no:randomly"
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres  # throwaway CI container gitleaks:allow
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # strata_python.db makes its strata_db_* scratch and test databases on this server; the guard refuses every other database under pytest
+      STRATA_DB_TEST_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres  # throwaway CI container gitleaks:allow
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Migrations (strata-db check)
+        run: uv run --no-sync strata-db check
+      - name: Catalogue tests on Postgres
+        run: uv run --no-sync pytest -q -o addopts= -p no:randomly --pg tests/unit/store

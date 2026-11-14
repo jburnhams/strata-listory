@@ -8,9 +8,9 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
-from omarchy_db import connect
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from strata_python.db import connect
 
 Report = Callable[..., None]  # report(current: str, done: int | None, total: int | None)
 BATCH = 100

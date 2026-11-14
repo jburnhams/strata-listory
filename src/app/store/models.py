@@ -11,12 +11,15 @@ from datetime import datetime
 from typing import Any
 
 import sqlalchemy as sa
-from omarchy_db import make_base
-from sqlalchemy import CheckConstraint, ForeignKey, Index, func, text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, MetaData, func, text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, MappedAsDataclass, mapped_column
+from strata_python.db import NAMING_CONVENTION
 
-Base = make_base()
+
+class Base(MappedAsDataclass, DeclarativeBase):
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+
 
 LISTEN_KINDS = ("book", "radio_series", "radio_show", "play", "other")
 GROUP_KINDS = (
