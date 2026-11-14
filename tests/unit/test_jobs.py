@@ -576,3 +576,17 @@ def test_interrupted_jobs_are_retried_a_bounded_number_of_times_and_not_when_old
         c.execute("UPDATE jobs SET finished='2000-01-01T00:00:00+00:00' WHERE id=?", (old,))
     c.close()
     assert q.recover_interrupted() == [] and q.get(old)["state"] == "failed"
+
+
+def test_folder_scans_of_the_files_page_never_run_at_the_same_time():
+    q = JobQueue(lambda *args: dict(saved=True), workers=2)
+    a = q.submit("system", "filegroups", folder="/a")
+    b = q.submit("system", "filegroups", folder="/b")
+    assert q._claim()["id"] == a
+    c = db.connect()
+    with c:
+        c.execute("UPDATE jobs SET state='running' WHERE id=?", (a,))
+    c.close()
+    assert q._claim() is None  # /b waits for /a: both publish a grouping over every root
+    q.execute_claimed(a)
+    assert q._claim()["id"] == b
