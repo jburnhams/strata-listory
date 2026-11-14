@@ -39,7 +39,7 @@ export default function ListensPage() {
       <Field label="Search listens" hint="Every word must appear in the title, author, narrator or folder path">
         <Input type="search" value={typed} onChange={e => setTyped(e.target.value)} placeholder="e.g. lee child" />
       </Field>
-      <Tabs param="match" label="Match state" items={[{ value: '', label: 'Confirmed and accepted' }, { value: 'confirmed', label: 'Confirmed by you' }, { value: 'accepted', label: 'Accepted by the model' }, { value: 'unmatched', label: 'Not matched yet' }, { value: 'all', label: 'Any match state' }]}>{() => null}</Tabs>
+      <Tabs param="match" label="Match state" items={[{ value: '', label: 'Confirmed and accepted' }, { value: 'confirmed', label: 'Confirmed by you' }, { value: 'accepted', label: 'Accepted by the model' }, { value: 'unmatched', label: 'Not matched yet' }, { value: 'nocandidates', label: 'No candidates' }, { value: 'all', label: 'Any match state' }]}>{() => null}</Tabs>
       <Tabs param="kind" label="Kind of listen" items={[{ value: '', label: 'All' }, ...Object.keys(tabs).map(k => ({ value: k, label: `${KIND_LABEL[k] ?? k} (${tabs[k]})` })), ...(load.status === 'ready' && load.data.not_book > 0 ? [{ value: 'not-book', label: `${KIND_LABEL['not-book']} (${load.data.not_book})` }] : []), ...(load.status === 'ready' && load.data.review > 0 ? [{ value: 'review', label: `${KIND_LABEL.review} (${load.data.review})` }] : [])]}>
         {() => (
           <DataView state={load} isEmpty={d => d.rows.length === 0} skeleton={<div className="space-y-3">{[0, 1, 2].map(i => <Skeleton key={i} className="h-10 w-full" />)}</div>}

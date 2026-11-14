@@ -1004,3 +1004,23 @@ def test_a_match_a_person_confirmed_survives_a_merge(s, tmp_path):
     assert match.linked_by == "model"
     L.merge(s, keep, absorbed, actor_kind="user", reason="copies")
     assert s.get(ListenPart, match.id).listen_id == keep.id and s.get(ListenPart, match.id).unlinked_at is None
+
+
+def test_listens_without_any_candidate_are_counted_and_listable(s, listens):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.linkage import api as A
+    from app.store import api as SA
+
+    app = FastAPI()
+    app.include_router(A.router)
+    app.include_router(SA.listens_router)
+    app.dependency_overrides[A.get_session] = lambda: s
+    app.dependency_overrides[SA.get_session] = lambda: s
+    c = TestClient(app)
+    before = c.get("/api/matches?limit=1").json()["summary"]["no_candidates"]
+    assert before == c.get("/api/listens?match=nocandidates&kind=book").json()["total"] and before >= 4
+    apply.apply(s, data_for(listens, sure=False), params())
+    after = c.get("/api/matches?limit=1").json()["summary"]["no_candidates"]
+    assert after == 0 and c.get("/api/listens?match=nocandidates&kind=book").json()["total"] == 0

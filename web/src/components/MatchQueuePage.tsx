@@ -345,8 +345,10 @@ export default function MatchQueuePage() {
           <Metric label="Waiting for you" value={format.integer.format(waiting)} note={`${format.integer.format(summary.auto_unconfirmed)} already accepted by the model`} />
           <Metric label="Confirmed by you" value={format.integer.format(summary.confirmed)} note={summary.since_train != null ? `${summary.since_train} answers since the model last learned (it relearns every ${summary.auto_retrain})` : `The model relearns every ${summary.auto_retrain} answers`} />
           <Metric label="Not found" value={format.integer.format(summary.not_found)} note="None of the candidates was right" />
+          <Metric label="No candidates" value={format.integer.format(summary.no_candidates)} note="Books the model found no match for" />
         </MetricStrip>
       )}
+      {summary && summary.no_candidates > 0 && <p className="type-body-sm"><Link className="underline" to="/listens?match=nocandidates&kind=book">Show the {format.count(summary.no_candidates, 'book')} with no candidate at all</Link></p>}
       {training?.error && <p role="alert" className="type-body-sm text-danger">Learning failed: {training.error}</p>}
       <QueueControls filters={filters} facets={facets} set={set} clear={filtered ? clear : null} />
       <InfiniteList state={load} label="Matches to check" skeleton={<Skeletons />} moreSkeleton={<Skeletons />} moreLabel="Show more matches" estimateSize={320} height={Math.max(480, Math.round(window.innerHeight * 0.75))} keepAtLeast={4}
