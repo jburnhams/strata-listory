@@ -156,7 +156,7 @@ export const handlers = [
     kindState.chosen.push({ id: Number(params.id), kind: b.kind })
     return HttpResponse.json({ ok: true, retraining: false, kind_info: { ...kindInfos.close, kind: b.kind, decided_by: 'user', band: b.kind === 'book' ? 'book' : 'broadcast' } })
   }),
-  http.post('/api/filegroups/scan', async ({ request }) => { const b = await request.json() as { folder: string }; fgScans.push(b.folder); return HttpResponse.json({ queued: true, job_id: 'j1' }, { status: 202 }) }),
+  http.post('/api/filegroups/scan', async ({ request }) => { const b = await request.json() as { folder: string }; fgScans.push(b.folder); return HttpResponse.json({ files: 1234, folders: 5, bytes: 1e9 }) }),
   http.get('/api/filegroups', () => HttpResponse.json({ root: fgRoot, groupings: 1 })),
   http.get('/api/filegroups/search', ({ request }) => {
     const q = (new URL(request.url).searchParams.get('q') ?? '').toLowerCase()
