@@ -29,6 +29,7 @@ from app.store.models import Listen, ListenChoice, ListenPart, PartFilegroup
 TOLERANCE = 0.02
 PROPOSE_TOLERANCE = 0.12
 SHORTER = 0.8
+TWIN_SHORTER = 0.6  # the pieces of a numbered run are discs: each well under the whole it is a twin of
 MAX_PIECES = 40  # a folder of hundreds of books (a whole author or library) is not one work
 
 
@@ -61,8 +62,8 @@ def lead_number(label: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def find_groups(s: Session) -> list[Group]:  # pragma: no cover - Postgres: tests/unit/store/test_containers.py
-    """Live book listens' inputs grouped by the folder they sit in: two or more pieces, a plausible number of them."""
+def find_groups_raw(s: Session) -> list[Group]:  # pragma: no cover - Postgres: tests/unit/store/test_containers.py
+    """Live book listens' inputs grouped by the folder they sit in."""
     rows = s.execute(
         select(ListenPart, PartFilegroup.label, PartFilegroup.path)
         .join(Listen, Listen.id == ListenPart.listen_id)
@@ -83,8 +84,13 @@ def find_groups(s: Session) -> list[Group]:  # pragma: no cover - Postgres: test
         groups.setdefault(parent, Group(parent)).pieces.append(
             Piece(part.listen_id, part.id, label or "", path, minutes, (part.detail or {}).get("relation") or "")
         )
+    return list(groups.values())
+
+
+def find_groups(s: Session) -> list[Group]:  # pragma: no cover - Postgres: tests/unit/store/test_containers.py
+    """The folders with two or more pieces, a plausible number of them."""
     out = []
-    for g in groups.values():
+    for g in find_groups_raw(s):
         done = len(g.listens) == 1 and all(
             p.relation == "part" for p in g.pieces
         )  # already one listen of ordered parts
@@ -92,6 +98,58 @@ def find_groups(s: Session) -> list[Group]:  # pragma: no cover - Postgres: test
             g.pieces.sort(key=lambda p: (lead_number(p.label) if lead_number(p.label) is not None else 10**6, p.path))
             out.append(g)
     return out
+
+
+def find_sequences(s: Session) -> list[Group]:  # pragma: no cover - Postgres: tests/unit/store/test_containers.py
+    """Within one folder, the numbered runs of one name: `Title 01`... `Title 28` (same `part_key`, numbers 1..n with no gap, at least three), whatever else lies in the folder. A CD set kept as one listen per disc is this, even beside whole books in the same folder."""
+    from app.store.build import numbering, part_key
+
+    keyed: dict[tuple[str, str], list[Piece]] = {}
+    for g in find_groups_raw(s):
+        for p in g.pieces:
+            key = part_key(os.path.basename(p.path or ""))
+            if key and numbering(os.path.basename(p.path or "")):
+                keyed.setdefault((g.parent, key), []).append(p)
+    out = []
+    for (parent, _), pieces in keyed.items():
+        nums = sorted(int(numbering(os.path.basename(p.path))[-1]) for p in pieces)
+        if (
+            3 <= len(pieces) <= MAX_PIECES
+            and nums == list(range(nums[0], nums[0] + len(pieces)))
+            and not (len({p.listen_id for p in pieces}) == 1 and all(p.relation == "part" for p in pieces))
+        ):
+            pieces.sort(key=lambda p: int(numbering(os.path.basename(p.path))[-1]))
+            out.append(Group(parent, pieces))
+    return out
+
+
+def twin_of(
+    s: Session, g: Group
+) -> tuple[int, float] | None:  # pragma: no cover - Postgres: tests/unit/store/test_containers.py
+    """A live listen outside the group, accepted as a work, titled like the run and as long as the run together (within `TOLERANCE`): the same recording kept whole elsewhere (listen id, its minutes). Every piece must be much shorter than it."""
+    own = set(g.listens)
+    words = set(re.findall(r"[a-z]+", os.path.basename(g.pieces[0].path).lower()))
+    for lid, label in s.execute(
+        select(Listen.id, Listen.label)
+        .join(ListenPart, ListenPart.listen_id == Listen.id)
+        .where(
+            ListenPart.role == "match",
+            ListenPart.state == "accepted",
+            ListenPart.unlinked_at.is_(None),
+            Listen.merged_into_id.is_(None),
+            Listen.kind == "book",
+        )
+    ):
+        if lid in own or not _same_title(label or "", " ".join(sorted(words - {"cd", "disc", "disk"}))):
+            continue
+        _, minutes = A.listen_minutes(s, lid)
+        if (
+            minutes
+            and abs(g.total - minutes) / minutes <= TOLERANCE
+            and all(p.minutes < TWIN_SHORTER * minutes for p in g.pieces)
+        ):
+            return lid, minutes
+    return None
 
 
 def _choices(
@@ -221,7 +279,7 @@ def join(
     """Merge the group's listens into one (the first piece's listen survives), mark every piece a `part` in listening order, replace the sub-book matches with the match for the whole and set the status accepted."""
     ids = g.listens
     survivor = s.get(Listen, ids[0])
-    if survivor is None or v.summary is None:
+    if survivor is None:
         raise ValueError("nothing to join")
     for lid in ids[1:]:
         L.merge(
@@ -247,6 +305,19 @@ def join(
         part.detail = {**(part.detail or {}), "relation": "part"}
     s.flush()
     L.reorder(s, survivor, "input", order, actor_kind="model", actor_ref=actor_ref, reason="pieces in listening order")
+    if (
+        v.summary is None
+    ):  # a numbered run joined on a twin's evidence: the work is decided again with the whole runtime
+        L.set_status(
+            s,
+            survivor,
+            "review",
+            actor_kind="model",
+            actor_ref=actor_ref,
+            run_id=run_id,
+            reason=f"parts joined: identify again with the whole runtime ({v.reason})",
+        )
+        return survivor.id
     for p in s.scalars(
         select(ListenPart).where(
             ListenPart.listen_id == survivor.id,
@@ -329,6 +400,20 @@ def merge_containers(  # pragma: no cover - Postgres: tests/unit/store/test_cont
             out.append(v)
     if run:
         finish_run(s, run, "done")
+    for g in find_sequences(s):
+        if only and not only & set(g.listens):
+            continue
+        twin = twin_of(s, g)
+        if not twin:
+            continue
+        v = Verdict(
+            g,
+            "parts",
+            f"{len(g.pieces)} numbered parts sum to {g.total:.0f} min, as long as listen {twin[0]} ({twin[1]:.0f} min)",
+        )
+        if not dry_run:
+            join(s, g, v, actor_ref=actor_ref, run_id=run.id if run else None)
+        out.append(v)
     if fresh:
         cache = dataset.load_cache()
         cache.update(fresh)
