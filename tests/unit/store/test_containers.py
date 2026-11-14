@@ -208,6 +208,11 @@ def test_a_numbered_run_as_long_as_an_accepted_listen_elsewhere_is_joined_as_par
     pieces = [p for g in real for p in g.pieces if p.listen_id != whole.id]
     for n, p in enumerate(sorted(pieces, key=lambda p: p.path), 1):
         p.path = f"{p.path.rsplit('/', 1)[0]}/Quill Tale {n:02d}"  # the folders are numbered discs of one name
+    sub = next(l for l in listens if l.id == pieces[0].listen_id)  # one disc already approved as some book of its own
+    approved = L.link(
+        s, sub, "match", work_id=apply.work_for(s, COLLECTION).id, state="candidate", ordinal=1, actor_kind="user"
+    )
+    L.set_state(s, approved, "accepted", actor_kind="user")
     group = containers.Group(pieces[0].path.rsplit("/", 1)[0], pieces)
     assert group.total == 1005
     monkeypatch.setattr(containers, "find_groups_raw", lambda s: [group])
@@ -216,8 +221,10 @@ def test_a_numbered_run_as_long_as_an_accepted_listen_elsewhere_is_joined_as_par
     joined = [l for l in live(s) if l.id != whole.id]
     assert len(joined) == 1 and joined[0].status == "review"
     assert not s.scalars(
-        select(ListenPart).where(ListenPart.listen_id == joined[0].id, ListenPart.role == "match")
-    ).all()
+        select(ListenPart).where(
+            ListenPart.listen_id == joined[0].id, ListenPart.role == "match", ListenPart.unlinked_at.is_(None)
+        )
+    ).all()  # the disc's approved match is superseded too
     assert {
         p.detail["relation"]
         for p in s.scalars(select(ListenPart).where(ListenPart.listen_id == joined[0].id, ListenPart.role == "input"))

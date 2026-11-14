@@ -305,19 +305,6 @@ def join(
         part.detail = {**(part.detail or {}), "relation": "part"}
     s.flush()
     L.reorder(s, survivor, "input", order, actor_kind="model", actor_ref=actor_ref, reason="pieces in listening order")
-    if (
-        v.summary is None
-    ):  # a numbered run joined on a twin's evidence: the work is decided again with the whole runtime
-        L.set_status(
-            s,
-            survivor,
-            "review",
-            actor_kind="model",
-            actor_ref=actor_ref,
-            run_id=run_id,
-            reason=f"parts joined: identify again with the whole runtime ({v.reason})",
-        )
-        return survivor.id
     for p in s.scalars(
         select(ListenPart).where(
             ListenPart.listen_id == survivor.id,
@@ -331,8 +318,21 @@ def join(
             actor_kind="model",
             actor_ref=actor_ref,
             run_id=run_id,
-            reason="superseded: the folder as a whole is the better match",
+            reason="superseded: the pieces are one listen now, matched again as a whole",
         )
+    if (
+        v.summary is None
+    ):  # a numbered run joined on a twin's evidence: the work is decided again with the whole runtime
+        L.set_status(
+            s,
+            survivor,
+            "review",
+            actor_kind="model",
+            actor_ref=actor_ref,
+            run_id=run_id,
+            reason=f"parts joined: identify again with the whole runtime ({v.reason})",
+        )
+        return survivor.id
     work = A.work_for(s, v.summary)
     part = L.link(
         s,
