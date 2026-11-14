@@ -2,6 +2,7 @@
 
 Other modules should call these instead of importing fcntl or calling os.kill(pid, 0) (on Windows that would terminate the process)."""
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -16,13 +17,23 @@ terminate_job_group = _os.terminate_own_group
 
 
 def lower_priority(nice=19):
-    """Run this process at lower CPU priority (nice value on POSIX, below-normal/idle class on Windows). Children inherit it."""
-    _os.lower_priority(nice)
+    """Run this process at lower CPU priority: nice value `nice` (never lower than the current one) on POSIX, below-normal/idle class on Windows. Children inherit it. (`strata_python.oslib.lower_priority` adds `nice` to the current value, which gives 9 when the process starts at -10, as a macOS CI runner does.)"""
+    if WIN:
+        _os.lower_priority(nice)
+        return
+    with contextlib.suppress(OSError, AttributeError):
+        os.setpriority(os.PRIO_PROCESS, 0, max(nice, os.getpriority(os.PRIO_PROCESS, 0)))
 
 
 def lower_job_priority():
     """Background scheduling for a job: idle CPU priority and idle disk I/O. Tools inherit the job's priorities."""
-    _os.lower_priority(19, io=True)
+    if WIN:
+        _os.lower_priority(19, io=True)
+        return
+    lower_priority(19)
+    _os.lower_priority(
+        0, io=True
+    )  # nice 0 adds nothing; the I/O class is the library's (idle on Linux, throttled on macOS)
 
 
 def start_job(ident, data_dir) -> subprocess.Popen:

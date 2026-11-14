@@ -35,6 +35,27 @@ def test_cli_command_runs_the_cli():
 def test_a_job_runs_at_idle_cpu_and_disk_priority(monkeypatch):
     calls = []
     monkeypatch.setattr(oslib._os, "lower_priority", lambda nice, io=False: calls.append((nice, io)))
+    monkeypatch.setattr(oslib, "WIN", False)
+    monkeypatch.setattr(oslib.os, "setpriority", lambda which, who, value: calls.append(("nice", value)), raising=False)
+    monkeypatch.setattr(oslib.os, "getpriority", lambda which, who: 0, raising=False)
     oslib.lower_job_priority()
-    oslib.lower_priority(10)
-    assert calls == [(19, True), (10, False)]
+    assert calls == [("nice", 19), (0, True)]  # an absolute nice of 19, then the library's I/O class
+
+
+def test_priority_is_absolute_and_never_raised(monkeypatch):
+    values = []
+    monkeypatch.setattr(oslib, "WIN", False)
+    monkeypatch.setattr(oslib.os, "getpriority", lambda which, who: 5, raising=False)
+    monkeypatch.setattr(oslib.os, "setpriority", lambda which, who, value: values.append(value), raising=False)
+    oslib.lower_priority(19)
+    oslib.lower_priority(2)
+    assert values == [19, 5]  # from a process already at -10 the library's relative os.nice(19) would give 9
+
+
+def test_windows_uses_the_library_for_priority(monkeypatch):
+    calls = []
+    monkeypatch.setattr(oslib, "WIN", True)
+    monkeypatch.setattr(oslib._os, "lower_priority", lambda nice, io=False: calls.append((nice, io)))
+    oslib.lower_priority(19)
+    oslib.lower_job_priority()
+    assert calls == [(19, False), (19, True)]
