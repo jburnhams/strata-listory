@@ -58,6 +58,9 @@ packages = ["src/app"]
 pythonpath = ["src", "tests/utils"]
 testpaths = ["tests/unit"]
 addopts = "-ra --timeout=300 --ignore=tests/unit/store"       # the Postgres layer needs a server: .github/workflows/store.yml runs tests/unit/store on a throwaway PostgreSQL (with -o addopts=)
+strata_env_prefix = "APP"                                    # strata-python's plugin: APP_HOME and APP_DATA point into a tmp dir for every test
+strata_tuning_vars = ["APP_LIBRARY", "APP_WORKERS", "APP_JOB_TIMEOUT_SECONDS"]
+strata_env = ["APP_COVER_SWEEP_SECONDS=0"]                    # no background sweep of the live catalogue from a test
 filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`"]       # TestClient noise from the installed starlette; remove when the dependency moves on
 markers = [
     "integration: runs the CLI and HTTP server end-to-end (tests/integration)",

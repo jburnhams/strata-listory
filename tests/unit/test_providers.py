@@ -1,7 +1,7 @@
 import time
 
 import pytest
-from fakes import http_error
+from strata_python.testing import http_error
 
 from app import providers, settings
 from app.providers import audible, audiobookdb, audnexus
