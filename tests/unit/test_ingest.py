@@ -1146,7 +1146,7 @@ def test_full_copy_can_be_selected_over_verified_partial(book, monkeypatch, tmp_
 
 
 def test_raw_response_observer_captures_retries_cache_and_text_without_auth(fake_urlopen, monkeypatch):
-    from fakes import http_error
+    from strata_python.testing import http_error
 
     from app.providers.base import Http, cached
 
