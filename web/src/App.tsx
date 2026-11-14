@@ -2,7 +2,7 @@
 // Processing (what is being turned into finished audiobooks?), Settings. Matches is home because confirming the model's proposals is the main job; the older SQLite Review sits under Pipeline until that pipeline is retired.
 import { useQuery } from '@tanstack/react-query'
 import { Navigate, Route, Routes, useParams } from 'react-router'
-import { AppShell, PageHeader, Tabs } from 'strata-react'
+import { AppShell, PageHeader, StrataToastRegion, Tabs } from 'strata-react'
 import { BookOpen, Image, FolderTree, Headphones, ListChecks, Settings, SlidersHorizontal } from 'lucide-react'
 import { api } from './api'
 import MatchQueuePage from './components/MatchQueuePage'
@@ -58,6 +58,7 @@ export default function App() {
   const health = useQuery({ queryKey: ['health'], queryFn: api.health, staleTime: Infinity })
   return (
     <AppShell product={<span className="inline-flex items-center gap-2"><BookOpen aria-hidden className="size-5" />Strata Listory</span>} nav={nav} topBar={health.data ? <span className="type-caption text-muted-foreground font-mono">v{health.data.version}</span> : undefined}>
+      <StrataToastRegion />
       <Routes>
         <Route path="/" element={<MatchQueuePage />} />
         <Route path="/library" element={<LibraryPage />} />

@@ -33,7 +33,9 @@ describe('FilesPage', () => {
     const { user } = setup(<FilesPage />, { route: '/files' })
     await user.click(await screen.findByRole('button', { name: /Folders scanned \(2\)/ }))
     await user.click(screen.getByRole('button', { name: /Scan.*more/ }))
-    expect(await screen.findByText(/Scan queued/)).toBeInTheDocument()
+    expect(await screen.findByText('Scan queued')).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Open Processing' })).toBeInTheDocument()
+    expect(await screen.findByText('Scan finished')).toBeInTheDocument()
     expect(fgScans).toEqual(['/more'])
   })
 
