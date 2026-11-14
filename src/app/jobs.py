@@ -28,6 +28,20 @@ def bind_work(connection, kind, owner):
         connection.execute("INSERT OR REPLACE INTO job_work VALUES (?,?,?)", (kind, str(owner), ident))
 
 
+def report_progress(current, done=None, total=None):
+    """What the running job is doing now (shown on the Processing page): the item or step, and how many of how many are done. A no-op outside a job. Callers throttle; this is one small write."""
+    if ident := CURRENT_JOB.get():
+        c = db.connect()
+        try:
+            with c:
+                c.execute(
+                    "UPDATE jobs SET progress=? WHERE id=?",
+                    (json.dumps(dict(current=current, done=done, total=total)), ident),
+                )
+        finally:
+            c.close()
+
+
 def now():
     return datetime.now(UTC).isoformat()
 
@@ -191,9 +205,10 @@ class JobQueue:
                     options=json.loads(r["options"]),
                     state=r["state"],
                     started=r["started"] or "",
+                    progress=json.loads(r["progress"]) if r["progress"] and r["state"] == "running" else None,
                 )
                 for r in c.execute(
-                    "SELECT id,kind,options,state,started FROM jobs WHERE state IN ('queued','running')"
+                    "SELECT id,kind,options,state,started,progress FROM jobs WHERE state IN ('queued','running')"
                     + (" AND domain=?" if domain else "")
                     + " ORDER BY CASE state WHEN 'running' THEN 0 ELSE 1 END,created,id",
                     (domain,) if domain else (),

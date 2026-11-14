@@ -55,11 +55,14 @@ def view(ingest_tasks, process_tasks, completed=False):
                         "enrich": "Refresh community data",
                         "samples": "Prepare listening samples",
                         "reconcile": "Restore interrupted work",
+                        "filegroups": f"Scan folder {options.get('folder', '')}",
                     }.get(task["kind"], "Discover ingest candidates"),
                     stage="Ingest",
                     state=task["state"],
                     phase=None,
                     error="",
+                    job_id=task.get("id"),
+                    progress=task.get("progress"),
                 )
             )
     for run in sorted(runs.values(), key=lambda r: r["created"], reverse=True):

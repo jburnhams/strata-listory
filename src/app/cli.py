@@ -195,7 +195,7 @@ def cmd_filegroups(args):
             s,
             roots,
             workers=args.workers,
-            progress=lambda d, n: print(f"  hashed {d}/{n}", end="\r", flush=True) if d % 50 == 0 else None,
+            progress=lambda d, n, _p: print(f"  hashed {d}/{n}", end="\r", flush=True) if d % 50 == 0 else None,
         )
         print(
             f"\n{top.file_count} files in {len(roots)} folder{'s' if len(roots) != 1 else ''}, {top.group_count} folders below the root, {top.total_bytes / 1e9:,.1f} GB (grouping #{top.id})"

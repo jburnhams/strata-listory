@@ -590,3 +590,18 @@ def test_folder_scans_of_the_files_page_never_run_at_the_same_time():
     assert q._claim() is None  # /b waits for /a: both publish a grouping over every root
     q.execute_claimed(a)
     assert q._claim()["id"] == b
+
+
+def test_a_running_job_reports_what_it_is_doing_for_the_processing_page():
+    from app.jobs import CURRENT_JOB, report_progress
+
+    q = JobQueue(lambda *args: dict(saved=True), workers=1)
+    ident = q.submit("system", "filegroups", folder="/a")
+    report_progress("ignored outside a job", 1, 2)  # no job: nothing happens
+    assert q._claim()["id"] == ident
+    token = CURRENT_JOB.set(ident)
+    try:
+        report_progress("/a/book/01.mp3", 3, 10)
+    finally:
+        CURRENT_JOB.reset(token)
+    assert q.tasks("system")[0]["progress"] == dict(current="/a/book/01.mp3", done=3, total=10)
