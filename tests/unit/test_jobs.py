@@ -605,3 +605,15 @@ def test_a_running_job_reports_what_it_is_doing_for_the_processing_page():
     finally:
         CURRENT_JOB.reset(token)
     assert q.tasks("system")[0]["progress"] == dict(current="/a/book/01.mp3", done=3, total=10)
+
+
+def test_a_failed_job_can_be_cleared_and_the_same_work_submitted_again():
+    q = JobQueue(lambda *args: (_ for _ in ()).throw(ValueError("boom")), workers=1)
+    ident = q.submit("system", "filegroups", folder="/a")
+    q.run_one()
+    assert [f["id"] for f in q.failures()] == [ident] and q.submit("system", "filegroups", folder="/a") == ident
+    q.dismiss(ident)
+    assert q.failures() == []
+    assert q.submit("system", "filegroups", folder="/a") != ident
+    with pytest.raises(ValueError):
+        q.dismiss(ident + "x")

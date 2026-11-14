@@ -71,7 +71,7 @@ class JobQueue:
         try:
             with c if connection is None else nullcontext():
                 previous = c.execute(
-                    "SELECT j.id,j.state FROM jobs j WHERE j.dedupe=? AND (j.state IN ('queued','running') OR (j.state='failed' AND NOT EXISTS (SELECT 1 FROM job_work r WHERE r.kind='retry' AND r.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created))) ORDER BY CASE j.state WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,j.created DESC LIMIT 1",
+                    "SELECT j.id,j.state FROM jobs j WHERE j.dedupe=? AND (j.state IN ('queued','running') OR (j.state='failed' AND NOT EXISTS (SELECT 1 FROM job_work r WHERE r.kind IN ('retry','dismissed') AND r.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created))) ORDER BY CASE j.state WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,j.created DESC LIMIT 1",
                     (key,),
                 ).fetchone()
                 if previous and (not retry or previous["state"] != "failed"):
@@ -122,6 +122,17 @@ class JobQueue:
         out = dict(row)
         out["result"] = json.loads(out["result"]) if out["result"] else None
         return out
+
+    def dismiss(self, ident):
+        """Clear a failed job from the Processing page (it stays in the jobs table as history; a new job with the same work may then be submitted)."""
+        c = db.connect()
+        try:
+            with c:
+                if c.execute("SELECT 1 FROM jobs WHERE id=? AND state='failed'", (ident,)).fetchone() is None:
+                    raise ValueError("only failed jobs can be cleared")
+                c.execute("INSERT OR REPLACE INTO job_work VALUES ('dismissed',?,?)", (ident, ident))
+        finally:
+            c.close()
 
     def retry(self, ident):
         with self.configuration_lock:
@@ -188,7 +199,7 @@ class JobQueue:
             return [
                 dict(r)
                 for r in c.execute(
-                    f"SELECT j.id,j.domain,j.kind,j.error,j.finished,j.options,b.id AS book_id,b.title FROM jobs j LEFT JOIN books b ON b.id={owner} WHERE j.state='failed' AND (? IS NULL OR j.domain=?) AND NOT EXISTS (SELECT 1 FROM job_work retry WHERE retry.kind='retry' AND retry.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created) ORDER BY j.finished DESC LIMIT ?",
+                    f"SELECT j.id,j.domain,j.kind,j.error,j.finished,j.progress,j.options,b.id AS book_id,b.title FROM jobs j LEFT JOIN books b ON b.id={owner} WHERE j.state='failed' AND (? IS NULL OR j.domain=?) AND NOT EXISTS (SELECT 1 FROM job_work retry WHERE retry.kind IN ('retry','dismissed') AND retry.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created) ORDER BY j.finished DESC LIMIT ?",
                     (domain, domain, limit),
                 )
             ]
@@ -476,7 +487,7 @@ class JobQueue:
             candidates = [
                 r[0]
                 for r in c.execute(
-                    f"SELECT j.id FROM jobs j WHERE j.state='failed' AND j.finished>=? AND ({marker}) AND NOT EXISTS (SELECT 1 FROM job_work r WHERE r.kind='retry' AND r.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created) ORDER BY j.finished,j.id",
+                    f"SELECT j.id FROM jobs j WHERE j.state='failed' AND j.finished>=? AND ({marker}) AND NOT EXISTS (SELECT 1 FROM job_work r WHERE r.kind IN ('retry','dismissed') AND r.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created) ORDER BY j.finished,j.id",
                     (cutoff, *SHUTDOWN_ERRORS),
                 )
             ]
