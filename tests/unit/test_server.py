@@ -485,3 +485,20 @@ def test_queued_and_failed_cover_searches_show_with_the_other_operations(client,
     jobs.run_one()
     row = next(r for r in client.get("/api/operations").json()["rows"] if r.get("job_id"))
     assert row["state"] == "failed" and row["title"] == "search covers: Glass Orchard" and row["error"] == "no network"
+
+
+def test_filegroups_scan_only_accepts_listed_folders(client, tmp_path, monkeypatch):
+    from app import settings
+
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    monkeypatch.setattr(settings, "library_roots", lambda: [str(lib)])
+    from app.server import tasks
+
+    seen = []
+    monkeypatch.setattr(tasks, "_execute", lambda jobs, domain, kind, options: seen.append((kind, options)))
+    assert client.post("/api/filegroups/scan", json={}).status_code == 400
+    assert client.post("/api/filegroups/scan", json=dict(folder=str(tmp_path / "other"))).status_code == 400
+    r = client.post("/api/filegroups/scan", json=dict(folder=str(lib)))
+    assert r.status_code in (200, 202), r.text
+    assert seen == [("filegroups", dict(folder=str(lib)))]

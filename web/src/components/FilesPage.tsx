@@ -54,6 +54,11 @@ function Roots() {
     await api.saveSettings({ library_dirs: dirs })
     setAdding(''); await qc.invalidateQueries({ queryKey: ['settings'] })
   }, { settleMs: 1500 })
+  // One scan per folder: a job on the server's queue (the same as `./app filegroups`, but only this folder is walked again); the page below refreshes when it has been queued and again a little later.
+  const scan = useAsyncAction(async (folder: string) => {
+    await api.scanFolder(folder)
+    for (const ms of [5000, 30000, 120000]) setTimeout(() => void qc.invalidateQueries({ predicate: q => String(q.queryKey[0]).startsWith('filegroup') }), ms)
+  }, { settleMs: 2500 })
   const roots = load.status === 'ready' ? load.data.library_dirs : []
   const primary = load.status === 'ready' ? load.data.library_dir : ''
   const extra = roots.filter(r => r !== primary)
@@ -61,11 +66,13 @@ function Roots() {
     <section aria-label="Folders scanned" className="rounded-surface border border-border bg-card p-3">
       <Button variant="ghost" aria-expanded={open} onClick={() => setOpen(!open)}>Folders scanned ({roots.length || 'none yet'})</Button>
       {open && <div className="mt-3 space-y-3">
-        <ul className="space-y-1">{roots.map(r => <li key={r} className="flex items-center gap-3"><span className="font-mono type-body-sm break-all">{r}</span>{r === primary ? <Status tone="neutral">library folder</Status> : <Button variant="ghost" onClick={() => void save.run(extra.filter(x => x !== r))}>Remove<span className="sr-only"> {r}</span></Button>}</li>)}</ul>
+        <ul className="space-y-1">{roots.map(r => <li key={r} className="flex items-center gap-3"><span className="font-mono type-body-sm break-all">{r}</span><Button variant="ghost" onClick={() => void scan.run(r)}>Scan<span className="sr-only"> {r}</span></Button>{r === primary ? <Status tone="neutral">library folder</Status> : <Button variant="ghost" onClick={() => void save.run(extra.filter(x => x !== r))}>Remove<span className="sr-only"> {r}</span></Button>}</li>)}</ul>
         <form className="flex items-end gap-3" onSubmit={e => { e.preventDefault(); if (adding.trim()) void save.run([...extra, adding.trim()]) }}>
-          <Field label="Add a folder" hint="An absolute path; run ./app filegroups to scan it"><Input value={adding} onChange={e => setAdding(e.target.value)} placeholder="/path/to/more/audio" /></Field>
+          <Field label="Add a folder" hint="An absolute path; press Scan to read it into the listing"><Input value={adding} onChange={e => setAdding(e.target.value)} placeholder="/path/to/more/audio" /></Field>
           <AsyncButton type="submit" variant="default" phase={save.phase} error={save.error} labels={{ idle: 'Add folder', pending: 'Saving…', done: 'Saved' }} />
         </form>
+        {scan.phase === 'done' && <p role="status" className="type-body-sm text-muted-foreground">Scan queued: it runs in the background and the listing updates when it finishes.</p>}
+        {scan.error && <p role="alert" className="type-body-sm text-danger">{scan.error}</p>}
         {save.error && <p role="alert" className="type-body-sm text-danger">{save.error}</p>}
       </div>}
     </section>

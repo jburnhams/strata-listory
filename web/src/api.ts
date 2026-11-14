@@ -68,6 +68,7 @@ export const api = {
   repropose: (ids: number[]) => req<{ changed: number[] }>('/api/process/repropose', send('POST', { ids })),
   runApproved: () => req<Record<string, number>>('/api/process/run', { method: 'POST' }),
   scan: () => req<ScanResult>('/api/scan', send('POST', {})),
+  scanFolder: (folder: string) => req<{ queued: boolean; job_id: string }>('/api/filegroups/scan', send('POST', { folder })),
   match: (limit = 25) => req<MatchResult>(`/api/match?limit=${limit}`, { method: 'POST' }),
 }
 
