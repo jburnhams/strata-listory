@@ -70,6 +70,7 @@ export const api = {
   repropose: (ids: number[]) => req<{ changed: number[] }>('/api/process/repropose', send('POST', { ids })),
   runApproved: () => req<Record<string, number>>('/api/process/run', { method: 'POST' }),
   scan: () => req<ScanResult>('/api/scan', send('POST', {})),
+  buildListens: () => req<{ made: number; books: number; radio_series: number; already_had_listens: number; loose_files_left: number; metadata_read: number }>('/api/pipeline/listens-build', send('POST', {})),
   scanFolder: (folder: string) => req<{ files: number; folders: number; bytes: number }>('/api/filegroups/scan', send('POST', { folder })),
   match: (limit = 25) => req<MatchResult>(`/api/match?limit=${limit}`, { method: 'POST' }),
 }
@@ -187,7 +188,7 @@ export interface QueueProgramme { source: string; ref: string; title: string; se
 export interface QueueCandidate { part_id: number; ordinal: number; state: string; auto: boolean; p: number; work_id: number; key: string; title: string | null; authors: string[]; year: number | null; editions: number | null; ol: string[]; isbns: string[]; recordings: QueueRecording[]; programmes?: QueueProgramme[]; recording: string | null; alias: string | null; reading: string | null; evidence: QueueEvidence; p_none: number | null; second: number | null }
 export interface QueueCopy { minutes: number | null; files: number | null; bytes: number | null; folder: string; path: string | null; group_id: number | null; relation?: 'copy' | 'part' }
 export interface QueueItem { listen_id: number; p: number; label: string; cursor: string; kind: string | null; status: string | null; added: number | null; kind_info?: KindInfoData | null; candidates: QueueCandidate[]; chosen: Record<string, string | number>; tags: Record<string, string | number>; folder: Record<string, string | number>; copies: QueueCopy[] }
-export interface QueueSummary { waiting: number; auto_unconfirmed: number; confirmed: number; not_found: number; statuses: Record<string, number>; decisions: number; since_train: number | null; model: string | null; auto_retrain: number; training: { running: boolean; finished: number | null; error: string; counts: Record<string, number> | null } }
+export interface QueueSummary { waiting: number; auto_unconfirmed: number; confirmed: number; not_found: number; no_candidates: number; statuses: Record<string, number>; decisions: number; since_train: number | null; model: string | null; auto_retrain: number; training: { running: boolean; finished: number | null; error: string; counts: Record<string, number> | null } }
 /** The match queue's order and filters, as the page keeps them in its URL; '' means any. */
 export interface QueueFilters { sort: 'certain' | 'uncertain' | 'recent' | 'oldest' | 'kind-certain' | 'kind-uncertain'; auto: '' | 'skip' | 'only'; kind: string; status: string; certainty: '' | 'sure' | 'likely' | 'close' | 'unsure'; audible: '' | 'yes' | 'no'; q: string }
 export type QueueFacets = Record<'kind' | 'status' | 'certainty' | 'auto' | 'audible', Record<string, number>>
@@ -197,4 +198,6 @@ export const matchApi = {
   queue: (after?: string, limit = 20, filters: Partial<QueueFilters> = {}) => req<QueuePage>(`/api/matches?${new URLSearchParams({ limit: String(limit), ...(after ? { after } : {}), ...Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) })}`),
   decide: (listen_id: number, action: QueueAction, part_id?: number) => req<{ ok: boolean; status: string; retraining: boolean }>('/api/matches/decide', send('POST', { listen_id, action, part_id })),
   retrain: () => req<{ started: boolean }>('/api/matches/retrain', { method: 'POST' }),
+  bbcDetails: () => req<{ candidate_programmes: number; already_cached: number; fetched: number }>('/api/pipeline/bbc-details', send('POST', {})),
+  identifyNew: () => req<{ listens: number; accept: number; review: number; none: number }>('/api/pipeline/identify', send('POST', {})),
 }

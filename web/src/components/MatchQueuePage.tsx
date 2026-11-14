@@ -7,9 +7,9 @@
 // so a way of working the queue can be bookmarked; the keys work on whatever the filters leave, and each filter says how many cards it holds so a choice never leads to nothing.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Link, useSearchParams } from 'react-router'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import { Ban, Check, X } from 'lucide-react'
-import { AsyncButton, Button, Done, EmptyState, Field, InfiniteList, Input, KeysLegend, Metric, MetricStrip, NativeSelect, PageHeader, Skeleton, Status, UndoBar, format, useActiveItem, useAsyncAction, useHotkeys, useInfiniteLoad, useJob, useUndoable, type ActiveItem, type Tone } from 'strata-react'
+import { AsyncButton, Button, Done, EmptyState, Field, InfiniteList, Input, KeysLegend, Metric, MetricStrip, NativeSelect, PageHeader, Skeleton, Status, UndoBar, format, useActiveItem, toast, useAsyncAction, useHotkeys, useInfiniteLoad, useJob, useUndoable, type ActiveItem, type Tone } from 'strata-react'
 import { matchApi, type QueueAction, type QueueCandidate, type QueueFacets, type QueueFilters, type QueueItem, type QueueRecording } from '../api'
 import { hours } from './ListensPage'
 import KindInfo, { KIND_LABEL } from './KindInfo'
@@ -268,6 +268,31 @@ function Skeletons() {
   return <div className="space-y-3" aria-hidden>{[0, 1, 2].map(i => <Skeleton key={i} className="h-56 w-full" />)}</div>
 }
 
+/** Finds candidate works for the listens that have none yet and decides them with the saved model: a queued, restartable job whose progress is on the Processing page. */
+function IdentifyNew({ onDone }: { onDone: () => void }) {
+  const qc = useQueryClient()
+  const navigate = useNavigate()
+  const run = useAsyncAction(async () => {
+    toast.show({ title: 'Identifying new listens', description: 'Looking for candidate works for listens that have none. It runs in the background and can be stopped and resumed.', action: { label: 'Open Processing', onPress: () => void navigate('/processing') } })
+    const r = await matchApi.identifyNew()
+    await qc.invalidateQueries({ queryKey: ['match-summary'] })
+    onDone()
+    toast.show({ title: 'Identification finished', tone: 'success', description: `${r.listens.toLocaleString()} listens: ${r.accept.toLocaleString()} accepted by the model, ${r.review.toLocaleString()} to review, ${r.none.toLocaleString()} with no candidate.` })
+  }, { settleMs: 1500 })
+  return <AsyncButton variant="outline" phase={run.phase} error={run.error} onClick={() => void run.run()} labels={{ idle: 'Identify new listens', pending: 'Identifying…', done: 'Identified' }} />
+}
+
+/** Fetches the BBC's record of each candidate radio programme (cached; identification uses it when it is there): a queued, restartable job whose progress is on the Processing page. */
+function BbcDetails() {
+  const navigate = useNavigate()
+  const run = useAsyncAction(async () => {
+    toast.show({ title: 'Fetching BBC programme details', description: 'It runs in the background; programmes already fetched are skipped, so it can be stopped and resumed.', action: { label: 'Open Processing', onPress: () => void navigate('/processing') } })
+    const r = await matchApi.bbcDetails()
+    toast.show({ title: 'BBC details fetched', tone: 'success', description: `${r.fetched.toLocaleString()} new of ${r.candidate_programmes.toLocaleString()} candidate programmes (${r.already_cached.toLocaleString()} were already cached).` })
+  }, { settleMs: 1500 })
+  return <AsyncButton variant="outline" phase={run.phase} error={run.error} onClick={() => void run.run()} labels={{ idle: 'Fetch BBC programme details', pending: 'Fetching BBC details…', done: 'Fetched' }} />
+}
+
 export default function MatchQueuePage() {
   const qc = useQueryClient()
   const undoable = useUndoable()
@@ -339,14 +364,16 @@ export default function MatchQueuePage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Matches" scope={`Is this the right book? ${order.scope}`} finding={finding} actions={<>{relearned && <Button variant="default" onClick={refresh}>Refresh the list</Button>}{retrainButton('outline')}</>} />
+      <PageHeader title="Matches" scope={`Is this the right book? ${order.scope}`} finding={finding} actions={<>{relearned && <Button variant="default" onClick={refresh}>Refresh the list</Button>}{retrainButton('outline')}<BbcDetails /><IdentifyNew onDone={refresh} /></>} />
       {summary && (
         <MetricStrip label="Where identification stands">
           <Metric label="Waiting for you" value={format.integer.format(waiting)} note={`${format.integer.format(summary.auto_unconfirmed)} already accepted by the model`} />
           <Metric label="Confirmed by you" value={format.integer.format(summary.confirmed)} note={summary.since_train != null ? `${summary.since_train} answers since the model last learned (it relearns every ${summary.auto_retrain})` : `The model relearns every ${summary.auto_retrain} answers`} />
           <Metric label="Not found" value={format.integer.format(summary.not_found)} note="None of the candidates was right" />
+          <Metric label="No candidates" value={format.integer.format(summary.no_candidates)} note="Books the model found no match for" />
         </MetricStrip>
       )}
+      {summary && summary.no_candidates > 0 && <p className="type-body-sm"><Link className="underline" to="/listens?match=nocandidates&kind=book">Show the {format.count(summary.no_candidates, 'book')} with no candidate at all</Link></p>}
       {training?.error && <p role="alert" className="type-body-sm text-danger">Learning failed: {training.error}</p>}
       <QueueControls filters={filters} facets={facets} set={set} clear={filtered ? clear : null} />
       <InfiniteList state={load} label="Matches to check" skeleton={<Skeletons />} moreSkeleton={<Skeletons />} moreLabel="Show more matches" estimateSize={320} height={Math.max(480, Math.round(window.innerHeight * 0.75))} keepAtLeast={4}

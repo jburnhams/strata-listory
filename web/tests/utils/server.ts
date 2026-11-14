@@ -157,6 +157,9 @@ export const handlers = [
     return HttpResponse.json({ ok: true, retraining: false, kind_info: { ...kindInfos.close, kind: b.kind, decided_by: 'user', band: b.kind === 'book' ? 'book' : 'broadcast' } })
   }),
   http.post('/api/filegroups/scan', async ({ request }) => { const b = await request.json() as { folder: string }; fgScans.push(b.folder); return HttpResponse.json({ files: 1234, folders: 5, bytes: 1e9 }) }),
+  http.post('/api/pipeline/listens-build', () => HttpResponse.json({ made: 12, books: 10, radio_series: 2, already_had_listens: 900, loose_files_left: 3, metadata_read: 12 })),
+  http.post('/api/pipeline/bbc-details', () => HttpResponse.json({ candidate_programmes: 40, already_cached: 30, fetched: 10 })),
+  http.post('/api/pipeline/identify', () => HttpResponse.json({ listens: 12, accept: 8, review: 3, none: 1 })),
   http.get('/api/filegroups', () => HttpResponse.json({ root: fgRoot, groupings: 1 })),
   http.get('/api/filegroups/search', ({ request }) => {
     const q = (new URL(request.url).searchParams.get('q') ?? '').toLowerCase()
@@ -286,7 +289,7 @@ export const server = setupServer(
     const start = after ? ordered.findIndex(i => i.cursor === after) + 1 : 0
     const count = (f: (i: typeof open[number]) => string | null) => open.reduce<Record<string, number>>((m, i) => { const v = f(i); if (v) m[v] = (m[v] ?? 0) + 1; return m }, {})
     const facets = { kind: { ...count(i => i.kind), ...(open.some(i => i.kind_info?.band === 'review') ? { review: open.filter(i => i.kind_info?.band === 'review').length } : {}), ...(open.some(i => i.kind !== 'book') ? { 'not-book': open.filter(i => i.kind !== 'book').length } : {}) }, status: count(i => i.status), certainty: count(band), auto: { skip: 0, only: 0, ...count(i => i.candidates[0].auto ? 'only' : 'skip') }, audible: { yes: 0, no: 0, ...count(i => i.candidates[0].recordings.length ? 'yes' : 'no') } }
-    return HttpResponse.json({ summary: { waiting: open.length, auto_unconfirmed: open.filter(i => i.candidates[0].auto).length, confirmed: matchState.decided.filter(d => d.action === 'approve').length, not_found: matchState.decided.filter(d => d.action === 'none').length, statuses: {}, decisions: matchState.decided.length, since_train: null, model: matchState.model, auto_retrain: 25, training: { running: matchState.training, finished: null, error: '', counts: null } },
+    return HttpResponse.json({ summary: { waiting: open.length, auto_unconfirmed: open.filter(i => i.candidates[0].auto).length, confirmed: matchState.decided.filter(d => d.action === 'approve').length, not_found: matchState.decided.filter(d => d.action === 'none').length, no_candidates: 7, statuses: {}, decisions: matchState.decided.length, since_train: null, model: matchState.model, auto_retrain: 25, training: { running: matchState.training, finished: null, error: '', counts: null } },
       total: fits.length, facets, items: ordered.slice(start, start + limit) })
   }),
   http.post('/api/matches/decide', async ({ request }) => {

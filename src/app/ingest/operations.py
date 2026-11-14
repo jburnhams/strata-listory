@@ -7,6 +7,23 @@ from app.ingest import pipeline as P
 from app.ingest import policy, store
 
 
+def job_title(kind, options):
+    """What a system job is called on the Processing page."""
+    return {
+        "auto_metadata": "Metadata approvals",
+        "bootstrap": "Index saved library data",
+        "scan": "Scan library",
+        "match": "Match books",
+        "enrich": "Refresh community data",
+        "samples": "Prepare listening samples",
+        "reconcile": "Restore interrupted work",
+        "filegroups": f"Scan audiobook folder {options.get('folder', '')}",
+        "listens_build": "Build listens from new folders",
+        "identify": "Identify new listens",
+        "bbc_details": "Fetch BBC programme details",
+    }.get(kind)
+
+
 def dismiss_run(run_id):
     """Clear a failed analysis from the Processing page. The run itself is untouched (the book keeps its history); a new run of the book that fails again shows up again."""
     store.get(run_id)  # raises for an unknown run
@@ -66,16 +83,7 @@ def view(ingest_tasks, process_tasks, completed=False):
                     id=f"ingest-task-{n}",
                     book_id=None,
                     run_id=None,
-                    title={
-                        "auto_metadata": "Metadata approvals",
-                        "bootstrap": "Index saved library data",
-                        "scan": "Scan library",
-                        "match": "Match books",
-                        "enrich": "Refresh community data",
-                        "samples": "Prepare listening samples",
-                        "reconcile": "Restore interrupted work",
-                        "filegroups": f"Scan audiobook folder {options.get('folder', '')}",
-                    }.get(task["kind"], "Discover ingest candidates"),
+                    title=job_title(task["kind"], options) or "Discover ingest candidates",
                     stage="Ingest",
                     state=task["state"],
                     phase=None,

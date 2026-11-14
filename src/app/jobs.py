@@ -20,7 +20,7 @@ SHUTDOWN_ERRORS = (
     "job worker exited without a completed result (exit -15)",
 )  # exact messages: fail() also cancels queued continuations with 'previous job failed: <error>', which must not be replayed on its own
 # A first scan of a big folder hashes every file (hundreds of GB), far past the default limit; a rerun resumes (hashed files are committed as it goes), but it should not need to.
-LONG_JOBS = {"filegroups": 43200.0}
+LONG_JOBS = {"filegroups": 43200.0, "listens_build": 43200.0, "identify": 43200.0, "bbc_details": 43200.0}
 AUTO_RETRY_LIMIT = 2
 AUTO_RETRY_WINDOW_HOURS = 24
 

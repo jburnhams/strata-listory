@@ -534,3 +534,14 @@ def test_clearing_a_failed_analysis_over_http(client):
     assert client.post(f"/api/ingest/runs/{rid}/dismiss").json() == dict(cleared=True)
     assert not any(r["run_id"] == rid for r in client.get("/api/operations").json()["rows"])
     assert client.post("/api/ingest/runs/missing/dismiss").status_code == 400
+
+
+def test_pipeline_buttons_queue_their_jobs(client, monkeypatch):
+    from app.server import tasks
+
+    seen = []
+    monkeypatch.setattr(tasks, "_execute", lambda jobs, domain, kind, options: seen.append(kind))
+    assert client.post("/api/pipeline/listens-build").status_code in (200, 202)
+    assert client.post("/api/pipeline/identify").status_code in (200, 202)
+    assert client.post("/api/pipeline/bbc-details").status_code in (200, 202)
+    assert seen == ["listens_build", "identify", "bbc_details"]

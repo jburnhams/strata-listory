@@ -143,6 +143,25 @@ def summary(s: Session, items: list[dict]) -> dict:
             .group_by(Listen.status)
         ).all()
     )
+    no_candidates = (
+        s.scalar(
+            select(func.count())
+            .select_from(Listen)
+            .where(
+                Listen.merged_into_id.is_(None),
+                Listen.kind == "book",
+                ~select(ListenPart.id)
+                .where(
+                    ListenPart.listen_id == Listen.id,
+                    ListenPart.role.in_(("match", "candidate")),
+                    ListenPart.state != "rejected",
+                    ListenPart.unlinked_at.is_(None),
+                )
+                .exists(),
+            )
+        )
+        or 0
+    )
     decisions = (
         s.scalar(
             select(func.count())
@@ -162,6 +181,7 @@ def summary(s: Session, items: list[dict]) -> dict:
         auto_unconfirmed=sum(1 for it in items if it["candidates"][0]["auto"]),
         confirmed=len(_confirmed(s)),
         not_found=statuses.get(apply.NOT_FOUND, 0),
+        no_candidates=no_candidates,
         statuses=statuses,
         decisions=decisions,
         since_train=since,

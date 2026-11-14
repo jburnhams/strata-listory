@@ -267,6 +267,17 @@ def _match_clause(match: str):
         return accepted_part.exists() & ~confirmed
     if match == "unmatched":
         return ~accepted_part.exists()
+    if match == "nocandidates":  # the model proposed nothing at all (not even a candidate waiting for a person)
+        return (
+            ~select(mp.id)
+            .where(
+                mp.listen_id == Listen.id,
+                mp.role.in_(("match", "candidate")),
+                mp.state != "rejected",
+                mp.unlinked_at.is_(None),
+            )
+            .exists()
+        )
     return accepted_part.exists()  # matched: accepted by the model or confirmed by a person
 
 
@@ -280,7 +291,7 @@ def list_listens(
     offset: int = 0,
     s: Session = Depends(get_session),
 ):
-    """Listens (ordered by label), filtered by words in the label or folder path, kind, status and match: `matched` (the model accepted a work or a person confirmed one), `confirmed` (a person did), `accepted` (the model did, no person yet), `unmatched` (no work accepted yet); empty = no filter."""
+    """Listens (ordered by label), filtered by words in the label or folder path, kind, status and match: `matched` (the model accepted a work or a person confirmed one), `confirmed` (a person did), `accepted` (the model did, no person yet), `unmatched` (no work accepted yet), `nocandidates` (no work proposed at all); empty = no filter."""
     limit = max(1, min(limit, 500))
     stmt = (
         select(Listen, ListenPart)

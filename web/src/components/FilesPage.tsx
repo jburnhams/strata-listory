@@ -31,7 +31,7 @@ export default function FilesPage() {
   })
   return (
     <div className="space-y-5">
-      <PageHeader title="Files" scope="How the audio files are grouped" finding={load.status === 'ready' && load.data.detail ? { text: `${format.count(load.data.detail.group.file_count, 'file')} in ${format.count(load.data.detail.group.group_count, 'group')}, ${size(load.data.detail.group.total_bytes)}` } : undefined} />
+      <PageHeader title="Files" scope="How the audio files are grouped" actions={<BuildListens />} finding={load.status === 'ready' && load.data.detail ? { text: `${format.count(load.data.detail.group.file_count, 'file')} in ${format.count(load.data.detail.group.group_count, 'group')}, ${size(load.data.detail.group.total_bytes)}` } : undefined} />
       {!wanted && !q && <Roots />}
       <Field label="Search files and folders" hint="Every word must appear in the name or folder path">
         <Input type="search" value={typed} onChange={e => setTyped(e.target.value)} placeholder="e.g. lee child persuader" />
@@ -154,4 +154,20 @@ function FileMetadata({ id }: { id: number }) {
       )}
     </DataView>
   )
+}
+
+/** Turns the newest folder scan into listens: only books and programmes that have none yet, so nothing already decided is touched. A queued, restartable job whose progress is on the Processing page. */
+function BuildListens() {
+  const qc = useQueryClient()
+  const navigate = useNavigate()
+  const build = useAsyncAction(async () => {
+    toast.show({ title: 'Building listens', description: 'Making listens for new books and programmes. It runs in the background and can be stopped and resumed.', action: { label: 'Open Processing', onPress: () => void navigate('/processing') } })
+    const r = await api.buildListens()
+    await qc.invalidateQueries({ queryKey: ['listens'] })
+    toast.show({ title: 'Listens built', tone: 'success', description: `${r.made.toLocaleString()} new listens (${r.books.toLocaleString()} books, ${r.radio_series.toLocaleString()} radio series); ${r.already_had_listens.toLocaleString()} already had one. Next: identify them on the Matches page.`, action: { label: 'Open Matches', onPress: () => void navigate('/') } })
+  }, { settleMs: 1500 })
+  return <>
+    <AsyncButton variant="outline" phase={build.phase} error={build.error} onClick={() => void build.run()} labels={{ idle: 'Build listens from new folders', pending: 'Building listens…', done: 'Built' }} />
+    {build.error && <p role="alert" className="type-body-sm text-danger">{build.error}</p>}
+  </>
 }
