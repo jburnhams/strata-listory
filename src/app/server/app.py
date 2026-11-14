@@ -373,6 +373,8 @@ def create_app():
                 lid = json.loads(job["options"]).get("listen_id")
                 job["kind"], job["title"] = "search covers", names.get(lid) or f"listen {lid}"
             label = job["kind"].replace("_", " ")
+            if job["kind"] == "filegroups":
+                label = f"Scan folder {json.loads(job['options']).get('folder', '')}"
             view["rows"].append(
                 dict(
                     id="job-" + job["id"],

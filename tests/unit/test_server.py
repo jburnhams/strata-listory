@@ -502,3 +502,16 @@ def test_filegroups_scan_only_accepts_listed_folders(client, tmp_path, monkeypat
     r = client.post("/api/filegroups/scan", json=dict(folder=str(lib)))
     assert r.status_code in (200, 202), r.text
     assert seen == [("filegroups", dict(folder=str(lib)))]
+
+
+def test_a_failed_folder_scan_is_listed_under_its_folder(client):
+    jobs = client.app.state.jobs
+
+    def broken(*args):
+        raise ValueError("job exceeded its 1800 second time limit")
+
+    jobs.handler = broken
+    ident = jobs.submit("system", "filegroups", folder="/lib/audio")
+    jobs.run_one()
+    row = next(r for r in client.get("/api/operations").json()["rows"] if r.get("job_id") == ident)
+    assert row["state"] == "failed" and row["title"] == "Scan folder /lib/audio"
