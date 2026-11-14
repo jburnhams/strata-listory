@@ -136,6 +136,14 @@ def create_app():
         except ValueError as e:
             raise HTTPException(404, str(e))
 
+    @app.post("/api/jobs/{job_id}/dismiss")
+    def dismiss_job(job_id: str):
+        try:
+            jobs.dismiss(job_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return dict(cleared=True)
+
     @app.post("/api/jobs/{job_id}/retry")
     def retry_job(job_id: str):
         try:
@@ -384,6 +392,8 @@ def create_app():
                     state="failed",
                     phase=None,
                     error=job["error"],
+                    when=job["finished"],
+                    progress=json.loads(job["progress"]) if job.get("progress") else None,
                 )
             )
         return view

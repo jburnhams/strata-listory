@@ -174,6 +174,18 @@ it('keeps failed jobs stopped until Retry job is clicked', async () => {
   expect(await screen.findByText('No operations in this view.')).toBeInTheDocument()
 })
 
+it('clears a failed job and says where it stopped', async () => {
+  let cleared = 0
+  server.use(http.get('/api/operations', () => HttpResponse.json({ busy: false, rows: cleared ? [] : [
+    { id: 'job-f', job_id: 'f', book_id: null, run_id: null, title: 'Scan audiobook folder /lib', stage: 'scan', state: 'failed', phase: null, error: 'time limit', progress: { current: '/lib/B/07.mp3', done: 30, total: 100 } },
+  ] })), http.post('/api/jobs/f/dismiss', () => { cleared++; return HttpResponse.json({ cleared: true }) }))
+  const { user } = setup(<ProcessPage />)
+  expect(await screen.findByText(/Stopped at: 30 of 100 done, 70 remaining/)).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: /^Clear/ }))
+  expect(cleared).toBe(1)
+  expect(await screen.findByText('No operations in this view.')).toBeInTheDocument()
+})
+
 it('filters failed work and searches failure reasons without showing queued work', async () => {
   mock.queue = [{ book_id: 4, title: 'Broken plan', author: 'B', state: 'failed', error: 'Source files missing', updated: '', summary: null }]
   server.use(http.get('/api/operations', () => HttpResponse.json({ busy: false, rows: [

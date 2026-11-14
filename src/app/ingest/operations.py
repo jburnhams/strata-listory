@@ -55,7 +55,7 @@ def view(ingest_tasks, process_tasks, completed=False):
                         "enrich": "Refresh community data",
                         "samples": "Prepare listening samples",
                         "reconcile": "Restore interrupted work",
-                        "filegroups": f"Scan folder {options.get('folder', '')}",
+                        "filegroups": f"Scan audiobook folder {options.get('folder', '')}",
                     }.get(task["kind"], "Discover ingest candidates"),
                     stage="Ingest",
                     state=task["state"],
@@ -124,6 +124,7 @@ def view(ingest_tasks, process_tasks, completed=False):
                 state=state,
                 phase=phase,
                 error=error,
+                when=(run["activity"][-1]["created"] if run["activity"] else None) or run["created"],
             )
         )
     for n, task in enumerate(process_tasks):
@@ -181,6 +182,9 @@ def view(ingest_tasks, process_tasks, completed=False):
             for e in events[-12:]
         ]
     order = {"running": 0, "queued": 1, "failed": 2, "waiting": 3, "completed": 4}
+    rows.sort(
+        key=lambda r: r.get("when") or "", reverse=True
+    )  # newest first inside each state (rows with no time go last)
     rows.sort(key=lambda r: order[r["state"]])
     return dict(rows=rows, busy=bool(ingest_tasks or process_tasks))
 
