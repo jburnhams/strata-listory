@@ -8,8 +8,8 @@ from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import Float, func, select
 from sqlalchemy import Text as sa_text
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session, aliased
 
 from app.store import kinds_db
@@ -329,18 +329,27 @@ def list_listens(
     is_part = (
         ListenPart.detail["relation"].astext == "part"
     )  # numbered parts run one after the other; every other input is an alternative copy
-    counts = {
-        lid: (n, k)
-        for lid, n, k in s.execute(
-            select(ListenPart.listen_id, func.count(), func.count().filter(is_part))
-            .where(
-                ListenPart.listen_id.in_([l.id for l, _ in rows]),
-                ListenPart.role == "input",
-                ListenPart.unlinked_at.is_(None),
-            )
-            .group_by(ListenPart.listen_id)
-        ).all()
-    }
+    part_min = ListenPart.detail["minutes"].astext.cast(Float)
+    part_files = ListenPart.detail["files"].astext.cast(Float)
+    count_rows = s.execute(
+        select(
+            ListenPart.listen_id,
+            func.count(),
+            func.count().filter(is_part),
+            func.coalesce(func.sum(part_min).filter(is_part), 0),
+            func.coalesce(func.sum(part_files).filter(is_part), 0),
+        )
+        .where(
+            ListenPart.listen_id.in_([l.id for l, _ in rows]),
+            ListenPart.role == "input",
+            ListenPart.unlinked_at.is_(None),
+        )
+        .group_by(ListenPart.listen_id)
+    ).all()
+    counts = {lid: (n, k) for lid, n, k, _, _ in count_rows}
+    totals = {
+        lid: (float(m), float(fl)) for lid, _, _, m, fl in count_rows
+    }  # parts together run as long as all of them (`_listen_row` shows the first input alone)
     chosen: dict[int, dict] = defaultdict(dict)
     for lid, field, value in s.execute(
         select(ListenChoice.listen_id, ListenChoice.field, ListenChoice.value).where(
@@ -366,6 +375,11 @@ def list_listens(
         rows=[
             dict(
                 _listen_row(l, p),
+                **(
+                    dict(minutes=round(totals[l.id][0]), files=round(totals[l.id][1]))
+                    if counts.get(l.id, (1, 0))[1]
+                    else {}
+                ),
                 kind_info=infos.get(l.id),
                 copies=max(counts.get(l.id, (1, 0))[0] - counts.get(l.id, (1, 0))[1], 1),
                 parts=counts.get(l.id, (1, 0))[1],
@@ -473,8 +487,23 @@ def get_listen(listen_id: int, s: Session = Depends(get_session)):
     )
     events = list(s.scalars(select(ListenEvent).where(ListenEvent.listen_id == l.id).order_by(ListenEvent.id)))
     primary = next((p for p in parts if p.role == "input" and p.unlinked_at is None), None)
+    runs = [
+        x.detail or {}
+        for x in parts
+        if x.role == "input" and x.unlinked_at is None and (x.detail or {}).get("relation") == "part"
+    ]
     return dict(
-        listen=_listen_row(l, primary),
+        listen=dict(
+            _listen_row(l, primary),
+            **(
+                dict(
+                    minutes=round(sum(d.get("minutes") or 0 for d in runs)),
+                    files=sum(d.get("files") or 0 for d in runs),
+                )
+                if runs
+                else {}
+            ),
+        ),
         merged_into=l.merged_into_id,
         parts=[
             dict(

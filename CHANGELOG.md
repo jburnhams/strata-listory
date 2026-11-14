@@ -7,6 +7,7 @@ Newest first, grouped by day. One entry per change, in the same commit or PR as 
 **Covers: a listen of parts is compared by all its parts (branch `covers-parts-length`)**
 The joined Sherlock collection showed 4 h (its first book) against the 58 h recording.
 
+- Same fix for the Listens page (list and detail: `src/app/store/api.py`) and the kind classifier's length (`src/app/store/kinds_db.py`), which read only the first or largest part. The cover ranking and the Matches page already summed parts.
 - `src/app/covers/api.py` `_compare`: parts (`relation` = part) count as one runtime and file total, and the path shown is their folder.
 
 **Identification: folders of books that are one collection (branch `container-merge`)**
