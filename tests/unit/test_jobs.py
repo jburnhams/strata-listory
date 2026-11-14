@@ -607,6 +607,13 @@ def test_a_running_job_reports_what_it_is_doing_for_the_processing_page():
     assert q.tasks("system")[0]["progress"] == dict(current="/a/book/01.mp3", done=3, total=10)
 
 
+def test_folder_scans_get_a_long_time_limit_and_other_jobs_the_default():
+    q = JobQueue(lambda *args: None, workers=1, timeout_seconds=60)
+    scan = q.submit("system", "filegroups", folder="/a")
+    other = q.submit("system", "match", limit=1)
+    assert q.get(scan)["timeout_seconds"] == 43200 and q.get(other)["timeout_seconds"] == 60
+
+
 def test_a_failed_job_can_be_cleared_and_the_same_work_submitted_again():
     q = JobQueue(lambda *args: (_ for _ in ()).throw(ValueError("boom")), workers=1)
     ident = q.submit("system", "filegroups", folder="/a")

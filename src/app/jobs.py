@@ -19,6 +19,8 @@ SHUTDOWN_ERRORS = (
     "job interrupted by server shutdown",
     "job worker exited without a completed result (exit -15)",
 )  # exact messages: fail() also cancels queued continuations with 'previous job failed: <error>', which must not be replayed on its own
+# A first scan of a big folder hashes every file (hundreds of GB), far past the default limit; a rerun resumes (hashed files are committed as it goes), but it should not need to.
+LONG_JOBS = {"filegroups": 43200.0}
 AUTO_RETRY_LIMIT = 2
 AUTO_RETRY_WINDOW_HOURS = 24
 
@@ -96,7 +98,7 @@ class JobQueue:
                 resources = json.dumps([] if domain == "system" and kind == "training_features" else owned)
                 c.execute(
                     "INSERT OR IGNORE INTO jobs(id,domain,kind,options,dedupe,state,created,resources,timeout_seconds) VALUES (?,?,?,?,?,'queued',?,?,?)",
-                    (ident, domain, kind, payload, key, now(), resources, self.timeout_seconds),
+                    (ident, domain, kind, payload, key, now(), resources, LONG_JOBS.get(kind, self.timeout_seconds)),
                 )
                 row = c.execute(
                     "SELECT id FROM jobs WHERE dedupe=? AND state IN ('queued','running')", (key,)
