@@ -17,7 +17,7 @@ def test_timeout_kills_a_real_child_and_releases_the_worker(tmp_path, monkeypatc
     start = oslib.start_job
 
     def sleeper(*args):
-        process = oslib.job_process([sys.executable, "-c", "import time; time.sleep(60)"])
+        process = oslib._os.start_supervised([sys.executable, "-c", "import time; time.sleep(60)"])
         processes.append(process)
         return process
 
@@ -62,7 +62,7 @@ def test_server_crash_stops_the_detached_worker_and_its_tool(tmp_path):
     ready = tmp_path / "ready.json"
     tool = "import os,time; print(os.getpid(),flush=True); time.sleep(60)"
     worker = f"import os,json,subprocess,sys,time; from pathlib import Path; from app import oslib; oslib.watch_supervisor(); p=subprocess.Popen([sys.executable,'-c',{tool!r}],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,text=True); tool_pid=int(p.stdout.readline()); Path({str(ready) + '.tmp'!r}).write_text(json.dumps([os.getpid(),tool_pid])); os.replace({str(ready) + '.tmp'!r},{str(ready)!r}); p.wait()"
-    supervisor = f"import os,sys; from app import oslib; p=oslib.job_process([sys.executable,'-c',{worker!r}],dict(os.environ,APP_JOB_SUPERVISED='1'),supervised=True); sys.stdin.buffer.read(1); p.wait()"
+    supervisor = f"import os,sys; from app import oslib; p=oslib._os.start_supervised([sys.executable,'-c',{worker!r}]); sys.stdin.buffer.read(1); p.wait()"
     parent = subprocess.Popen(
         [sys.executable, "-c", supervisor],
         stdin=subprocess.PIPE,

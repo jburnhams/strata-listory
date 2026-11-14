@@ -4,6 +4,10 @@ Newest first, grouped by day. One entry per change, in the same commit or PR as 
 
 ## 2026-11-14
 
+**Tests and OS helpers from strata-python (branch `strata-python-adopt`, on top of the PyPI move)**
+
+- `tests/conftest.py` shrinks to what is the app's own: the plugin now provides the isolated home and data folder (`strata_env_prefix`, `strata_tuning_vars`, `strata_env` in pyproject.toml), the no-network guard, the integration marker and `fake_urlopen`, `fake_popen`, `fake_run`, `no_sleep`. `tests/utils/fakes.py` is deleted (`from strata_python.testing import http_error`).
+- `src/app/oslib.py` re-exports `strata_python.oslib` (file lock, pid liveness, kill tree, priority, supervised children with the lifeline on stdin) and keeps only the app's own `cli_command` and `start_job`; a job's worker output now reaches the journal instead of being discarded. Tests of the library's own functions are removed; the real behaviour stays in `tests/integration/test_jobs.py`.
 **`listens-match` links a match, not a candidate (branch `manual-match-role`)**
 The 28-disc Just William set and its 1613-minute twin, both matched by hand to one work, were not merged as copies: `same_work_groups` reads `match` parts and `apply.assign_work` had linked a `candidate`.
 
