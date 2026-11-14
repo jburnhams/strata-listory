@@ -2,6 +2,13 @@
 
 Newest first, grouped by day. One entry per change, in the same commit or PR as the change.
 
+## 2026-11-14
+
+**Identification: folders of books that are one collection (branch `container-merge`)**
+Jonathan asked for anthologies kept as numbered books to match as the whole collection, using approved sub-matches too, and for a general twin check.
+
+- `src/app/linkage/containers.py`, `./app listens-identify --merge-containers [--dry-run]`: a folder's pieces are matched as one pseudo-listen (folder name, shared title and author, summed runtime); joined as ordered parts when the work is accepted, the sum is a recording within 2% and every piece is under 80% of it. Close sums (to 12%) are listed as proposals. Sub-book matches, including approved ones, are superseded by the collection match. Also lists listens far longer than their work (`overlong`).
+
 ## 2026-11-13
 
 **Covers: searched when a match is accepted, and a way back to the matches (branch `claude/covers-sweep-unaccept`)**
