@@ -140,6 +140,7 @@ class Verdict:
     recording: float = 0.0
     summary: dict | None = None
     detail: dict | None = None
+    data: dict | None = None  # the vectors the verdict came from (the cache entry for a listen that is joined)
 
 
 def judge(g: Group, data: dict, params: M.Params, *, threshold: float = A.THRESHOLD) -> Verdict:
@@ -155,6 +156,7 @@ def judge(g: Group, data: dict, params: M.Params, *, threshold: float = A.THRESH
     best = min(runtimes, key=lambda r: abs(g.total - r))
     off = abs(g.total - best) / best
     base = dict(
+        data=data,
         key=key,
         p=post[key],
         recording=best,
@@ -193,7 +195,16 @@ def join(
             reason=f"pieces of one collection: {v.reason}",
         )
     order = [p.part_id for p in g.pieces]
-    for part in s.scalars(select(ListenPart).where(ListenPart.id.in_(order))):
+    order += [  # a copy of a piece kept in another folder came along with its listen: it stays, after the pieces
+        x.id
+        for x in s.scalars(
+            select(ListenPart)
+            .where(ListenPart.listen_id == survivor.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+            .order_by(ListenPart.ordinal)
+        )
+        if x.id not in order
+    ]
+    for part in s.scalars(select(ListenPart).where(ListenPart.id.in_([p.part_id for p in g.pieces]))):
         part.detail = {**(part.detail or {}), "relation": "part"}
     s.flush()
     L.reorder(s, survivor, "input", order, actor_kind="model", actor_ref=actor_ref, reason="pieces in listening order")
@@ -258,16 +269,24 @@ def merge_containers(  # pragma: no cover - Postgres: tests/unit/store/test_cont
     """Judge every folder (or those holding a listen in `only`) and join the certain ones. Returns the verdicts that joined or are proposals (the rest are skipped silently). `dry_run` judges without writing."""
     run = None if dry_run else new_run(s, "merge_containers", {"threshold": threshold})
     out = []
+    fresh: dict = {}
     for g in find_groups(s):
         if only and not only & set(g.listens):
             continue
         v = judge(g, vectors(oc, ac, group_query(s, g)), params, threshold=threshold)
         if v.action == "join" and not dry_run:
-            join(s, g, v, actor_ref=actor_ref, run_id=run.id if run else None)
+            survivor = join(s, g, v, actor_ref=actor_ref, run_id=run.id if run else None)
+            fresh[str(survivor)] = dict(
+                v.data or {}, sig="container"
+            )  # the prepared per-book vectors would otherwise decide the joined listen again
         if v.action != "skip":
             out.append(v)
     if run:
         finish_run(s, run, "done")
+    if fresh:
+        cache = dataset.load_cache()
+        cache.update(fresh)
+        dataset.save_cache(cache)
     return out
 
 

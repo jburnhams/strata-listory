@@ -51,15 +51,18 @@ def params():
     )
 
 
-def build_folder(s, tmp_path, books, folder=FOLDER):
-    for name in books:
-        p = tmp_path / folder / name / f"{name}.m4b"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_bytes(f"{folder}{name}".encode())
+def build_folder(s, tmp_path, books, folder=FOLDER, elsewhere=None):
+    trees = {folder: books, **(elsewhere or {})}
+    minutes = {}
+    for f, bs in trees.items():
+        for name in bs:
+            p = tmp_path / f / name / f"{name}.m4b"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(f"{f}{name}".encode())
+            minutes[str(tmp_path / f / name)] = bs[name]
     ids = fg.scan_files(s, str(tmp_path))
     for path, fid in ids.items():
-        name = path[len(str(tmp_path / folder)) + 1 :].split("/")[0]
-        s.get(fg.PartFile, fid).duration_s = books[name] * 60
+        s.get(fg.PartFile, fid).duration_s = minutes[path.rsplit("/", 1)[0]] * 60
     s.flush()
     top, _ = st.infer(s, fg.group_by_folder(s, str(tmp_path), ids))
     build.build_listens(s, top)
@@ -149,3 +152,27 @@ def test_an_over_long_listen_is_flagged(s, tmp_path):
     )
     L.set_state(s, part, "accepted", actor_kind="user")
     assert containers.overlong(s) == [(a.id, 700.0, 300.0, "Short Tale")]
+
+
+def test_a_copy_of_a_piece_kept_elsewhere_stays_with_the_joined_listen(s, tmp_path):
+    listens = build_folder(s, tmp_path, BOOKS, elsewhere={"Books/Spare": {"First Tale": 240}})
+    spare = next(l for l in listens if "Spare" in (l.label or "") or (l.label == "First Tale" and l is listens[-1]))
+    first = next(l for l in listens if l is not spare and l.label == "First Tale")
+    L.merge(s, first, spare, actor_kind="rule", actor_ref="copies", reason="the same recording")
+    containers.merge_containers(s, None, None, params(), vectors=fake_vectors())
+    (survivor,) = [l for l in live(s)]
+    inputs = s.scalars(
+        select(ListenPart)
+        .where(ListenPart.listen_id == survivor.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+        .order_by(ListenPart.ordinal)
+    ).all()
+    assert [p.detail.get("relation") for p in inputs] == ["part", "part", "part", None]  # the copy follows the pieces
+
+
+def test_the_joined_listen_gets_the_collection_vectors_in_the_cache(s, tmp_path):
+    from app.linkage import dataset
+
+    build_folder(s, tmp_path, BOOKS)
+    containers.merge_containers(s, None, None, params(), vectors=fake_vectors())
+    (survivor,) = live(s)
+    assert dataset.load_cache()[str(survivor.id)]["clusters"].keys() == {COLLECTION["key"]}
