@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { http, HttpResponse } from 'msw'
 import FilesPage, { length, size } from '../../src/components/FilesPage'
 import { setup, screen, within } from '../utils/render'
-import { mock, server } from '../utils/server'
+import { fgScans, mock, server } from '../utils/server'
 
 describe('FilesPage', () => {
   it('ignores a blank folder, says when none is set, and shows a refused one', async () => {
@@ -26,6 +26,15 @@ describe('FilesPage', () => {
     await user.type(screen.getByLabelText('Add a folder'), '/third{Enter}')
     expect(await screen.findByText(/Folders scanned \(2\)/)).toBeInTheDocument()
     expect(mock.settings.library_dirs).toEqual(['/audio', '/third'])
+  })
+
+  it('queues a scan of one folder', async () => {
+    mock.settings = { ...mock.settings, library_dir: '/audio', library_dirs: ['/audio', '/more'] }
+    const { user } = setup(<FilesPage />, { route: '/files' })
+    await user.click(await screen.findByRole('button', { name: /Folders scanned \(2\)/ }))
+    await user.click(screen.getByRole('button', { name: /Scan.*more/ }))
+    expect(await screen.findByText(/Scan queued/)).toBeInTheDocument()
+    expect(fgScans).toEqual(['/more'])
   })
 
   it('opens on the newest grouping and walks down and back up the tree', async () => {

@@ -123,6 +123,20 @@ def _execute(jobs, domain, kind, options):
             finally:
                 c.close()
             return result
+        if kind == "filegroups":
+            from omarchy_db import connect
+            from sqlalchemy.orm import Session
+
+            from app.store import filegroups as fg
+
+            roots, folder = settings.library_roots(), options["folder"]
+            if folder not in roots:
+                raise ValueError(f"not one of the scanned folders: {folder}")
+            if not fs.reachable(folder) or not os.path.isdir(folder):
+                raise ValueError(f"folder is not reachable: {folder}")
+            with Session(connect("listory")) as s:
+                top = fg.scan_roots(s, roots, only=folder)
+                return dict(files=top.file_count, folders=top.group_count, bytes=top.total_bytes)
         if kind == "match":
             return matcher.match_pending(options["limit"], providers.enabled(options.get("providers")))
         if kind == "enrich":

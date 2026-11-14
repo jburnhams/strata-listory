@@ -267,6 +267,43 @@ def group_roots(s: Session, roots: list[str], ids: dict[str, int]) -> PartFilegr
     return top
 
 
+def scan_roots(
+    s: Session,
+    roots: list[str],
+    *,
+    only: str | None = None,
+    workers: int = 4,
+    progress: Callable[[int, int], None] | None = None,
+) -> PartFilegroup:
+    """Scan library roots and make one new grouping over all of them (the Files page shows the newest grouping, so it must always cover every root). With `only`, just that root is walked and hashed again; the others reuse the locations already recorded, so scanning one folder never makes the rest vanish from the page."""
+    run = new_run(s, "scan", {"roots": roots, "only": only})
+    s.commit()
+    ids: dict[str, int] = {}
+    for root in roots:
+        if only is None or root == only:
+            ids.update(scan_files(s, root, workers=workers, progress=progress))
+        else:
+            prefix = root.rstrip(os.sep) + os.sep
+            ids.update(
+                {
+                    p: i
+                    for p, i in s.execute(
+                        select(PartFileLocation.path, PartFileLocation.file_id).where(
+                            PartFileLocation.path.startswith(prefix, autoescape=True),
+                            PartFileLocation.gone_at.is_(None),
+                        )
+                    )
+                }
+            )
+        s.commit()
+    probe_missing(s, ids, workers=workers)
+    s.commit()
+    top = group_roots(s, roots, ids)
+    finish_run(s, run, "done")
+    s.commit()
+    return top
+
+
 def would_cycle(s: Session, group_id: int, child_group_id: int) -> bool:
     """True if making `child_group_id` a member of `group_id` would put a group inside itself (checked by whoever adds inferred groups)."""
     if group_id == child_group_id:

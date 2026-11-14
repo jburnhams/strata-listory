@@ -221,6 +221,14 @@ def create_app():
             raise HTTPException(400, "set the audiobook folder in Settings first")
         return queued("system", "scan", folder=folder)
 
+    @app.post("/api/filegroups/scan")
+    def post_filegroups_scan(b: ScanIn):
+        """Scan one of the library folders into the Files page (a job; the same as `./app filegroups`, but only that folder is walked again)."""
+        folder = os.path.abspath(os.path.expanduser(b.folder)) if b.folder else ""
+        if folder not in settings.library_roots():
+            raise HTTPException(400, "not one of the folders listed under Folders scanned")
+        return queued("system", "filegroups", folder=folder)
+
     @app.post("/api/match")
     def post_match(limit: int = 25, providers_: str | None = Query(None, alias="providers")):
         names = providers_.split(",") if providers_ else None

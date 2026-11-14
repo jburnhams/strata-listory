@@ -75,6 +75,10 @@ class JobQueue:
                 owned = sorted(f"book:{bid}" for bid in ids)
                 if options.get("listen_id"):  # listens live in the Postgres catalogue, a different id space from books
                     owned.append(f"listen:{options['listen_id']}")
+                if (
+                    kind == "filegroups"
+                ):  # every folder scan publishes a grouping over all roots, so they must not overlap
+                    owned.append("filegroups")
                 resources = json.dumps([] if domain == "system" and kind == "training_features" else owned)
                 c.execute(
                     "INSERT OR IGNORE INTO jobs(id,domain,kind,options,dedupe,state,created,resources,timeout_seconds) VALUES (?,?,?,?,?,'queued',?,?,?)",

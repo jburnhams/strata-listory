@@ -191,26 +191,14 @@ def cmd_filegroups(args):
     from app.store import filegroups as fg
 
     with Session(connect("listory")) as s:
-        run = fg.new_run(s, "scan", {"roots": roots})
-        s.commit()
-        ids: dict[str, int] = {}
-        for root in roots:
-            ids.update(
-                fg.scan_files(
-                    s,
-                    root,
-                    workers=args.workers,
-                    progress=lambda d, n: print(f"  hashed {d}/{n}", end="\r", flush=True) if d % 50 == 0 else None,
-                )
-            )
-            s.commit()
-        print(f"\n  probed {fg.probe_missing(s, ids, workers=args.workers)} new files")
-        s.commit()
-        top = fg.group_roots(s, roots, ids)
-        fg.finish_run(s, run, "done")
-        s.commit()
+        top = fg.scan_roots(
+            s,
+            roots,
+            workers=args.workers,
+            progress=lambda d, n: print(f"  hashed {d}/{n}", end="\r", flush=True) if d % 50 == 0 else None,
+        )
         print(
-            f"{len(ids)} files in {len(roots)} folder{'s' if len(roots) != 1 else ''}, {top.group_count} folders below the root, {top.total_bytes / 1e9:,.1f} GB (grouping #{top.id})"
+            f"\n{top.file_count} files in {len(roots)} folder{'s' if len(roots) != 1 else ''}, {top.group_count} folders below the root, {top.total_bytes / 1e9:,.1f} GB (grouping #{top.id})"
         )
         return 0
 
