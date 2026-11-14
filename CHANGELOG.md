@@ -4,6 +4,11 @@ Newest first, grouped by day. One entry per change, in the same commit or PR as 
 
 ## 2026-11-14
 
+**`listens-match` links a match, not a candidate (branch `manual-match-role`)**
+The 28-disc Just William set and its 1613-minute twin, both matched by hand to one work, were not merged as copies: `same_work_groups` reads `match` parts and `apply.assign_work` had linked a `candidate`.
+
+- `src/app/linkage/apply.py` `assign_work`: links role `match` (accepted by the user), as the model's own acceptances are. Test: two hand-matched listens are one `same_work_groups` entry.
+
 **strata-python from PyPI (0.2.3), and the database layer moves from omarchy-db to `strata_python.db` (branch `strata-python-pypi`)**
 Jonathan asked to update to the latest release and make the most of it. First step: the dependency and the database layer; the rest follows in small PRs.
 
