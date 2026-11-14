@@ -242,3 +242,33 @@ def test_group_roots_puts_several_roots_under_one_top_group(s, tmp_path):
     ).all() == [top]
     single = fg.group_roots(s, [one], {p: i for p, i in ids.items() if p.startswith(one)})
     assert (single.kind, single.path) == ("root", one)  # one root is unchanged from before
+
+
+def test_scan_roots_goes_a_subfolder_at_a_time_and_publishes_as_it_goes(s, lib, monkeypatch):
+    stages = []
+    monkeypatch.setattr(fg, "probe_missing", lambda *a, **k: 0)
+    top = fg.scan_roots(
+        s, [lib], stage=lambda text, done, total: stages.append((os.path.basename(text), done, total)), publish_every=0
+    )
+    assert top.file_count == 5
+    assert [x[0] for x in stages[:-1]] == [os.path.basename(lib), "Author", "Empty", "Radio"] and stages[-1][
+        0
+    ] == "Grouping files by folder"
+    # publish_every=0: a grouping after every unit but the last, plus the final one
+    assert s.query(PartFilegroup).filter(PartFilegroup.kind == "root").count() >= 2
+
+
+def test_scan_roots_marks_a_removed_subfolder_gone_and_keeps_other_roots(s, lib, tmp_path_factory, monkeypatch):
+    monkeypatch.setattr(fg, "probe_missing", lambda *a, **k: 0)
+    other = tmp_path_factory.mktemp("other")
+    (other / "A.mp3").write_bytes(b"zz")
+    fg.scan_roots(s, [lib, str(other)])
+    import shutil
+
+    shutil.rmtree(os.path.join(lib, "Radio"))
+    top = fg.scan_roots(s, [lib, str(other)], only=lib)
+    assert top.file_count == 5  # 4 left in lib + the other root's file, which was not walked again
+    assert (
+        os.path.join(lib, "Radio/Show.mp3")
+        in s.scalars(select(PartFileLocation.path).where(PartFileLocation.gone_at.is_not(None))).all()
+    )

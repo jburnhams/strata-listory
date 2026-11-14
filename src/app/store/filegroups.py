@@ -11,6 +11,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -119,11 +120,13 @@ def finish_run(s: Session, run: Run, outcome: str) -> None:
     s.flush()
 
 
-def walk_audio(root: str) -> list[tuple[str, int, int]]:
-    """(path, size, mtime_ns) of every audio file under root, in a stable order."""
+def walk_audio(root: str, *, shallow: bool = False) -> list[tuple[str, int, int]]:
+    """(path, size, mtime_ns) of every audio file under root (only those directly in it when `shallow`), in a stable order."""
     out = []
     for d, dirs, files in os.walk(root):
         dirs.sort(key=natural_key)
+        if shallow:
+            dirs.clear()
         for n in sorted(files, key=natural_key):
             if is_audio(n):
                 p = os.path.join(d, n)
@@ -133,10 +136,15 @@ def walk_audio(root: str) -> list[tuple[str, int, int]]:
 
 
 def scan_files(
-    s: Session, root: str, *, workers: int = 4, progress: Callable[[int, int, str], None] | None = None
+    s: Session,
+    root: str,
+    *,
+    workers: int = 4,
+    progress: Callable[[int, int, str], None] | None = None,
+    shallow: bool = False,
 ) -> dict[str, int]:
-    """Make sure every audio file under `root` has a PartFile and a current location. Returns {path: part_file_id}. Locations no longer on disk get `gone_at`."""
-    found = walk_audio(root)
+    """Make sure every audio file under `root` (just the ones directly in it when `shallow`) has a PartFile and a current location. Returns {path: part_file_id}. Locations no longer on disk get `gone_at`."""
+    found = walk_audio(root, shallow=shallow)
     now = datetime.now(UTC)
     known = {
         l.path: l
@@ -145,6 +153,7 @@ def scan_files(
                 PartFileLocation.path.startswith(root.rstrip(os.sep) + os.sep, autoescape=True)
             )
         )
+        if not shallow or os.path.dirname(l.path) == root.rstrip(os.sep)
     }
     todo = [
         (p, z, m)
@@ -267,6 +276,30 @@ def group_roots(s: Session, roots: list[str], ids: dict[str, int]) -> PartFilegr
     return top
 
 
+def active_ids(s: Session, roots: list[str]) -> dict[str, int]:
+    """{path: file id} of every location under the roots that is still on disk as far as the last scans know."""
+    out: dict[str, int] = {}
+    for root in roots:
+        prefix = root.rstrip(os.sep) + os.sep
+        out.update(
+            {
+                p: i
+                for p, i in s.execute(
+                    select(PartFileLocation.path, PartFileLocation.file_id).where(
+                        PartFileLocation.path.startswith(prefix, autoescape=True), PartFileLocation.gone_at.is_(None)
+                    )
+                )
+            }
+        )
+    return out
+
+
+def scan_units(root: str) -> list[tuple[str, bool]]:
+    """The pieces a root is scanned in: the files directly in it, then each top-level subfolder (natural order). (path, shallow)."""
+    subs = sorted((e.path for e in os.scandir(root) if e.is_dir(follow_symlinks=True)), key=natural_key)
+    return [(root.rstrip(os.sep) or os.sep, True)] + [(p, False) for p in subs]
+
+
 def scan_roots(
     s: Session,
     roots: list[str],
@@ -274,38 +307,46 @@ def scan_roots(
     only: str | None = None,
     workers: int = 4,
     progress: Callable[[int, int, str], None] | None = None,
-    stage: Callable[[str], None] | None = None,
+    stage: Callable[[str, int, int], None] | None = None,
+    publish_every: float = 300.0,
 ) -> PartFilegroup:
-    """Scan library roots and make one new grouping over all of them (the Files page shows the newest grouping, so it must always cover every root). With `only`, just that root is walked and hashed again; the others reuse the locations already recorded, so scanning one folder never makes the rest vanish from the page."""
+    """Scan library roots and make one new grouping over all of them (the Files page shows the newest grouping, so it must always cover every root). With `only`, just that root is read again; the others keep the locations already recorded, so scanning one folder never makes the rest vanish from the page.
+
+    A root is read one top-level subfolder at a time: each is hashed, probed and committed before the next, so a stop loses at most one subfolder, and every `publish_every` seconds the grouping is published from what is recorded so far, so the Files page fills in while the scan runs."""
     run = new_run(s, "scan", {"roots": roots, "only": only})
     s.commit()
-    ids: dict[str, int] = {}
+    clock = time.monotonic
+    published = clock()
     for root in roots:
-        if only is None or root == only:
+        if only is not None and root != only:
+            continue
+        units = scan_units(root)
+        seen: set[str] = set()
+        for n, (unit, shallow) in enumerate(units):
             if stage:
-                stage(f"Looking for new and changed files in {root}")
-            ids.update(scan_files(s, root, workers=workers, progress=progress))
-        else:
-            prefix = root.rstrip(os.sep) + os.sep
-            ids.update(
-                {
-                    p: i
-                    for p, i in s.execute(
-                        select(PartFileLocation.path, PartFileLocation.file_id).where(
-                            PartFileLocation.path.startswith(prefix, autoescape=True),
-                            PartFileLocation.gone_at.is_(None),
-                        )
-                    )
-                }
+                stage(unit, n, len(units))
+            ids = scan_files(s, unit, workers=workers, progress=progress, shallow=shallow)
+            seen.update(ids)
+            s.commit()
+            probe_missing(s, ids, workers=workers)
+            s.commit()
+            if clock() - published >= publish_every and n + 1 < len(units):
+                group_roots(s, roots, active_ids(s, roots))
+                s.commit()
+                published = clock()
+        prefix = root.rstrip(os.sep) + os.sep
+        now = datetime.now(UTC)
+        for loc in s.scalars(  # a whole subfolder that is gone has no unit of its own: its locations are marked here
+            select(PartFileLocation).where(
+                PartFileLocation.path.startswith(prefix, autoescape=True), PartFileLocation.gone_at.is_(None)
             )
+        ):
+            if loc.path not in seen:
+                loc.gone_at = now
         s.commit()
     if stage:
-        stage("Reading durations and tags of new files")
-    probe_missing(s, ids, workers=workers)
-    s.commit()
-    if stage:
-        stage("Grouping files by folder")
-    top = group_roots(s, roots, ids)
+        stage("Grouping files by folder", 0, 0)
+    top = group_roots(s, roots, active_ids(s, roots))
     finish_run(s, run, "done")
     s.commit()
     return top
