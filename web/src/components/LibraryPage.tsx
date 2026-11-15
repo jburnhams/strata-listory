@@ -229,30 +229,30 @@ export default function LibraryPage() {
 
   const queryKey = ['library-listens', q, kind, missing, sort, page] as const
   const load = useLoad({ queryKey, queryFn: () => listenApi.library(q, kind, missing, sort, PAGE_SIZE, offset) })
-  const [updated, setUpdated] = useState<Record<number, ListenConfig>>({})
+  const saveQueue = useRef<Record<number, Promise<void>>>({})
   const [errors, setErrors] = useState<Record<number, string>>({})
 
-  const applySaved = (listenId: number, next: ListenConfig) => {
-    setUpdated(u => ({ ...u, [listenId]: next }))
-    void qc.invalidateQueries({ queryKey: ['listen-config', listenId] })
-    void qc.invalidateQueries({ queryKey: ['library-listens'] })
-  }
-
-  const onPickField = (listenId: number, field: string, value: string | number | null, source: string) => {
+  const enqueueSave = (listenId: number, run: () => Promise<ListenConfig>) => {
     setErrors(e => { const { [listenId]: _, ...rest } = e; return rest })
-    listenApi.chooseField(listenId, field, value, source).then(
-      next => applySaved(listenId, next),
+    const prev = saveQueue.current[listenId] ?? Promise.resolve()
+    saveQueue.current[listenId] = prev.then(() => run()).then(
+      next => {
+        qc.setQueriesData<Awaited<ReturnType<typeof listenApi.library>>>({ queryKey: ['library-listens'] }, old =>
+          old ? { ...old, rows: old.rows.map(r => r.listen_id === listenId ? next : r) } : old,
+        )
+        void qc.invalidateQueries({ queryKey: ['listen-config', listenId] })
+        void qc.invalidateQueries({ queryKey: ['library-listens'] })
+      },
       (err: Error) => setErrors(e => ({ ...e, [listenId]: err.message })),
     )
   }
+
+  const onPickField = (listenId: number, field: string, value: string | number | null, source: string) =>
+    enqueueSave(listenId, () => listenApi.chooseField(listenId, field, value, source))
 
   const onPickColumn = (listenId: number, col: ConfigColumn) => {
     const values = Object.fromEntries(Object.entries(col.values).filter(([, v]) => v != null && v !== ''))
-    setErrors(e => { const { [listenId]: _, ...rest } = e; return rest })
-    listenApi.chooseFields(listenId, values, col.label).then(
-      next => applySaved(listenId, next),
-      (err: Error) => setErrors(e => ({ ...e, [listenId]: err.message })),
-    )
+    enqueueSave(listenId, () => listenApi.chooseFields(listenId, values, col.label))
   }
 
   const d = load.status === 'ready' ? load.data : null
@@ -317,18 +317,15 @@ export default function LibraryPage() {
             </EmptyState>
           ) : (
             <div className="space-y-4">
-              {x.rows.map(r => {
-                const item = updated[r.listen_id] ?? r
-                return (
-                  <LibraryCard
-                    key={item.listen_id}
-                    item={item}
-                    error={errors[item.listen_id]}
-                    onPickField={onPickField}
-                    onPickColumn={onPickColumn}
-                  />
-                )
-              })}
+              {x.rows.map(item => (
+                <LibraryCard
+                  key={item.listen_id}
+                  item={item}
+                  error={errors[item.listen_id]}
+                  onPickField={onPickField}
+                  onPickColumn={onPickColumn}
+                />
+              ))}
               <nav aria-label="Pagination" className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
                 <span className="type-caption text-muted-foreground">
                   Showing {x.offset + 1}–{Math.min(x.offset + x.rows.length, x.total)} of {x.total} · Page {page} of {totalPages}
