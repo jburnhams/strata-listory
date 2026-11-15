@@ -169,7 +169,11 @@ def execute(book: dict, plan: dict, force: bool = False) -> dict:
     shutil.rmtree(partial, ignore_errors=True)
     os.makedirs(partial)
     try:
-        cover_src = book.get("cover_path") or (details.cover(book) if book.get("path") else None)
+        cover_src = (
+            book.get("cover_path")
+            if book.get("is_listen")
+            else (book.get("cover_path") or (details.cover(book) if book.get("path") else None))
+        )
         small = _cover_small(cover_src, partial)
         retries = 0
         if plan.get("enhancement", {}).get("method") == "diamond-pause-level-v1":
