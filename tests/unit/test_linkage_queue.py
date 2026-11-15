@@ -14,6 +14,7 @@ def item(
     kind="book",
     status="review",
     added=1000.0,
+    mtime=None,
     recordings=True,
     title="Glass Orchard",
     authors=("Mara Quill",),
@@ -28,17 +29,27 @@ def item(
         authors=list(authors),
         recordings=[dict(asin="B0AAAAAAA1")] if recordings else [],
     )
-    return dict(listen_id=lid, p=p, kind=kind, status=status, added=added, text=text, candidates=[top, *others])
+    return dict(
+        listen_id=lid,
+        p=p,
+        kind=kind,
+        status=status,
+        added=added,
+        mtime=mtime,
+        text=text,
+        candidates=[top, *others],
+    )
 
 
 ITEMS = [
-    item(1, 0.99, auto=True, added=100.0),
+    item(1, 0.99, auto=True, added=100.0, mtime=500.0),
     item(
         2,
         0.6,
         second=0.55,
         kind="radio_series",
         added=300.0,
+        mtime=900.0,
         title="Salt Roads",
         authors=("Ben Ash",),
         text="Salt Roads Ben Ash /x/Radio/Salt Roads",
@@ -49,11 +60,12 @@ ITEMS = [
         recordings=False,
         status="identified",
         added=300.0,
+        mtime=200.0,
         title="Lune",
         text="Lune folder",
         others=(dict(p=0.2, title="Moonlight Orchard", authors=["Ida Fenn"]),),
     ),
-    item(4, 0.8, added=200.0, title=None, authors=()),
+    item(4, 0.8, added=200.0, mtime=700.0, title=None, authors=()),
 ]
 ids = lambda items: [it["listen_id"] for it in items]
 
@@ -65,6 +77,8 @@ ids = lambda items: [it["listen_id"] for it in items]
         ("uncertain", [3, 2, 4, 1]),  # the hardest cards first
         ("recent", [3, 2, 4, 1]),  # newest first; listens added together, newest id first
         ("oldest", [1, 4, 2, 3]),
+        ("file-recent", [2, 4, 1, 3]),  # newest file mtime first
+        ("file-oldest", [3, 1, 4, 2]),  # oldest file mtime first
     ],
 )
 def test_select_orders_by_the_chosen_sort(sort, expected):

@@ -215,6 +215,10 @@ function Card({ row, onPick, onBack, onChanged }: { row: CoverRow; onPick: (row:
 const COVER_SORTS: [CoverSort, string][] = [
   ['recent', 'Newest search first'],
   ['oldest', 'Oldest search first'],
+  ['added-recent', 'Most recently added first'],
+  ['added-oldest', 'Oldest added first'],
+  ['file-recent', 'Newest files first'],
+  ['file-oldest', 'Oldest files first'],
   ['title', 'Title (A–Z)'],
   ['title-desc', 'Title (Z–A)'],
   ['most-covers', 'Most covers found'],

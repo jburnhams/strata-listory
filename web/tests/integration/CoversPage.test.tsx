@@ -239,6 +239,26 @@ describe('CoversPage', () => {
       const names = screen.getAllByRole('article').map(a => a.getAttribute('aria-label'))
       expect(names).toEqual(['Glass Orchard', 'Salt Roads', 'Third Book'])
     })
+    await user.selectOptions(screen.getByLabelText('Sort by'), 'file-recent')
+    await waitFor(() => {
+      const names = screen.getAllByRole('article').map(a => a.getAttribute('aria-label'))
+      expect(names).toEqual(['Salt Roads', 'Glass Orchard', 'Third Book'])
+    })
+    await user.selectOptions(screen.getByLabelText('Sort by'), 'file-oldest')
+    await waitFor(() => {
+      const names = screen.getAllByRole('article').map(a => a.getAttribute('aria-label'))
+      expect(names).toEqual(['Third Book', 'Glass Orchard', 'Salt Roads'])
+    })
+    await user.selectOptions(screen.getByLabelText('Sort by'), 'added-recent')
+    await waitFor(() => {
+      const names = screen.getAllByRole('article').map(a => a.getAttribute('aria-label'))
+      expect(names).toEqual(['Salt Roads', 'Glass Orchard', 'Third Book'])
+    })
+    await user.selectOptions(screen.getByLabelText('Sort by'), 'added-oldest')
+    await waitFor(() => {
+      const names = screen.getAllByRole('article').map(a => a.getAttribute('aria-label'))
+      expect(names).toEqual(['Third Book', 'Glass Orchard', 'Salt Roads'])
+    })
     await user.selectOptions(screen.getByLabelText('Sort by'), 'recent')
     await waitFor(() => {
       const names = screen.getAllByRole('article').map(a => a.getAttribute('aria-label'))

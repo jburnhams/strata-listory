@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
-import { Button, DataView, EmptyState, Field, Input, NativeSelect, PageHeader, Skeleton, Status, format, useLoad } from 'strata-react'
+import { Button, DataView, EmptyState, Field, Input, MediaPlayer, NativeSelect, PageHeader, SPEECH_RATES, Skeleton, Status, format, useLoad } from 'strata-react'
 import { coverApi, listenApi, type ConfigColumn, type ConfigField, type LibrarySort, type ListenConfig } from '../api'
 import { KIND_LABEL, hours } from './ListensPage'
 
@@ -28,7 +28,10 @@ const SORTS: [LibrarySort, string][] = [
   ['year-asc', 'Year (oldest first)'],
   ['length-desc', 'Length (longest first)'],
   ['length-asc', 'Length (shortest first)'],
-  ['recent', 'Recently added'],
+  ['recent', 'Most recently added'],
+  ['oldest', 'Oldest added'],
+  ['file-recent', 'Newest files first'],
+  ['file-oldest', 'Oldest files first'],
 ]
 
 const MISSING_FILTERS: [string, string][] = [
@@ -73,17 +76,38 @@ function LibraryCard({
   error,
   onPickField,
   onPickColumn,
+  onExport,
 }: {
   item: ListenConfig
   error?: string
   onPickField: (listenId: number, field: string, value: string | number | null, source: string) => void
   onPickColumn: (listenId: number, col: ConfigColumn) => void
+  onExport: (listenId: number, noiseReduction: boolean) => void
 }) {
   const columns = item.sources ?? []
   const mins = item.minutes ?? item.inputs[0]?.minutes ?? 0
   const files = item.files ?? item.inputs.reduce((n, i) => n + i.files, 0)
   const path = item.path ?? item.inputs[0]?.path
   const groupId = item.group_id ?? item.inputs[0]?.group_id
+  const output = item.output ?? null
+  const chapters = output?.chapters ?? []
+  const job = output?.job ?? null
+  const busy = job?.state === 'queued' || job?.state === 'running'
+  const [noiseReduction, setNoiseReduction] = useState(Boolean(output?.noise_reduction ?? job?.noise_reduction))
+  const [chapter, setChapter] = useState(0)
+  const [showTable, setShowTable] = useState(false)
+  const safeChapter = chapters.length ? Math.min(chapter, chapters.length - 1) : 0
+  const titleVal = item.fields.find(f => f.field === 'title')?.value ?? item.label
+  const authorVal = item.fields.find(f => f.field === 'author')?.value ?? null
+  const presentFields = item.fields.filter(f => f.value != null && String(f.value).trim() !== '')
+  const missingInSources = item.fields.flatMap(f => {
+    if (f.value != null && String(f.value).trim() !== '') return []
+    const vals = Array.from(new Set([
+      ...f.options.map(o => String(o.value).trim()).filter(Boolean),
+      ...columns.map(c => c.values[f.field]).filter(v => v != null && String(v).trim() !== '').map(v => String(v).trim()),
+    ]))
+    return vals.length ? [{ label: f.label, values: vals }] : []
+  })
   return (
     <article aria-label={item.label} className="space-y-4 rounded-surface border border-border bg-card p-4">
       <header className="flex flex-wrap items-start gap-4">
@@ -115,85 +139,189 @@ function LibraryCard({
 
       {error && <p role="alert" className="type-body-sm text-danger">{error}</p>}
 
-      <div className="overflow-x-auto">
-        <table aria-label={`Metadata for ${item.label}`} className="w-full border-collapse type-body-sm">
-          <thead>
-            <tr className="border-b border-border text-left">
-              <th scope="col" className="py-2 pr-3 font-medium text-muted-foreground">Field</th>
-              {columns.map(col => {
-                const nonEmpty = Object.values(col.values).filter(v => v != null && v !== '').length
-                return (
-                  <th key={col.id} scope="col" className={`px-2 py-2 align-top font-normal transition-state ${col.used ? 'bg-muted/70' : ''}`}>
-                    <button
-                      type="button"
-                      aria-pressed={col.used}
-                      disabled={nonEmpty === 0}
-                      onClick={() => onPickColumn(item.listen_id, col)}
-                      className={`flex w-full flex-col items-start gap-0.5 rounded-control border px-2.5 py-1.5 text-left transition-state hover:border-ring disabled:opacity-50 ${col.used ? 'border-ring bg-muted font-medium' : 'border-border bg-card'}`}
-                    >
-                      <span className="flex flex-wrap items-center gap-1.5">
-                        <span>{col.label}</span>
-                        {col.used && <Status tone="success">{`${col.used_fields.length} used`}</Status>}
-                      </span>
-                      {col.kind === 'audible' && col.runtime_minutes ? (
-                        <span className="type-caption text-muted-foreground">{hours(col.runtime_minutes)}{col.abridged ? ' · abridged' : ''}</span>
-                      ) : col.kind === 'original' && mins ? (
-                        <span className="type-caption text-muted-foreground">{hours(mins)}</span>
-                      ) : null}
-                    </button>
-                  </th>
-                )
-              })}
-              <th scope="col" className="py-2 pl-3 font-medium text-muted-foreground">Output</th>
-            </tr>
-          </thead>
-          <tbody>
-            {item.fields.map(f => (
-              <tr key={f.field} className="border-b border-border/60 align-middle">
-                <th scope="row" className="py-2 pr-3 text-left font-medium text-muted-foreground whitespace-nowrap">{f.label}</th>
+      <button
+        type="button"
+        aria-expanded={showTable}
+        aria-label={`Toggle metadata for ${item.label}`}
+        onClick={() => setShowTable(v => !v)}
+        className="flex w-full flex-col items-start gap-1 rounded-control border border-border bg-muted/20 px-3 py-2 text-left type-body-sm transition-state hover:border-ring hover:bg-muted/40"
+      >
+        <span className="flex w-full flex-wrap items-baseline justify-between gap-2">
+          <span>
+            {presentFields.length
+              ? presentFields.map(f => `${f.label}: ${f.value}`).join(' · ')
+              : 'No metadata selected'}
+          </span>
+          <span className="type-caption text-muted-foreground">{showTable ? 'Hide metadata table' : 'Edit metadata'}</span>
+        </span>
+        {missingInSources.length > 0 && (
+          <span className="type-caption text-muted-foreground">
+            Missing (in other sources): {missingInSources.map(m => `${m.label} (${m.values.join(', ')})`).join(' · ')}
+          </span>
+        )}
+      </button>
+
+      {showTable && (
+        <div className="overflow-x-auto">
+          <table aria-label={`Metadata for ${item.label}`} className="w-full border-collapse type-body-sm">
+            <thead>
+              <tr className="border-b border-border text-left">
+                <th scope="col" className="py-2 pr-3 font-medium text-muted-foreground">Field</th>
                 {columns.map(col => {
-                  const val = col.values[f.field]
-                  const cellUsed = col.used_fields.includes(f.field)
+                  const nonEmpty = Object.values(col.values).filter(v => v != null && v !== '').length
                   return (
-                    <td key={col.id} className={`px-2 py-1.5 align-middle ${col.used ? 'bg-muted/30' : ''}`}>
-                      {val != null && val !== '' ? (
-                        <button
-                          type="button"
-                          aria-pressed={cellUsed}
-                          aria-label={`Use ${col.label} for ${f.label}: ${val}`}
-                          onClick={() => onPickField(item.listen_id, f.field, val, col.label)}
-                          className={`w-full rounded-control border px-2 py-1 text-left transition-state hover:border-ring ${cellUsed ? 'border-ring bg-muted font-medium' : 'border-transparent hover:bg-muted/50'}`}
-                        >
-                          {String(val)}
-                        </button>
-                      ) : (
-                        <span className="px-2 text-muted-foreground">–</span>
-                      )}
-                    </td>
+                    <th key={col.id} scope="col" className={`px-2 py-2 align-top font-normal transition-state ${col.used ? 'bg-muted/70' : ''}`}>
+                      <button
+                        type="button"
+                        aria-pressed={col.used}
+                        disabled={nonEmpty === 0}
+                        onClick={() => onPickColumn(item.listen_id, col)}
+                        className={`flex w-full flex-col items-start gap-0.5 rounded-control border px-2.5 py-1.5 text-left transition-state hover:border-ring disabled:opacity-50 ${col.used ? 'border-ring bg-muted font-medium' : 'border-border bg-card'}`}
+                      >
+                        <span className="flex flex-wrap items-center gap-1.5">
+                          <span>{col.label}</span>
+                          {col.used && <Status tone="success">{`${col.used_fields.length} used`}</Status>}
+                        </span>
+                        {col.kind === 'audible' && col.runtime_minutes ? (
+                          <span className="type-caption text-muted-foreground">{hours(col.runtime_minutes)}{col.abridged ? ' · abridged' : ''}</span>
+                        ) : col.kind === 'original' && mins ? (
+                          <span className="type-caption text-muted-foreground">{hours(mins)}</span>
+                        ) : null}
+                      </button>
+                    </th>
                   )
                 })}
-                <td className="py-1.5 pl-3 min-w-64">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <NativeSelect
-                      aria-label={`${f.label} for ${item.label}`}
-                      value={f.value == null ? '' : String(f.value)}
-                      onChange={e => onPickField(item.listen_id, f.field, e.target.value === '' ? null : e.target.value, 'dropdown')}
-                      className="min-w-40 flex-1"
-                    >
-                      <option value="">Not set</option>
-                      {f.value != null && !f.options.some(o => String(o.value) === String(f.value)) && (
-                        <option value={String(f.value)}>{String(f.value)}</option>
-                      )}
-                      {f.options.map(o => <option key={String(o.value)} value={String(o.value)}>{String(o.value)}</option>)}
-                    </NativeSelect>
-                    <WriteIn listenLabel={item.label} field={f} onSave={v => onPickField(item.listen_id, f.field, v, 'typed')} />
-                  </div>
-                </td>
+                <th scope="col" className="py-2 pl-3 font-medium text-muted-foreground">Output</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {item.fields.map(f => (
+                <tr key={f.field} className="border-b border-border/60 align-middle">
+                  <th scope="row" className="py-2 pr-3 text-left font-medium text-muted-foreground whitespace-nowrap">{f.label}</th>
+                  {columns.map(col => {
+                    const val = col.values[f.field]
+                    const cellUsed = col.used_fields.includes(f.field)
+                    return (
+                      <td key={col.id} className={`px-2 py-1.5 align-middle ${col.used ? 'bg-muted/30' : ''}`}>
+                        {val != null && val !== '' ? (
+                          <button
+                            type="button"
+                            aria-pressed={cellUsed}
+                            aria-label={`Use ${col.label} for ${f.label}: ${val}`}
+                            onClick={() => onPickField(item.listen_id, f.field, val, col.label)}
+                            className={`w-full rounded-control border px-2 py-1 text-left transition-state hover:border-ring ${cellUsed ? 'border-ring bg-muted font-medium' : 'border-transparent hover:bg-muted/50'}`}
+                          >
+                            {String(val)}
+                          </button>
+                        ) : (
+                          <span className="px-2 text-muted-foreground">–</span>
+                        )}
+                      </td>
+                    )
+                  })}
+                  <td className="py-1.5 pl-3 min-w-64">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <NativeSelect
+                        aria-label={`${f.label} for ${item.label}`}
+                        value={f.value == null ? '' : String(f.value)}
+                        onChange={e => onPickField(item.listen_id, f.field, e.target.value === '' ? null : e.target.value, 'dropdown')}
+                        className="min-w-40 flex-1"
+                      >
+                        <option value="">Not set</option>
+                        {f.value != null && !f.options.some(o => String(o.value) === String(f.value)) && (
+                          <option value={String(f.value)}>{String(f.value)}</option>
+                        )}
+                        {f.options.map(o => <option key={String(o.value)} value={String(o.value)}>{String(o.value)}</option>)}
+                      </NativeSelect>
+                      <WriteIn listenLabel={item.label} field={f} onSave={v => onPickField(item.listen_id, f.field, v, 'typed')} />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <section aria-label={`Export for ${item.label}`} className="space-y-3 border-t border-border pt-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="inline-flex items-center gap-2 type-body-sm">
+              <input
+                type="checkbox"
+                checked={noiseReduction}
+                disabled={busy}
+                onChange={e => setNoiseReduction(e.target.checked)}
+              />
+              <span>Noise reduction</span>
+            </label>
+            <Button
+              size="sm"
+              variant={chapters.length ? 'outline' : 'default'}
+              disabled={busy}
+              onClick={() => onExport(item.listen_id, noiseReduction)}
+            >
+              {busy ? 'Exporting…' : chapters.length ? 'Re-export MP3s' : 'Export MP3s'}
+            </Button>
+            {busy && (
+              <Status tone="info">
+                {job?.state === 'running' ? (job.progress?.current || 'Exporting MP3s…') : 'Export queued'}
+              </Status>
+            )}
+            {chapters.length > 0 && (
+              <Status tone="success">
+                {[
+                  `Exported ${format.count(chapters.length, 'chapter')}`,
+                  output?.out_seconds ? formatDuration(Math.round(output.out_seconds)) : '',
+                  output?.noise_reduction ? 'Noise reduction' : '',
+                ].filter(Boolean).join(' · ')}
+              </Status>
+            )}
+          </div>
+          {output?.out_dir && (
+            <span className="type-caption break-all text-muted-foreground">{output.out_dir}</span>
+          )}
+        </div>
+
+        {job?.state === 'failed' && job.error && (
+          <p role="alert" className="type-body-sm text-danger">{job.error}</p>
+        )}
+
+        {chapters.length > 0 && (
+          <div className="space-y-2 rounded-control border border-border bg-muted/20 p-3">
+            <label className="flex flex-wrap items-center gap-2 type-body-sm">
+              <span className="text-muted-foreground">Chapter</span>
+              <NativeSelect
+                aria-label={`Chapter for ${item.label}`}
+                value={safeChapter}
+                onChange={e => setChapter(Number(e.target.value))}
+                className="max-w-full flex-1"
+              >
+                {chapters.map((c, i) => (
+                  <option key={i} value={i}>
+                    {i + 1}. {c.title}{c.duration ? ` · ${formatDuration(Math.round(c.duration))}` : ''}
+                  </option>
+                ))}
+              </NativeSelect>
+            </label>
+            <MediaPlayer
+              label="Audiobook"
+              sources={chapters.map((c, i) => ({
+                src: listenApi.audioUrl(item.listen_id, i),
+                title: c.title,
+                duration: c.duration,
+              }))}
+              index={safeChapter}
+              onIndexChange={setChapter}
+              rates={SPEECH_RATES}
+              session={{
+                title: String(titleVal),
+                artist: authorVal ? String(authorVal) : undefined,
+              }}
+            />
+          </div>
+        )}
+      </section>
     </article>
   )
 }
@@ -255,7 +383,16 @@ export default function LibraryPage() {
     enqueueSave(listenId, () => listenApi.chooseFields(listenId, values, col.label))
   }
 
+  const onExport = (listenId: number, noiseReduction: boolean) =>
+    enqueueSave(listenId, () => listenApi.export(listenId, noiseReduction))
+
   const d = load.status === 'ready' ? load.data : null
+  const anyExportBusy = Boolean(d?.rows.some(r => r.output?.job?.state === 'queued' || r.output?.job?.state === 'running'))
+  useEffect(() => {
+    if (!anyExportBusy) return
+    const t = setInterval(() => { void qc.invalidateQueries({ queryKey: ['library-listens'] }) }, 2000)
+    return () => clearInterval(t)
+  }, [anyExportBusy, qc])
   const totalPages = d ? Math.max(1, Math.ceil(d.total / d.limit)) : 1
   useEffect(() => {
     if (d && page > totalPages) updateParams({ page: totalPages <= 1 ? '' : String(totalPages) })
@@ -324,6 +461,7 @@ export default function LibraryPage() {
                   error={errors[item.listen_id]}
                   onPickField={onPickField}
                   onPickColumn={onPickColumn}
+                  onExport={onExport}
                 />
               ))}
               <nav aria-label="Pagination" className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">

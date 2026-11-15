@@ -21,6 +21,8 @@ export const SORTS: Record<QueueFilters['sort'], { label: string; scope: string;
   uncertain: { label: 'Least certain first', scope: 'Hardest first', finding: 'least certain first' },
   recent: { label: 'Most recently added first', scope: 'Newest first', finding: 'most recently added first' },
   oldest: { label: 'Oldest first', scope: 'Oldest first', finding: 'oldest first' },
+  'file-recent': { label: 'Newest files first', scope: 'Newest files first', finding: 'most recently modified files first' },
+  'file-oldest': { label: 'Oldest files first', scope: 'Oldest files first', finding: 'oldest modified files first' },
   'kind-certain': { label: 'Kind most sure first', scope: 'Sure kinds first', finding: 'most sure of the kind first' },
   'kind-uncertain': { label: 'Kind least sure first', scope: 'Unsure kinds first', finding: 'least sure of the kind first' },
 }

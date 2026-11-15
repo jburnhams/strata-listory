@@ -287,4 +287,396 @@ def test_sources_columns_and_library_endpoint(s, listen, monkeypatch):
         l2.id,
         listen.id,
     ]
+    assert [r["listen_id"] for r in client.get("/api/listens/library?sort=recent").json()["rows"]] == [
+        l2.id,
+        listen.id,
+    ]
+    assert [r["listen_id"] for r in client.get("/api/listens/library?sort=oldest").json()["rows"]] == [
+        listen.id,
+        l2.id,
+    ]
+    monkeypatch.setattr(C, "listen_mtimes", lambda sess, ids=None: {listen.id: 2000.0, l2.id: 1000.0})
+    assert [r["listen_id"] for r in client.get("/api/listens/library?sort=file-recent").json()["rows"]] == [
+        listen.id,
+        l2.id,
+    ]
+    assert [r["listen_id"] for r in client.get("/api/listens/library?sort=file-oldest").json()["rows"]] == [
+        l2.id,
+        listen.id,
+    ]
     assert len(client.get("/api/listens/library?limit=1&offset=1").json()["rows"]) == 1
+
+
+def test_export_listen_and_audio_streaming(s, listen, tmp_path, monkeypatch):
+    import json
+    import os
+
+    from app import settings
+    from app.covers import run as covers_run
+    from app.process import plan as P
+    from app.process import run as R
+    from app.store.models import (
+        CoverImage,
+        PartFile,
+        PartFilegroup,
+        PartFilegroupMember,
+        PartFileLocation,
+        Run,
+    )
+
+    monkeypatch.setattr(C, "audible_rows", audible)
+    monkeypatch.setattr(settings, "final_dir", lambda: str(tmp_path / "final"))
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    src_mp3 = src_dir / "01.mp3"
+    src_mp3.write_bytes(b"ID3-fake-mp3-input")
+    cov_file = tmp_path / "cover.jpg"
+    cov_file.write_bytes(b"fake-jpg")
+
+    img = CoverImage(
+        sha256="f" * 64,
+        ext=".jpg",
+        width=2000,
+        height=2000,
+        size=8,
+        dhash="0" * 16,
+    )
+    s.add(img)
+    s.flush()
+    monkeypatch.setattr(covers_run, "image_path", lambda i: str(cov_file))
+
+    run_row = Run(id="a" * 32, kind="group_folders", outcome="done")
+    s.add(run_row)
+    pf = PartFile(
+        sha256=b"x" * 32, size=18, duration_s=120.0, codec="mp3", channels=1, sample_rate=44100, bit_rate=64000
+    )
+    s.add(pf)
+    s.flush()
+    s.add(PartFileLocation(file_id=pf.id, path=str(src_mp3), size=18, mtime_ns=1))
+    child_fg = PartFilegroup(
+        run_id=run_row.id, kind="disc", label="Disc 1", path=str(src_dir), file_count=1, total_bytes=18
+    )
+    s.add(child_fg)
+    s.flush()
+    s.add(PartFilegroupMember(group_id=child_fg.id, ordinal=1, file_id=pf.id))
+    fg = PartFilegroup(
+        run_id=run_row.id, kind="book", label="Glass Orchard", path=str(src_dir), file_count=1, total_bytes=18
+    )
+    s.add(fg)
+    s.flush()
+    s.add(PartFilegroupMember(group_id=fg.id, ordinal=1, child_group_id=child_fg.id))
+    L.link(
+        s,
+        listen,
+        "input",
+        filegroup_id=fg.id,
+        ordinal=1,
+        actor_kind="rule",
+        detail=dict(path=str(src_dir), files=1, minutes=2, relation="copy"),
+    )
+    L.choose(s, listen, "author", "Mara Quill", actor_kind="user")
+    L.choose(s, listen, "year", 2005, actor_kind="user")
+    L.choose(s, listen, "series_position", "not-a-float", actor_kind="user")
+    L.choose(s, listen, "cover", dict(image_id=img.id, source="audible", width=2000, height=2000), actor_kind="user")
+    s.commit()
+
+    assert C.listen_mtimes(s, []) == {}
+    assert C.listen_mtimes(s, [listen.id])[listen.id] == pytest.approx(1e-9)
+
+    def fake_make_plan(book, final_dir, audible_arg, extras, records, *, input_paths=None, **kw):
+        assert book["cover_path"] == str(cov_file)
+        assert book["series_position"] is None
+        out_dir = P.out_dir_for(book, final_dir, book.get("year"))
+        return dict(
+            book_id=book["id"],
+            title=book["title"],
+            author=book["author"],
+            out_dir=out_dir,
+            year=book.get("year"),
+            chapters=[
+                dict(
+                    file="001 - Mara Quill - Glass Orchard.mp3",
+                    title="Chapter 1",
+                    start=0.0,
+                    end=120.0,
+                    duration=120.0,
+                    mode="copy",
+                    tier="copy",
+                    kbps=64,
+                    segments=[(input_paths[0], 0.0, None)],
+                )
+            ],
+            chapter_source="file boundaries",
+            downmix="average",
+            duration=120.0,
+            loudness=dict(
+                I=-18.0, TP=-2.0, LRA=4.0, apply_db=0.0, gain_steps=0, decision="within tolerance", reencoded=False
+            ),
+            warnings=[],
+            in_bytes=18,
+            est_bytes=18,
+            in_files=1,
+            channels=1,
+        )
+
+    def fake_execute(book, plan, force=False):
+        out_dir = plan["out_dir"]
+        os.makedirs(out_dir, exist_ok=True)
+        ch_path = os.path.join(out_dir, plan["chapters"][0]["file"])
+        with open(ch_path, "wb") as f:
+            f.write(b"ID3-exported-chapter")
+        summary = dict(
+            status="done",
+            title=plan["title"],
+            author=plan["author"],
+            out_dir=out_dir,
+            chapters=len(plan["chapters"]),
+            out_bytes=20,
+            out_seconds=120.0,
+            loudness_before=-18.0,
+            loudness_after=-18.0,
+            gain_db=0.0,
+            finished="2026-11-15T16:50:00Z",
+            enhancement=plan.get("enhancement"),
+        )
+        with open(os.path.join(out_dir, "metadata.json"), "w", encoding="utf8") as f:
+            json.dump(dict(book=book, result=summary, chapters=plan["chapters"]), f)
+        return summary
+
+    monkeypatch.setattr(P, "make_plan", fake_make_plan)
+    monkeypatch.setattr(R, "execute", fake_execute)
+
+    app = FastAPI()
+    app.include_router(store_api.listens_router)
+    app.dependency_overrides[store_api.get_session] = lambda: s
+    client = TestClient(app)
+
+    assert client.get(f"/api/listens/{listen.id}/output").status_code == 404
+    assert client.get("/api/listens/9999/output").status_code == 404
+    assert client.get(f"/api/listens/{listen.id}/audio/0").status_code == 404
+    assert client.get("/api/listens/9999/audio/0").status_code == 404
+
+    exported = client.post(f"/api/listens/{listen.id}/export", json=dict(noise_reduction=True)).json()
+    assert exported["output"]["status"] == "done"
+    assert exported["output"]["noise_reduction"] is True
+    assert len(exported["output"]["chapters"]) == 1
+    assert exported["output"]["chapters"][0]["title"] == "Chapter 1"
+
+    out_info = client.get(f"/api/listens/{listen.id}/output").json()
+    assert out_info["status"] == "done" and out_info["noise_reduction"] is True
+
+    audio_resp = client.get(f"/api/listens/{listen.id}/audio/0")
+    assert audio_resp.status_code == 200 and audio_resp.content == b"ID3-exported-chapter"
+    assert client.get(f"/api/listens/{listen.id}/audio/9").status_code == 404
+    assert client.post("/api/listens/9999/export", json=dict(noise_reduction=False)).status_code == 404
+
+    class FakeJobs:
+        threads = [object()]
+        submitted = []
+
+        def submit(self, domain, kind, **kw):
+            self.submitted.append((domain, kind, kw))
+
+        def tasks(self, domain=None):
+            return [
+                dict(
+                    id=42,
+                    domain="listens",
+                    kind="export",
+                    state="running",
+                    options=dict(listen_id=listen.id, noise_reduction=False),
+                    progress=dict(step="encode"),
+                )
+            ]
+
+        def failures(self, domain=None):
+            return []
+
+    app.state.jobs = FakeJobs()
+    queued_resp = client.post(f"/api/listens/{listen.id}/export", json=dict(noise_reduction=False))
+    assert queued_resp.status_code == 202
+    assert queued_resp.json()["output"]["status"] == "running"
+    assert queued_resp.json()["output"]["job"]["id"] == 42
+
+    class FailedJobs:
+        def tasks(self, domain=None):
+            return []
+
+        def failures(self, domain=None):
+            return [
+                dict(
+                    id=43,
+                    domain="listens",
+                    kind="export",
+                    options=json.dumps(dict(listen_id=listen.id, noise_reduction=True)),
+                    error="ffmpeg failed",
+                )
+            ]
+
+    app.state.jobs = FailedJobs()
+    out_with_err = C.output_status(s, listen, jobs=app.state.jobs)
+    assert out_with_err["job"]["state"] == "failed" and out_with_err["job"]["error"] == "ffmpeg failed"
+
+    monkeypatch.setattr(store_api, "_engine", lambda: s.get_bind())
+    assert C.export_job(listen.id, noise_reduction=False)["status"] == "done"
+    with pytest.raises(ValueError, match="no listen"):
+        C.export_job(99999)
+
+    # A second listen with the same author/title/year must not claim or overwrite the first listen's output.
+    inbox2 = tmp_path / "inbox" / "Mara Quill - Glass Orchard (Narrator Two)"
+    inbox2.mkdir(parents=True)
+    track2 = inbox2 / "01.mp3"
+    track2.write_bytes(b"ID3-second-recording")
+    pf2 = PartFile(
+        sha256=b"y" * 32, size=20, duration_s=120.0, codec="mp3", channels=1, sample_rate=44100, bit_rate=64000
+    )
+    s.add(pf2)
+    s.flush()
+    s.add(PartFileLocation(file_id=pf2.id, path=str(track2), size=20, mtime_ns=2))
+    listen2 = L.create_listen(s, "book")
+    listen2.label = "Glass Orchard"
+    L.link(
+        s,
+        listen2,
+        "input",
+        file_id=pf2.id,
+        ordinal=1,
+        actor_kind="rule",
+        detail=dict(path=str(inbox2), files=1, minutes=2, relation="copy"),
+    )
+    C.choose_field(s, listen2, "title", "Glass Orchard")
+    C.choose_field(s, listen2, "author", "Mara Quill")
+    C.choose_field(s, listen2, "year", 2005)
+    C.choose_field(s, listen2, "narrator", "Second Narrator")
+    L.choose(s, listen2, "cover", dict(image_id=img.id, source="audible", width=2000, height=2000), actor_kind="user")
+    s.commit()
+
+    assert C.output_status(s, listen2) is None
+    res2 = C.export_listen(s, listen2)
+    s.commit()
+    out1 = C.output_status(s, listen)
+    out2 = C.output_status(s, listen2)
+    assert out1 is not None and out2 is not None
+    assert res2["out_dir"] != out1["out_dir"]
+    assert "Second Narrator" in res2["out_dir"]
+    assert out1["out_dir"].endswith("[2005] Glass Orchard")
+    assert out2["out_dir"] == res2["out_dir"]
+
+
+def test_input_paths_rejects_incomplete_tracked_files_and_parts(s, tmp_path):
+    from app.store.models import (
+        PartFile,
+        PartFilegroup,
+        PartFilegroupMember,
+        PartFileLocation,
+        Run,
+    )
+
+    inbox = tmp_path / "inbox" / "Incomplete Book"
+    inbox.mkdir(parents=True)
+    present_track = inbox / "01.mp3"
+    present_track.write_bytes(b"ID3-present")
+    missing_track = inbox / "02.mp3"
+
+    run_row = Run(id="b" * 32, kind="group_folders", outcome="done")
+    s.add(run_row)
+    f1 = PartFile(
+        sha256=b"a" * 32, size=11, duration_s=60.0, codec="mp3", channels=1, sample_rate=44100, bit_rate=64000
+    )
+    f2 = PartFile(
+        sha256=b"b" * 32, size=11, duration_s=60.0, codec="mp3", channels=1, sample_rate=44100, bit_rate=64000
+    )
+    s.add_all([f1, f2])
+    s.flush()
+    s.add_all(
+        [
+            PartFileLocation(file_id=f1.id, path=str(present_track), size=11, mtime_ns=1_000_000_000),
+            PartFileLocation(file_id=f2.id, path=str(missing_track), size=11, mtime_ns=1_000_000_000),
+        ]
+    )
+    fg = PartFilegroup(
+        run_id=run_row.id, kind="book", label="Incomplete Book", path=str(inbox), file_count=2, total_bytes=22
+    )
+    s.add(fg)
+    s.flush()
+    s.add_all(
+        [
+            PartFilegroupMember(group_id=fg.id, ordinal=1, file_id=f1.id),
+            PartFilegroupMember(group_id=fg.id, ordinal=2, file_id=f2.id),
+        ]
+    )
+    listen = L.create_listen(s, "book")
+    listen.label = "Incomplete Book"
+    L.link(
+        s,
+        listen,
+        "input",
+        filegroup_id=fg.id,
+        ordinal=1,
+        actor_kind="rule",
+        detail=dict(path=str(inbox), files=2, minutes=2, relation="copy"),
+    )
+    C.choose_field(s, listen, "title", "Incomplete Book")
+    C.choose_field(s, listen, "author", "Author")
+    s.flush()
+
+    _, paths = C.input_paths(s, listen)
+    assert paths == []
+    with pytest.raises(ValueError, match="no source audio files"):
+        C.export_listen(s, listen, final_dir=str(tmp_path / "final"))
+
+    # Multipart listen where part 1 exists on disk and part 2 is missing must also be rejected.
+    mp_listen = L.create_listen(s, "book")
+    mp_listen.label = "Multipart Book"
+    L.link(
+        s,
+        mp_listen,
+        "input",
+        file_id=f1.id,
+        ordinal=1,
+        actor_kind="rule",
+        detail=dict(path=str(inbox), relation="part"),
+    )
+    L.link(
+        s,
+        mp_listen,
+        "input",
+        file_id=f2.id,
+        ordinal=2,
+        actor_kind="rule",
+        detail=dict(path=str(inbox), relation="part"),
+    )
+    s.flush()
+    assert C.input_paths(s, mp_listen)[1] == []
+
+    # Deeply nested filegroups (3+ levels: Book -> Part 1 -> CD 1 -> track) must be traversed by listen_mtimes.
+    cd_fg = PartFilegroup(run_id=run_row.id, kind="disc", label="CD 1", path=str(inbox), file_count=1, total_bytes=11)
+    part_fg = PartFilegroup(
+        run_id=run_row.id, kind="disc", label="Part 1", path=str(inbox), file_count=1, total_bytes=11
+    )
+    book_fg = PartFilegroup(
+        run_id=run_row.id, kind="book", label="Deep Book", path=str(inbox), file_count=1, total_bytes=11
+    )
+    s.add_all([cd_fg, part_fg, book_fg])
+    s.flush()
+    s.add_all(
+        [
+            PartFilegroupMember(group_id=cd_fg.id, ordinal=1, file_id=f1.id),
+            PartFilegroupMember(group_id=part_fg.id, ordinal=1, child_group_id=cd_fg.id),
+            PartFilegroupMember(group_id=book_fg.id, ordinal=1, child_group_id=part_fg.id),
+        ]
+    )
+    deep_listen = L.create_listen(s, "book")
+    deep_listen.label = "Deep Book"
+    L.link(
+        s,
+        deep_listen,
+        "input",
+        filegroup_id=book_fg.id,
+        ordinal=1,
+        actor_kind="rule",
+        detail=dict(path=str(inbox), relation="copy"),
+    )
+    s.flush()
+    assert C.listen_mtimes(s, [deep_listen.id])[deep_listen.id] == pytest.approx(1.0)

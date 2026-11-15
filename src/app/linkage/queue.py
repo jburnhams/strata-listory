@@ -14,9 +14,11 @@ SORTS = (
     "uncertain",
     "recent",
     "oldest",
+    "file-recent",
+    "file-oldest",
     "kind-certain",
     "kind-uncertain",
-)  # most certain match first (the default), least certain first, most recently added first, oldest first, and by how sure the book-or-radio call is
+)  # most certain match first (the default), least certain first, most recently added first, oldest first, file last modified newest/oldest first, and by how sure the book-or-radio call is
 BANDS = ("sure", "likely", "close", "unsure")  # the certainty words the cards show (web MatchQueuePage `certainty`)
 
 
@@ -96,18 +98,21 @@ def key(it: dict, sort: str) -> float:
     sure = (it.get("kind_info") or {}).get(
         "confidence", 1.0
     )  # no verdict yet reads as a sure book, so the unclassified sink to the bottom of "least sure first"
+    mtime = it.get("mtime") if it.get("mtime") is not None else (it.get("added") or 0.0)
     return {
         "certain": -it["p"],
         "uncertain": it["p"],
         "recent": -(it.get("added") or 0.0),
         "oldest": it.get("added") or 0.0,
+        "file-recent": -mtime,
+        "file-oldest": mtime,
         "kind-certain": -sure,
         "kind-uncertain": sure,
     }[sort]
 
 
 def order(it: dict, sort: str) -> tuple[float, int]:
-    return key(it, sort), -it["listen_id"] if sort == "recent" else it["listen_id"]
+    return key(it, sort), -it["listen_id"] if sort in ("recent", "file-recent") else it["listen_id"]
 
 
 def cursor(it: dict, sort: str) -> str:
@@ -118,7 +123,7 @@ def parse_cursor(after: str, sort: str) -> tuple[float, int]:
     """The order of the item a cursor names; ValueError when it is not `key:listen_id`."""
     k, _, lid = after.rpartition(":")
     k, lid = float(k), int(lid)
-    return k, -lid if sort == "recent" else lid
+    return k, -lid if sort in ("recent", "file-recent") else lid
 
 
 def select(items: list[dict], f: Filters) -> list[dict]:

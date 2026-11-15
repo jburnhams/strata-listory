@@ -164,6 +164,10 @@ describe('MatchQueuePage', () => {
     await waitFor(() => expect(within(kind).getByRole('option', { name: 'Radio series (1)' })).toBeInTheDocument())
     expect(within(screen.getByRole('combobox', { name: 'Audible' })).getByRole('option', { name: 'No Audible recording (1)' })).toBeInTheDocument()
     expect(within(screen.getByRole('combobox', { name: 'Certainty' })).getByRole('option', { name: 'Close call (1)' })).toBeInTheDocument()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Order' }), 'file-recent')
+    await waitFor(() => expect(cards().map(c => c.getAttribute('aria-label'))).toEqual(['Salt Roads', 'Glass Orchard', 'Lune', 'Untagged folder']))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Order' }), 'file-oldest')
+    await waitFor(() => expect(cards().map(c => c.getAttribute('aria-label'))).toEqual(['Untagged folder', 'Lune', 'Glass Orchard', 'Salt Roads']))
     await user.selectOptions(screen.getByRole('combobox', { name: 'Order' }), 'recent')
     await waitFor(() => expect(cards().map(c => c.getAttribute('aria-label'))).toEqual(['Salt Roads', 'Glass Orchard', 'Lune', 'Untagged folder']))      // newest first; one with no time last
     expect(screen.queryByRole('button', { name: 'Clear filters' })).toBeNull()                 // an order is not a filter

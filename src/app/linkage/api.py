@@ -129,8 +129,12 @@ def queue_items(s: Session) -> list[dict]:
     for it in items:
         kind, status, created = facts.get(it["listen_id"], (None, None, None))
         it.update(kind=kind, status=status, added=float(created) if created is not None else None)
+    from app.store import config as store_config
+
+    mtimes = store_config.listen_mtimes(s, list(by))
     infos = kinds_db.kind_infos(s, list(by))
     for it in items:
+        it["mtime"] = mtimes.get(it["listen_id"])
         it["kind_info"] = infos.get(it["listen_id"])
     return sorted(items, key=lambda it: (-it["p"], it["listen_id"]))
 
