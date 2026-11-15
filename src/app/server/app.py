@@ -371,15 +371,18 @@ def create_app():
 
         view = operations.view(ingest_worker.tasks() + jobs.tasks("system"), worker.tasks(), completed)
         cover_jobs = jobs.tasks("covers")
+        export_jobs = jobs.tasks("listens")
+        failures = jobs.failures()
         names = covers_labels(
-            [x["options"].get("listen_id") for x in cover_jobs]
-            + [json.loads(j["options"]).get("listen_id") for j in jobs.failures() if j["domain"] == "covers"]
+            [x["options"].get("listen_id") for x in cover_jobs + export_jobs]
+            + [json.loads(j["options"]).get("listen_id") for j in failures if j["domain"] in ("covers", "listens")]
         )
         for t in cover_jobs:
             lid = t["options"].get("listen_id")
             view["rows"].append(
                 dict(
                     id=f"covers-{t['id']}",
+                    job_id=t["id"],
                     book_id=None,
                     run_id=None,
                     title=f"Search covers: {names.get(lid) or f'listen {lid}'}",
@@ -387,14 +390,37 @@ def create_app():
                     state=t["state"],
                     phase=None,
                     error="",
+                    progress=t.get("progress"),
                 )
             )
-        if cover_jobs:
+        for t in export_jobs:
+            lid = t["options"].get("listen_id")
+            nr = " (noise reduction)" if t["options"].get("noise_reduction") else ""
+            prog = t.get("progress")
+            view["rows"].append(
+                dict(
+                    id=f"export-{t['id']}",
+                    job_id=t["id"],
+                    book_id=None,
+                    run_id=None,
+                    title=f"Export MP3s{nr}: {names.get(lid) or f'listen {lid}'}",
+                    stage="Export MP3s",
+                    current_step=(prog or {}).get("current") or "Export MP3s",
+                    state=t["state"],
+                    phase=None,
+                    error="",
+                    progress=prog,
+                )
+            )
+        if cover_jobs or export_jobs:
             view["busy"] = True
-        for job in jobs.failures():
+        for job in failures:
             if job["domain"] == "covers":
                 lid = json.loads(job["options"]).get("listen_id")
                 job["kind"], job["title"] = "search covers", names.get(lid) or f"listen {lid}"
+            elif job["domain"] == "listens":
+                lid = json.loads(job["options"]).get("listen_id")
+                job["kind"], job["title"] = "export", names.get(lid) or f"listen {lid}"
             from app.ingest.operations import job_title
 
             label = job_title(job["kind"], json.loads(job["options"])) or job["kind"].replace("_", " ")

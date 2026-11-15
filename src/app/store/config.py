@@ -941,8 +941,11 @@ def export_listen(
     import os
 
     from app import details, settings, sources
+    from app.jobs import report_progress
     from app.process import plan as P
     from app.process import run as R
+
+    report_progress("Planning export…")
 
     cur = chosen(s, listen.id)
     meta = selected_metadata(s, listen, cur)
@@ -1035,6 +1038,7 @@ def export_listen(
         with open(out_dir + ".lock", "w", encoding="utf8") as f:
             json.dump(dict(listen_id=listen.id), f)
     try:
+        report_progress("Exporting MP3s…", 0, len(plan["chapters"]))
         summary = R.execute(book, plan, force=owns_existing)
         L.choose(
             s,

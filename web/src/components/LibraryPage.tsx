@@ -275,9 +275,12 @@ function LibraryCard({
               {busy ? 'Exporting…' : chapters.length ? 'Re-export MP3s' : 'Export MP3s'}
             </Button>
             {busy && (
-              <Status tone="info">
-                {job?.state === 'running' ? (job.progress?.current || 'Exporting MP3s…') : 'Export queued'}
-              </Status>
+              <>
+                <Status tone="info">
+                  {job?.state === 'running' ? (job.progress?.current || 'Exporting MP3s…') : 'Export queued'}
+                </Status>
+                <Link className="underline type-caption text-muted-foreground" to="/process">View in Processing</Link>
+              </>
             )}
             {chapters.length > 0 && (
               <Status tone="success">

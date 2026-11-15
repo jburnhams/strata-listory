@@ -13,6 +13,7 @@ import time
 from datetime import UTC, datetime
 
 from app import details, sources
+from app.jobs import report_progress
 from app.process import enhance, probe
 from app.process import plan as P
 
@@ -176,15 +177,19 @@ def execute(book: dict, plan: dict, force: bool = False) -> dict:
         )
         small = _cover_small(cover_src, partial)
         retries = 0
+        total_ch = len(plan["chapters"])
         if plan.get("enhancement", {}).get("method") == "diamond-pause-level-v1":
+            report_progress("Enhancing audio (noise reduction)…", 0, total_ch)
             work = os.path.join(partial, ".diamond-work")
             os.makedirs(work)
             plan = enhance.prepare(plan, work)
         while True:
             names = []
             for i, ch in enumerate(plan["chapters"], 1):
+                report_progress(f"Building chapter {i}/{total_ch}: {ch['title']}", i - 1, total_ch)
                 build_chapter(book, plan, ch, i, os.path.join(partial, ch["file"]), small)
                 names.append(os.path.join(partial, ch["file"]))
+            report_progress("Verifying exported chapters…", total_ch, total_ch)
             v = verify(plan, names)
             after = probe.measure_book([(f, 0.0, None) for f in names], 1)
             if after["TP"] is None or after["TP"] <= CLIP_CEILING:
