@@ -84,11 +84,12 @@ describe('LibraryPage', () => {
 
     // Debounce flushes automatically after pausing and keeps the draft intact if the user keeps typing
     const authorInput = within(table).getByLabelText('Write in author for Red Dragon')
-    await user.type(authorInput, 'Thomas')
-    await waitFor(() => expect(configState.picks.at(-1)).toEqual({ field: 'author', value: 'Thomas', source: 'typed' }))
-    expect(authorInput).toHaveValue('Thomas')
-    await user.type(authorInput, ' Harris')
-    await waitFor(() => expect(configState.picks.at(-1)).toEqual({ field: 'author', value: 'Thomas Harris', source: 'typed' }))
+    await user.type(authorInput, 'THOMAS')
+    await waitFor(() => expect(configState.picks.at(-1)).toEqual({ field: 'author', value: 'THOMAS', source: 'typed' }))
+    expect(authorInput).toHaveValue('THOMAS')
+    await user.type(authorInput, ' HARRIS')
+    await waitFor(() => expect(configState.picks.at(-1)).toEqual({ field: 'author', value: 'THOMAS HARRIS', source: 'typed' }))
+    expect(within(table).getByLabelText('Author for Red Dragon')).toHaveValue('THOMAS HARRIS')
   })
 
   it('surfaces errors when saving a field or column fails', async () => {
@@ -105,7 +106,7 @@ describe('LibraryPage', () => {
   })
 
   it('searches, filters, sorts, and paginates the library', async () => {
-    const { user } = setup(<LibraryPage />, { route: '/library' })
+    const { user } = setup(<LibraryPage />, { route: '/library?page=2' })
     await screen.findByRole('article', { name: 'Red Dragon' })
 
     await user.selectOptions(screen.getByLabelText('Kind'), 'radio_series')
@@ -152,14 +153,14 @@ describe('LibraryPage', () => {
       group_id: undefined,
       inputs: [],
     }))
-    const { user } = setup(<LibraryPage />, { route: '/library' })
-    expect(await screen.findByText('Showing 1–10 of 12 · Page 1 of 2')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled()
-    await user.click(screen.getByRole('button', { name: 'Next' }))
+    const { user } = setup(<LibraryPage />, { route: '/library?page=5' })
     expect(await screen.findByText('Showing 11–12 of 12 · Page 2 of 2')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: 'Previous' }))
     expect(await screen.findByText('Showing 1–10 of 12 · Page 1 of 2')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+    expect(await screen.findByText('Showing 11–12 of 12 · Page 2 of 2')).toBeInTheDocument()
   })
 
   it('shows the empty state when no listens have confirmed matches and covers yet', async () => {

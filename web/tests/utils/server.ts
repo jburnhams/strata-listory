@@ -113,9 +113,9 @@ function syncConfig(cfg: import('../../src/api').ListenConfig, updates: Record<s
   const fields = cfg.fields.map(f => {
     if (!(f.field in updates)) return f
     const val = updates[f.field]
-    const hasOpt = val != null && f.options.some(o => String(o.value) === String(val))
+    const hasOpt = val != null && f.options.some(o => String(o.value).toLowerCase() === String(val).toLowerCase())
     const options = [
-      ...f.options.map(o => ({ ...o, chosen: val != null && String(o.value) === String(val) })),
+      ...f.options.map(o => ({ ...o, chosen: val != null && String(o.value).toLowerCase() === String(val).toLowerCase() })),
       ...(val != null && !hasOpt ? [{ value: val, chosen: true, sources: [{ source: 'user', label: 'Chosen by you', ref: '', note: '' }] }] : []),
     ]
     return { ...f, value: val, chosen_by: val == null ? null : 'user', options }

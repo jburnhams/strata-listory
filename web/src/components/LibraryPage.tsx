@@ -181,6 +181,9 @@ function LibraryCard({
                       className="min-w-40 flex-1"
                     >
                       <option value="">Not set</option>
+                      {f.value != null && !f.options.some(o => String(o.value) === String(f.value)) && (
+                        <option value={String(f.value)}>{String(f.value)}</option>
+                      )}
                       {f.options.map(o => <option key={String(o.value)} value={String(o.value)}>{String(o.value)}</option>)}
                     </NativeSelect>
                     <WriteIn listenLabel={item.label} field={f} onSave={v => onPickField(item.listen_id, f.field, v, 'typed')} />
@@ -254,6 +257,9 @@ export default function LibraryPage() {
 
   const d = load.status === 'ready' ? load.data : null
   const totalPages = d ? Math.max(1, Math.ceil(d.total / d.limit)) : 1
+  useEffect(() => {
+    if (d && page > totalPages) updateParams({ page: totalPages <= 1 ? '' : String(totalPages) })
+  }, [d, page, totalPages]) // eslint-disable-line react-hooks/exhaustive-deps
   const finding = d
     ? [
         `${format.count(d.all_total, 'listen')} with a confirmed match and cover`,
