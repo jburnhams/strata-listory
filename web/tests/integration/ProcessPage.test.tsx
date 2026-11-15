@@ -259,3 +259,39 @@ it('toggles each state on and off, counts operations with the plans, and never h
   await user.click(screen.getByRole('button', { name: /^Pending/ }))
   expect(await screen.findByText('Queued op')).toBeInTheDocument()
 })
+
+it('retries all failed operations on the server, including ones not shown on the current screen, moving them to pending', async () => {
+  let retriedAll = 0
+  mock.queue = [{ book_id: 4, title: 'Broken plan', author: 'B', state: 'failed', error: 'files missing', updated: '', summary: null }]
+  server.use(
+    http.get('/api/operations', () => HttpResponse.json({
+      busy: retriedAll > 0,
+      rows: retriedAll
+        ? [
+            { id: 'job-1', book_id: null, run_id: null, title: 'Visible failure', stage: 'Covers', state: 'queued', phase: null, error: '' },
+            { id: 'job-2', book_id: 22, run_id: null, title: 'Offscreen failure', stage: 'Ingest analysis', state: 'queued', phase: null, error: '' },
+          ]
+        : [
+            { id: 'job-1', job_id: 'j1', book_id: null, run_id: null, title: 'Visible failure', stage: 'Covers', state: 'failed', phase: null, error: 'timeout' },
+          ],
+    })),
+    http.post('/api/operations/retry-failed', () => {
+      retriedAll++
+      mock.queue = mock.queue.map(r => (r.state === 'failed' ? { ...r, state: 'approved', error: '' } : r))
+      return HttpResponse.json({ retried: 3 })
+    }),
+  )
+  const { user } = setup(<ProcessPage />)
+  expect(await screen.findByText('Visible failure')).toBeInTheDocument()
+  const search = screen.getByRole('searchbox', { name: 'Search operations' })
+  await user.type(search, 'Visible')
+  expect(screen.queryByText('Broken plan')).toBeNull()
+  await user.click(screen.getByRole('button', { name: 'Retry all failed' }))
+  expect(retriedAll).toBe(1)
+  await user.clear(search)
+  expect(await screen.findByRole('button', { name: 'Failed (0)' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Pending (3)' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Retry all failed' })).toBeDisabled()
+  expect(screen.getByText('Offscreen failure')).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'Broken plan' })).toBeInTheDocument()
+})

@@ -143,6 +143,11 @@ export const handlers = [
     return HttpResponse.json({ ok: true, chosen: b.image_id })
   }),
   http.post('/api/jobs/:id/retry', () => HttpResponse.json({ queued: true })),
+  http.post('/api/operations/retry-failed', () => {
+    const retried = mock.queue.filter(r => r.state === 'failed').length
+    mock.queue = mock.queue.map(r => (r.state === 'failed' ? { ...r, state: 'approved', error: '' } : r))
+    return HttpResponse.json({ retried })
+  }),
   http.get('/api/operations', () => HttpResponse.json({ rows: [], busy: false })),
   http.get('/api/finished', () => HttpResponse.json([])),
   http.get('/api/books/:id/output', () => HttpResponse.json({ book: {}, metadata: null, chapters: [] })),
