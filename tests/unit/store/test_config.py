@@ -680,3 +680,90 @@ def test_input_paths_rejects_incomplete_tracked_files_and_parts(s, tmp_path):
     )
     s.flush()
     assert C.listen_mtimes(s, [deep_listen.id])[deep_listen.id] == pytest.approx(1.0)
+
+
+def test_source_warnings_flags_missing_files_and_track_gaps(s, tmp_path):
+    from app.store.models import (
+        PartFile,
+        PartFilegroup,
+        PartFilegroupMember,
+        PartFileLocation,
+        Run,
+    )
+
+    run_row = Run(id="c" * 32, kind="group_folders", outcome="done")
+    s.add(run_row)
+    s.flush()
+
+    def _make_listen(name: str, files: list[tuple[str, dict | None, bool]]) -> L.Listen:
+        folder = tmp_path / name
+        folder.mkdir(parents=True)
+        fg = PartFilegroup(
+            run_id=run_row.id, kind="book", label=name, path=str(folder), file_count=len(files), total_bytes=10
+        )
+        s.add(fg)
+        s.flush()
+        for idx, (fname, tags, exists_on_disk) in enumerate(files, 1):
+            fpath = folder / fname
+            if exists_on_disk:
+                fpath.write_bytes(b"ID3")
+            pf = PartFile(
+                sha256=(f"{name}-{idx}".encode().ljust(32, b"x"))[:32],
+                size=3,
+                duration_s=60.0,
+                codec="mp3",
+                channels=1,
+                sample_rate=44100,
+                bit_rate=64000,
+                probe={"format": {"tags": tags}} if tags is not None else None,
+            )
+            s.add(pf)
+            s.flush()
+            s.add(PartFileLocation(file_id=pf.id, path=str(fpath), size=3, mtime_ns=1_000_000_000))
+            s.add(PartFilegroupMember(group_id=fg.id, ordinal=idx, file_id=pf.id))
+        listen = L.create_listen(s, "book")
+        listen.label = name
+        L.link(
+            s,
+            listen,
+            "input",
+            filegroup_id=fg.id,
+            ordinal=1,
+            actor_kind="rule",
+            detail=dict(path=str(folder), files=len(files), minutes=len(files), relation="copy"),
+        )
+        s.flush()
+        return listen
+
+    # 1. Missing track via N/total tag and missing file on disk
+    l_tag_gap = _make_listen(
+        "tag_gap",
+        [
+            ("01.mp3", {"track": "1/3"}, True),
+            ("02.mp3", {"track": "2/3"}, False),
+        ],
+    )
+    assert C.source_warnings(s, l_tag_gap) == [
+        "Source audio files are missing or incomplete on disk",
+        "Missing track 3 (2 files, expected 3)",
+    ]
+
+    # 2. Gap in filename numbering when tags are absent
+    l_fn_gap = _make_listen(
+        "fn_gap",
+        [
+            ("01 - Intro.mp3", None, True),
+            ("03 - Chapter 2.mp3", None, True),
+        ],
+    )
+    assert C.source_warnings(s, l_fn_gap) == ["Missing track 2 (2 files, expected 3)"]
+
+    # 3. Contiguous leading track numbers even when a title contains unrelated digits
+    l_clean = _make_listen(
+        "clean",
+        [
+            ("01 - First.mp3", None, True),
+            ("02 - 010 1 212 456 1414.mp3", None, True),
+        ],
+    )
+    assert C.source_warnings(s, l_clean) == []

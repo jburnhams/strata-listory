@@ -163,6 +163,7 @@ export interface ListenConfig {
   inputs: { part_id: number; group_id: number | null; path: string | null; files: number; minutes: number; relation: string }[]
   minutes?: number; files?: number; path?: string | null; group_id?: number | null; mtime?: number | null
   output?: ListenOutput | null
+  source_warnings?: string[]
 }
 export type LibrarySort = 'title' | 'title-desc' | 'author' | 'year-desc' | 'year-asc' | 'length-desc' | 'length-asc' | 'recent' | 'oldest' | 'file-recent' | 'file-oldest'
 export interface LibraryList { total: number; all_total: number; without_cover: number; kinds: Record<string, number>; offset: number; limit: number; rows: ListenConfig[] }

@@ -16,6 +16,7 @@ from app.store.models import (
     Listen,
     ListenChoice,
     ListenPart,
+    PartFile,
     PartFilegroup,
     PartFilegroupMember,
     PartFileLocation,
@@ -506,6 +507,182 @@ def input_paths(s: Session, listen: Listen) -> tuple[str, list[str]]:
             return folder, part_paths
     folder = str((inputs[0].detail or {}).get("path") or "") if inputs else ""
     return folder, []
+
+
+def _parse_track_tag(raw: Any) -> tuple[int | None, int | None]:
+    """Extract (track_number, track_total) from a tag like '3', '03/12', or '3 of 12'."""
+    if raw in (None, ""):
+        return None, None
+    m = re.match(r"^\s*(\d{1,4})(?:\s*(?:/|of)\s*(\d{1,4}))?\s*$", str(raw), re.I)
+    if not m:
+        return None, None
+    n = int(m.group(1))
+    tot = int(m.group(2)) if m.group(2) else None
+    if n <= 0 or n >= 1000:
+        return None, None
+    if tot is not None and (tot <= 0 or tot >= 1000 or tot < n):
+        tot = None
+    return n, tot
+
+
+def _filename_track_nums(names: list[str]) -> list[tuple[int | None, int | None]]:
+    """Infer per-file (number, expected_total) from basenames when filenames carry chapter/track/episode numbers."""
+    import os
+
+    stems = [os.path.splitext(n)[0] for n in names]
+    cleaned: list[str] = []
+    explicit: list[tuple[int | None, int | None]] = []
+    for s in stems:
+        sc = re.sub(r"\[[^\]]*\]", " ", s)
+        sc = re.sub(r"\b(?:19|20)\d\d[-.]\d\d[-.]\d\d\b", " ", sc)
+        sc = re.sub(r"(?<!\d)(?:19|20)\d\d(?!\d)", " ", sc)
+        sc = re.sub(r"\b\d+\s*(?:kbps|khz|k|mb|gb|bit)\b", " ", sc, flags=re.I)
+        cleaned.append(sc)
+        m_of = re.search(r"\b(\d{1,3})\s*(?:of|_of_)\s*(\d{1,3})\b|\((\d{1,3})\s*-\s*(\d{1,3})\)", sc, re.I)
+        if m_of:
+            k = int(m_of.group(1) or m_of.group(3))
+            tot = int(m_of.group(2) or m_of.group(4))
+            if 1 <= k <= tot <= 500:
+                explicit.append((k, tot))
+                continue
+        m_se = re.search(r"(?<![a-z0-9])s\d{1,2}[\s._-]*e(\d{1,3})(?![a-z0-9])", sc, re.I)
+        if m_se:
+            explicit.append((int(m_se.group(1)), None))
+            continue
+        m_ser = re.search(r"\bseries[\s._-]*\d+[\s._-]+(\d{1,3})(?!\d)", sc, re.I)
+        if m_ser:
+            explicit.append((int(m_ser.group(1)), None))
+            continue
+        m_kw = re.search(r"\b(?:chapter|chap|ch|track|trk|episode|ep)[\s._-]*(\d{1,3})\b", sc, re.I)
+        if m_kw:
+            explicit.append((int(m_kw.group(1)), None))
+            continue
+        explicit.append((None, None))
+    explicit_count = sum(1 for n, _ in explicit if n is not None)
+    if explicit_count >= (1 if len(names) == 1 else max(2, int(0.7 * len(names)))):
+        return explicit
+    if len(names) == 1:
+        m1 = re.search(r"(?:part[\s._-]*(\d{1,2})|(?:^|[\s._-])0+(\d{1,2}))\s*$", cleaned[0], re.I)
+        if m1:
+            v = int(m1.group(1) or m1.group(2))
+            if v >= 1:
+                return [(v, None)]
+        return [(None, None)]
+    int_lists = [[int(x) for x in re.findall(r"\d+", c)] for c in cleaned]
+    best: list[tuple[int | None, int | None]] | None = None
+    best_score = (0, 0)
+    max_cap = len(names) * 3
+    for col in (0, -1, 1):
+        vals = [
+            lst[col] if (col >= 0 and len(lst) > col) or (col < 0 and len(lst) >= -col) else None for lst in int_lists
+        ]
+        present = [v for v in vals if v is not None and 1 <= v <= max_cap]
+        if (
+            len(present) >= max(2, int(0.7 * len(names)))
+            and len(set(present)) >= max(2, int(0.7 * len(present)))
+            and min(present) <= 3
+        ):
+            score = (len(set(present)), len(present))
+            if score > best_score:
+                best_score = score
+                best = [(v if v is not None and 1 <= v <= max_cap else None, None) for v in vals]
+    return best if best is not None else [(None, None) for _ in names]
+
+
+def _check_track_gaps(rows: list[tuple[str, int | None, int | None]], total_listen_files: int) -> list[str]:
+    """Flag missing track/chapter numbers (1..max_n) or fewer files than expected max_n in a group."""
+    fnums = _filename_track_nums([r[0] for r in rows])
+    distinct_tag_nums = {r[1] for r in rows if r[1] is not None}
+    use_fn_over_const_tag = len(rows) > 1 and len(distinct_tag_nums) <= 1
+    nums: list[int] = []
+    totals: set[int] = set()
+    for (_, t_num, t_tot), (f_num, f_tot) in zip(rows, fnums):
+        num = f_num if (f_num is not None and (t_num is None or use_fn_over_const_tag)) else (t_num or f_num)
+        if num is not None:
+            nums.append(num)
+        if t_tot is not None and t_tot != total_listen_files:
+            totals.add(t_tot)
+        if f_tot is not None and f_tot != total_listen_files:
+            totals.add(f_tot)
+    if not nums:
+        return []
+    max_n = max([*nums, *totals]) if len(totals) == 1 else max(nums)
+    if min(nums) > 3 or max_n > max(len(rows) * 3, 4):
+        return []
+    missing = sorted(set(range(1, max_n + 1)) - set(nums))
+    if len(rows) >= max_n and not missing:
+        return []
+    if missing:
+        shown = ", ".join(str(x) for x in missing[:5]) + ("…" if len(missing) > 5 else "")
+        noun = "track" if len(missing) == 1 else "tracks"
+        fword = "file" if len(rows) == 1 else "files"
+        return [f"Missing {noun} {shown} ({len(rows)} {fword}, expected {max_n})"]
+    return [f"Only {len(rows)} audio files found, expected {max_n}"]
+
+
+def source_warnings(s: Session, listen: Listen) -> list[str]:
+    """Detect unavailable source files or gaps in track/chapter numbering for a listen in advance of export."""
+    import os
+    from collections import defaultdict
+
+    inputs = list(
+        s.scalars(
+            select(ListenPart)
+            .where(ListenPart.listen_id == listen.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+            .order_by(ListenPart.ordinal)
+        )
+    )
+    if not inputs:
+        return ["No source audio files linked"]
+    parts = [p for p in inputs if (p.detail or {}).get("relation") == "part"]
+    selected = parts if parts else inputs[:1]
+    _, disk_paths = input_paths(s, listen)
+    warnings: list[str] = []
+    if not disk_paths:
+        warnings.append("Source audio files are missing or incomplete on disk")
+
+    entries: list[tuple[int, str | None]] = []
+    for p in selected:
+        if p.filegroup_id:
+            entries.extend(_group_files(s, p.filegroup_id))
+        elif p.file_id:
+            entries.append((p.file_id, None))
+    if not entries:
+        return warnings
+
+    fids = [fid for fid, _ in entries]
+    pfs = {f.id: f for f in s.scalars(select(PartFile).where(PartFile.id.in_(fids)))}
+    locs: dict[int, list[str]] = defaultdict(list)
+    for fid, path in s.execute(
+        select(PartFileLocation.file_id, PartFileLocation.path)
+        .where(PartFileLocation.file_id.in_(fids), PartFileLocation.gone_at.is_(None))
+        .order_by(PartFileLocation.id.desc())
+    ):
+        locs[fid].append(path)
+
+    by_grp: dict[str, list[tuple[str, int | None, int | None, int | None]]] = defaultdict(list)
+    for fid, gpath in entries:
+        pf = pfs.get(fid)
+        tags = ((pf.probe or {}).get("format") or {}).get("tags") or {} if pf else {}
+        tags_lower = {str(k).lower(): v for k, v in tags.items()}
+        t_num, t_tot = _parse_track_tag(tags_lower.get("track"))
+        d_num, _ = _parse_track_tag(tags_lower.get("disc") or tags_lower.get("discnumber"))
+        cands = locs.get(fid, [])
+        picked = next((p for p in cands if gpath and os.path.dirname(p) == gpath), cands[0] if cands else "")
+        by_grp[gpath or ""].append((os.path.basename(picked), t_num, t_tot, d_num))
+
+    for rows in by_grp.values():
+        dnums = [r[3] for r in rows]
+        if len({d for d in dnums if d is not None}) > 1 and all(d is not None for d in dnums):
+            by_disc: dict[int, list[tuple[str, int | None, int | None]]] = defaultdict(list)
+            for name, t_num, t_tot, d_num in rows:
+                by_disc[int(d_num or 1)].append((name, t_num, t_tot))
+            if any(len(v) > 1 for v in by_disc.values()):
+                for disc_rows in by_disc.values():
+                    warnings.extend(_check_track_gaps(disc_rows, len(entries)))
+                continue
+        warnings.extend(_check_track_gaps([(r[0], r[1], r[2]) for r in rows], len(entries)))
+    return list(dict.fromkeys(warnings))
 
 
 def selected_metadata(s: Session, listen: Listen, cur: dict[str, ListenChoice] | None = None) -> dict[str, Any]:

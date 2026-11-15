@@ -469,6 +469,7 @@ def _full_config(s: Session, l: Listen, jobs=None) -> dict:
         path=inputs[0]["path"] if inputs else None,
         group_id=inputs[0]["group_id"] if inputs else None,
         output=config.output_status(s, l, jobs=jobs),
+        source_warnings=config.source_warnings(s, l),
     )
 
 

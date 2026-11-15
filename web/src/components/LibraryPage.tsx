@@ -139,6 +139,17 @@ function LibraryCard({
 
       {error && <p role="alert" className="type-body-sm text-danger">{error}</p>}
 
+      {(item.source_warnings?.length ?? 0) > 0 && (
+        <div
+          role="alert"
+          aria-label={`Source warnings for ${item.label}`}
+          className="flex flex-wrap items-center gap-2 rounded-control border border-warning/40 bg-warning/10 px-3 py-2 type-body-sm"
+        >
+          <Status tone="warning">Missing / gap</Status>
+          <span>{item.source_warnings!.join(' · ')}</span>
+        </div>
+      )}
+
       <button
         type="button"
         aria-expanded={showTable}
