@@ -545,3 +545,36 @@ def test_pipeline_buttons_queue_their_jobs(client, monkeypatch):
     assert client.post("/api/pipeline/identify").status_code in (200, 202)
     assert client.post("/api/pipeline/bbc-details").status_code in (200, 202)
     assert seen == ["listens_build", "identify", "bbc_details"]
+
+
+def test_retry_all_failed_moves_every_failed_job_analysis_and_plan_to_pending(client, monkeypatch):
+    from app import catalogue
+    from app.covers import api as covers_api
+    from app.ingest import store
+
+    monkeypatch.setattr(covers_api, "labels", lambda ids: {i: f"Listen {i}" for i in ids})
+    jobs = client.app.state.jobs
+    jobs.handler = lambda *a: (_ for _ in ()).throw(ValueError("offline"))
+    for i in range(1, 28):
+        jobs.submit("covers", "search", listen_id=i)
+        jobs.run_one()
+    analysed = catalogue.add_book(title="Failed analysis")
+    rid = store.create(analysed["id"], {})
+    store.event(rid, "inventory", "done", data=dict(primary_id=analysed["id"], members=[analysed]))
+    store.finish(rid, "failed")
+    planned = catalogue.add_book(title="Failed plan", author="Writer", path="/audio/planned")
+    catalogue.set_plan(planned["id"], "failed", error="transient error")
+
+    before = client.get("/api/operations").json()["rows"]
+    assert len([r for r in before if r["state"] == "failed" and r.get("job_id")]) == 25
+    assert any(r["state"] == "failed" and r.get("run_id") == rid for r in before)
+    assert [r["state"] for r in client.get("/api/process").json()["rows"]] == ["failed"]
+
+    res = client.post("/api/operations/retry-failed").json()
+    assert res == dict(retried=29)
+    after = client.get("/api/operations").json()["rows"]
+    assert [r for r in after if r["state"] == "failed"] == []
+    assert client.get("/api/process").json()["rows"] == []
+    assert len([r for r in after if r["state"] == "queued" and r["stage"] == "Covers"]) == 27
+    assert any(r["state"] == "queued" and r["book_id"] == analysed["id"] for r in after)
+    assert any(r["state"] == "queued" and r["title"] == "Build processing proposals" for r in after)

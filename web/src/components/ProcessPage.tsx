@@ -95,6 +95,7 @@ export default function ProcessPage({ pollMs = 3000, mode = 'operations' }: { po
   const count = (states: PlanState[]) => (data?.rows ?? []).filter(r => allowed(r) && states.includes(r.state)).length
   const groupCount = (id: string) => { const states = GROUPS.find(g => g.id === id)!.states as readonly string[]; return (data?.rows ?? []).filter(r => allowed(r) && states.includes(r.state)).length + (operations?.rows ?? []).filter(r => states.includes(r.state)).length }
   const failedOnly = mode === 'operations' && shown.length === 1 && shown[0] === 'failed'
+  const failed = groupCount('failed')
   const approved = count(['approved'])
   const toggle = (id: number) => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
 
@@ -105,6 +106,7 @@ export default function ProcessPage({ pollMs = 3000, mode = 'operations' }: { po
         <div className="flex flex-wrap items-center gap-2">
           <a className="rounded-control border border-border px-2 py-0.5 type-caption hover:border-ring" href={href.library()}>Choose books in Library</a>
           {mode === 'operations' && <Button disabled={approved === 0} onClick={() => act(() => api.runApproved())}>Process approved ({approved})</Button>}
+          {mode === 'operations' && <Button variant="outline" size="sm" disabled={failed === 0} onClick={() => act(() => api.retryFailed())}>Retry all failed</Button>}
           {mode === 'proposed' && <a className="rounded-control border border-border px-2 py-0.5 type-caption hover:border-ring" href={href.process()}>Open processing queue</a>}
           <Button variant="outline" size="sm" onClick={() => { reload(); reloadOperations() }}>Refresh</Button>
           {busy && <span className="type-body-sm text-muted-foreground">Working… {data?.worker.busy ?? ''}</span>}

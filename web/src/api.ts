@@ -62,6 +62,7 @@ export const api = {
   dismissRun: (id: string) => req<{ cleared: boolean }>(`/api/ingest/runs/${id}/dismiss`, send('POST', {})),
   dismissJob: (id: string) => req<{ cleared: boolean }>(`/api/jobs/${id}/dismiss`, send('POST', {})),
   retryJob: (id: string) => req<unknown>(`/api/jobs/${id}/retry`, send('POST', {})),
+  retryFailed: () => req<{ retried: number }>('/api/operations/retry-failed', send('POST', {})),
   operations: (completed = false) => req<OperationsView>(`/api/operations?completed=${completed}`),
   finished: () => req<{ book_id: number; title: string; author: string; result: Processed }[]>('/api/finished'),
   output: (id: number) => req<Output>(`/api/books/${id}/output`),

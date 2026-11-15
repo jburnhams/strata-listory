@@ -415,6 +415,20 @@ def create_app():
             )
         return view
 
+    @app.post("/api/operations/retry-failed")
+    def retry_failed_operations():
+        """Move every failed job, analysis and processing proposal back to pending."""
+        from app.ingest import operations
+
+        retried = list(jobs.retry_failed())
+        for row in operations.view(ingest_worker.tasks() + jobs.tasks("system"), worker.tasks())["rows"]:
+            if row["state"] == "failed" and row.get("run_id"):
+                retried.append(jobs.submit("ingest", "resume", retry=True, run_id=row["run_id"]))
+        changed = pq.repropose([r["book_id"] for r in catalogue.list_plans(("failed",))])
+        if changed:
+            retried.append(jobs.submit("process", "propose", retry=True, ids=changed, limit=len(changed)))
+        return dict(retried=len(dict.fromkeys(retried)))
+
     @app.get("/api/library/covers")
     def library_covers():
         return dict(ids=details.available_cover_ids())

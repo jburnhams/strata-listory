@@ -140,6 +140,26 @@ class JobQueue:
         with self.configuration_lock:
             return self._retry(ident)
 
+    def retry_failed(self):
+        """Re-queue every failed job that has not been retried, cleared or superseded; returns the new job ids."""
+        c = db.connect()
+        try:
+            candidates = [
+                r[0]
+                for r in c.execute(
+                    "SELECT j.id FROM jobs j WHERE j.state='failed' AND NOT EXISTS (SELECT 1 FROM job_work r WHERE r.kind IN ('retry','dismissed') AND r.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created) ORDER BY j.finished,j.id"
+                )
+            ]
+        finally:
+            c.close()
+        out = []
+        for ident in candidates:
+            try:
+                out.append(self.retry(ident))
+            except ValueError:
+                pass
+        return list(dict.fromkeys(out))
+
     def _retry(self, ident):
         c = db.connect()
         try:
