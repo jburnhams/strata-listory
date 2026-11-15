@@ -767,3 +767,64 @@ def test_source_warnings_flags_missing_files_and_track_gaps(s, tmp_path):
         ],
     )
     assert C.source_warnings(s, l_clean) == []
+
+    # 4. Per-disc explicit totals are preserved even when disc total equals total listen files
+    l_disc_tot = _make_listen(
+        "disc_tot",
+        [
+            ("d1-01.mp3", {"track": "1/3", "disc": "1"}, True),
+            ("d2-01.mp3", {"track": "1/2", "disc": "2"}, True),
+            ("d2-02.mp3", {"track": "2/2", "disc": "2"}, True),
+        ],
+    )
+    assert C.source_warnings(s, l_disc_tot) == ["Missing tracks 2, 3 (1 file, expected 3)"]
+
+    # 5. Continuous track numbering across child folders is checked as one sequence
+    book_folder = tmp_path / "split_folders"
+    cd1_dir = book_folder / "CD1"
+    cd2_dir = book_folder / "CD2"
+    cd1_dir.mkdir(parents=True)
+    cd2_dir.mkdir(parents=True)
+    cd1_fg = PartFilegroup(run_id=run_row.id, kind="disc", label="CD1", path=str(cd1_dir), file_count=2, total_bytes=6)
+    cd2_fg = PartFilegroup(run_id=run_row.id, kind="disc", label="CD2", path=str(cd2_dir), file_count=2, total_bytes=6)
+    parent_fg = PartFilegroup(
+        run_id=run_row.id, kind="book", label="Split", path=str(book_folder), file_count=4, total_bytes=12
+    )
+    s.add_all([cd1_fg, cd2_fg, parent_fg])
+    s.flush()
+    for grp, folder, names in [(cd1_fg, cd1_dir, ["01.mp3", "02.mp3"]), (cd2_fg, cd2_dir, ["03.mp3", "04.mp3"])]:
+        for idx, fname in enumerate(names, 1):
+            fpath = folder / fname
+            fpath.write_bytes(b"ID3")
+            pf = PartFile(
+                sha256=(f"sf-{folder.name}-{idx}".encode().ljust(32, b"x"))[:32],
+                size=3,
+                duration_s=60.0,
+                codec="mp3",
+                channels=1,
+                sample_rate=44100,
+                bit_rate=64000,
+            )
+            s.add(pf)
+            s.flush()
+            s.add(PartFileLocation(file_id=pf.id, path=str(fpath), size=3, mtime_ns=1_000_000_000))
+            s.add(PartFilegroupMember(group_id=grp.id, ordinal=idx, file_id=pf.id))
+    s.add_all(
+        [
+            PartFilegroupMember(group_id=parent_fg.id, ordinal=1, child_group_id=cd1_fg.id),
+            PartFilegroupMember(group_id=parent_fg.id, ordinal=2, child_group_id=cd2_fg.id),
+        ]
+    )
+    l_split = L.create_listen(s, "book")
+    l_split.label = "Split Folders"
+    L.link(
+        s,
+        l_split,
+        "input",
+        filegroup_id=parent_fg.id,
+        ordinal=1,
+        actor_kind="rule",
+        detail=dict(path=str(book_folder), files=4, minutes=4, relation="copy"),
+    )
+    s.flush()
+    assert C.source_warnings(s, l_split) == []

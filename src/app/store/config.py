@@ -589,21 +589,42 @@ def _filename_track_nums(names: list[str]) -> list[tuple[int | None, int | None]
     return best if best is not None else [(None, None) for _ in names]
 
 
-def _check_track_gaps(rows: list[tuple[str, int | None, int | None]], total_listen_files: int) -> list[str]:
-    """Flag missing track/chapter numbers (1..max_n) or fewer files than expected max_n in a group."""
+def _resolved_track_numbers(rows: list[tuple[str, int | None, int | None]]) -> list[tuple[int | None, set[int]]]:
+    """Resolve effective track number and explicit totals per row using tags and filenames."""
     fnums = _filename_track_nums([r[0] for r in rows])
     distinct_tag_nums = {r[1] for r in rows if r[1] is not None}
     use_fn_over_const_tag = len(rows) > 1 and len(distinct_tag_nums) <= 1
-    nums: list[int] = []
-    totals: set[int] = set()
+    out: list[tuple[int | None, set[int]]] = []
     for (_, t_num, t_tot), (f_num, f_tot) in zip(rows, fnums):
         num = f_num if (f_num is not None and (t_num is None or use_fn_over_const_tag)) else (t_num or f_num)
+        tots = {t for t in (t_tot, f_tot) if t is not None}
+        out.append((num, tots))
+    return out
+
+
+def _subgroups_reset_numbering(groups: list[list[tuple[str, int | None, int | None]]]) -> bool:
+    """Return True if subgroups restart/overlap track numbering rather than continuing one sequence."""
+    if len(groups) <= 1:
+        return False
+    seen: set[int] = set()
+    for grp in groups:
+        grp_nums = {num for num, _ in _resolved_track_numbers(grp) if num is not None}
+        if not grp_nums:
+            return True
+        if seen & grp_nums:
+            return True
+        seen |= grp_nums
+    return False
+
+
+def _check_track_gaps(rows: list[tuple[str, int | None, int | None]]) -> list[str]:
+    """Flag missing track/chapter numbers (1..max_n) or fewer files than expected max_n in a group."""
+    nums: list[int] = []
+    totals: set[int] = set()
+    for num, tots in _resolved_track_numbers(rows):
         if num is not None:
             nums.append(num)
-        if t_tot is not None and t_tot != total_listen_files:
-            totals.add(t_tot)
-        if f_tot is not None and f_tot != total_listen_files:
-            totals.add(f_tot)
+        totals |= tots
     if not nums:
         return []
     max_n = max([*nums, *totals]) if len(totals) == 1 else max(nums)
@@ -671,17 +692,22 @@ def source_warnings(s: Session, listen: Listen) -> list[str]:
         picked = next((p for p in cands if gpath and os.path.dirname(p) == gpath), cands[0] if cands else "")
         by_grp[gpath or ""].append((os.path.basename(picked), t_num, t_tot, d_num))
 
-    for rows in by_grp.values():
+    grp_list = list(by_grp.values())
+    if len(grp_list) > 1 and not _subgroups_reset_numbering([[(r[0], r[1], r[2]) for r in g] for g in grp_list]):
+        grp_list = [[r for g in grp_list for r in g]]
+
+    for rows in grp_list:
         dnums = [r[3] for r in rows]
         if len({d for d in dnums if d is not None}) > 1 and all(d is not None for d in dnums):
             by_disc: dict[int, list[tuple[str, int | None, int | None]]] = defaultdict(list)
             for name, t_num, t_tot, d_num in rows:
                 by_disc[int(d_num or 1)].append((name, t_num, t_tot))
-            if any(len(v) > 1 for v in by_disc.values()):
-                for disc_rows in by_disc.values():
-                    warnings.extend(_check_track_gaps(disc_rows, len(entries)))
+            disc_groups = list(by_disc.values())
+            if any(len(v) > 1 for v in disc_groups) and _subgroups_reset_numbering(disc_groups):
+                for disc_rows in disc_groups:
+                    warnings.extend(_check_track_gaps(disc_rows))
                 continue
-        warnings.extend(_check_track_gaps([(r[0], r[1], r[2]) for r in rows], len(entries)))
+        warnings.extend(_check_track_gaps([(r[0], r[1], r[2]) for r in rows]))
     return list(dict.fromkeys(warnings))
 
 
