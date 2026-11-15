@@ -43,11 +43,11 @@ const MISSING_FILTERS: [string, string][] = [
 function WriteIn({ listenLabel, field, onSave }: { listenLabel: string; field: ConfigField; onSave: (value: string) => void }) {
   const [draft, setDraft] = useState('')
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const flush = (raw: string) => {
+  const flush = (raw: string, clear = false) => {
     if (timer.current) { clearTimeout(timer.current); timer.current = null }
+    if (clear) setDraft('')
     const v = raw.trim()
     if (!v) return
-    setDraft('')
     if (String(field.value ?? '') !== v) onSave(v)
   }
   useEffect(() => {
@@ -61,8 +61,8 @@ function WriteIn({ listenLabel, field, onSave }: { listenLabel: string; field: C
       placeholder={`Write in ${field.label.toLowerCase()}…`}
       value={draft}
       onChange={e => setDraft(e.target.value)}
-      onBlur={() => flush(draft)}
-      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); flush(draft) } }}
+      onBlur={() => flush(draft, true)}
+      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); flush(draft, true) } }}
       className="min-w-36 flex-1"
     />
   )
@@ -232,6 +232,7 @@ export default function LibraryPage() {
   const applySaved = (listenId: number, next: ListenConfig) => {
     setUpdated(u => ({ ...u, [listenId]: next }))
     void qc.invalidateQueries({ queryKey: ['listen-config', listenId] })
+    void qc.invalidateQueries({ queryKey: ['library-listens'] })
   }
 
   const onPickField = (listenId: number, field: string, value: string | number | null, source: string) => {

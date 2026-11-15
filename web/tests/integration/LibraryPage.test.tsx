@@ -82,10 +82,13 @@ describe('LibraryPage', () => {
     await user.tab()
     await waitFor(() => expect(configState.picks.at(-1)).toEqual({ field: 'subtitle', value: 'A Novel', source: 'typed' }))
 
-    // Debounce flushes automatically after pausing
+    // Debounce flushes automatically after pausing and keeps the draft intact if the user keeps typing
     const authorInput = within(table).getByLabelText('Write in author for Red Dragon')
-    await user.type(authorInput, 'T. Harris')
-    await waitFor(() => expect(configState.picks.at(-1)).toEqual({ field: 'author', value: 'T. Harris', source: 'typed' }))
+    await user.type(authorInput, 'Thomas')
+    await waitFor(() => expect(configState.picks.at(-1)).toEqual({ field: 'author', value: 'Thomas', source: 'typed' }))
+    expect(authorInput).toHaveValue('Thomas')
+    await user.type(authorInput, ' Harris')
+    await waitFor(() => expect(configState.picks.at(-1)).toEqual({ field: 'author', value: 'Thomas Harris', source: 'typed' }))
   })
 
   it('surfaces errors when saving a field or column fails', async () => {
