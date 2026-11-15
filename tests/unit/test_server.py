@@ -487,6 +487,21 @@ def test_queued_and_failed_cover_searches_show_with_the_other_operations(client,
     assert row["state"] == "failed" and row["title"] == "search covers: Glass Orchard" and row["error"] == "no network"
 
 
+def test_queued_and_failed_export_jobs_show_with_the_other_operations(client, monkeypatch):
+    from app.covers import api as covers_api
+
+    monkeypatch.setattr(covers_api, "labels", lambda ids: {8: "Red Dragon"})
+    jobs = client.app.state.jobs
+    jobs.submit("listens", "export", listen_id=8, noise_reduction=True)
+    view = client.get("/api/operations").json()
+    row = next(r for r in view["rows"] if r["stage"] == "Export MP3s")
+    assert row["title"] == "Export MP3s (noise reduction): Red Dragon" and row["state"] == "queued" and view["busy"]
+    jobs.handler = lambda *a: (_ for _ in ()).throw(ValueError("ffmpeg failed"))
+    jobs.run_one()
+    row = next(r for r in client.get("/api/operations").json()["rows"] if r.get("job_id"))
+    assert row["state"] == "failed" and row["title"] == "Export MP3s: Red Dragon" and row["error"] == "ffmpeg failed"
+
+
 def test_filegroups_scan_only_accepts_listed_folders(client, tmp_path, monkeypatch):
     from app import settings
 

@@ -680,3 +680,151 @@ def test_input_paths_rejects_incomplete_tracked_files_and_parts(s, tmp_path):
     )
     s.flush()
     assert C.listen_mtimes(s, [deep_listen.id])[deep_listen.id] == pytest.approx(1.0)
+
+
+def test_source_warnings_flags_missing_files_and_track_gaps(s, tmp_path):
+    from app.store.models import (
+        PartFile,
+        PartFilegroup,
+        PartFilegroupMember,
+        PartFileLocation,
+        Run,
+    )
+
+    run_row = Run(id="c" * 32, kind="group_folders", outcome="done")
+    s.add(run_row)
+    s.flush()
+
+    def _make_listen(name: str, files: list[tuple[str, dict | None, bool]]) -> L.Listen:
+        folder = tmp_path / name
+        folder.mkdir(parents=True)
+        fg = PartFilegroup(
+            run_id=run_row.id, kind="book", label=name, path=str(folder), file_count=len(files), total_bytes=10
+        )
+        s.add(fg)
+        s.flush()
+        for idx, (fname, tags, exists_on_disk) in enumerate(files, 1):
+            fpath = folder / fname
+            if exists_on_disk:
+                fpath.write_bytes(b"ID3")
+            pf = PartFile(
+                sha256=(f"{name}-{idx}".encode().ljust(32, b"x"))[:32],
+                size=3,
+                duration_s=60.0,
+                codec="mp3",
+                channels=1,
+                sample_rate=44100,
+                bit_rate=64000,
+                probe={"format": {"tags": tags}} if tags is not None else None,
+            )
+            s.add(pf)
+            s.flush()
+            s.add(PartFileLocation(file_id=pf.id, path=str(fpath), size=3, mtime_ns=1_000_000_000))
+            s.add(PartFilegroupMember(group_id=fg.id, ordinal=idx, file_id=pf.id))
+        listen = L.create_listen(s, "book")
+        listen.label = name
+        L.link(
+            s,
+            listen,
+            "input",
+            filegroup_id=fg.id,
+            ordinal=1,
+            actor_kind="rule",
+            detail=dict(path=str(folder), files=len(files), minutes=len(files), relation="copy"),
+        )
+        s.flush()
+        return listen
+
+    # 1. Missing track via N/total tag and missing file on disk
+    l_tag_gap = _make_listen(
+        "tag_gap",
+        [
+            ("01.mp3", {"track": "1/3"}, True),
+            ("02.mp3", {"track": "2/3"}, False),
+        ],
+    )
+    assert C.source_warnings(s, l_tag_gap) == [
+        "Source audio files are missing or incomplete on disk",
+        "Missing track 3 (2 files, expected 3)",
+    ]
+
+    # 2. Gap in filename numbering when tags are absent
+    l_fn_gap = _make_listen(
+        "fn_gap",
+        [
+            ("01 - Intro.mp3", None, True),
+            ("03 - Chapter 2.mp3", None, True),
+        ],
+    )
+    assert C.source_warnings(s, l_fn_gap) == ["Missing track 2 (2 files, expected 3)"]
+
+    # 3. Contiguous leading track numbers even when a title contains unrelated digits
+    l_clean = _make_listen(
+        "clean",
+        [
+            ("01 - First.mp3", None, True),
+            ("02 - 010 1 212 456 1414.mp3", None, True),
+        ],
+    )
+    assert C.source_warnings(s, l_clean) == []
+
+    # 4. Per-disc explicit totals are preserved even when disc total equals total listen files
+    l_disc_tot = _make_listen(
+        "disc_tot",
+        [
+            ("d1-01.mp3", {"track": "1/3", "disc": "1"}, True),
+            ("d2-01.mp3", {"track": "1/2", "disc": "2"}, True),
+            ("d2-02.mp3", {"track": "2/2", "disc": "2"}, True),
+        ],
+    )
+    assert C.source_warnings(s, l_disc_tot) == ["Missing tracks 2, 3 (1 file, expected 3)"]
+
+    # 5. Continuous track numbering across child folders is checked as one sequence
+    book_folder = tmp_path / "split_folders"
+    cd1_dir = book_folder / "CD1"
+    cd2_dir = book_folder / "CD2"
+    cd1_dir.mkdir(parents=True)
+    cd2_dir.mkdir(parents=True)
+    cd1_fg = PartFilegroup(run_id=run_row.id, kind="disc", label="CD1", path=str(cd1_dir), file_count=2, total_bytes=6)
+    cd2_fg = PartFilegroup(run_id=run_row.id, kind="disc", label="CD2", path=str(cd2_dir), file_count=2, total_bytes=6)
+    parent_fg = PartFilegroup(
+        run_id=run_row.id, kind="book", label="Split", path=str(book_folder), file_count=4, total_bytes=12
+    )
+    s.add_all([cd1_fg, cd2_fg, parent_fg])
+    s.flush()
+    for grp, folder, names in [(cd1_fg, cd1_dir, ["01.mp3", "02.mp3"]), (cd2_fg, cd2_dir, ["03.mp3", "04.mp3"])]:
+        for idx, fname in enumerate(names, 1):
+            fpath = folder / fname
+            fpath.write_bytes(b"ID3")
+            pf = PartFile(
+                sha256=(f"sf-{folder.name}-{idx}".encode().ljust(32, b"x"))[:32],
+                size=3,
+                duration_s=60.0,
+                codec="mp3",
+                channels=1,
+                sample_rate=44100,
+                bit_rate=64000,
+            )
+            s.add(pf)
+            s.flush()
+            s.add(PartFileLocation(file_id=pf.id, path=str(fpath), size=3, mtime_ns=1_000_000_000))
+            s.add(PartFilegroupMember(group_id=grp.id, ordinal=idx, file_id=pf.id))
+    s.add_all(
+        [
+            PartFilegroupMember(group_id=parent_fg.id, ordinal=1, child_group_id=cd1_fg.id),
+            PartFilegroupMember(group_id=parent_fg.id, ordinal=2, child_group_id=cd2_fg.id),
+        ]
+    )
+    l_split = L.create_listen(s, "book")
+    l_split.label = "Split Folders"
+    L.link(
+        s,
+        l_split,
+        "input",
+        filegroup_id=parent_fg.id,
+        ordinal=1,
+        actor_kind="rule",
+        detail=dict(path=str(book_folder), files=4, minutes=4, relation="copy"),
+    )
+    s.flush()
+    assert C.source_warnings(s, l_split) == []

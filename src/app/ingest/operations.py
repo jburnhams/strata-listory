@@ -21,6 +21,7 @@ def job_title(kind, options):
         "listens_build": "Build listens from new folders",
         "identify": "Identify new listens",
         "bbc_details": "Fetch BBC programme details",
+        "export": "Export MP3s",
     }.get(kind)
 
 

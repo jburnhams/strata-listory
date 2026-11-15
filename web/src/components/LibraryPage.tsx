@@ -139,6 +139,17 @@ function LibraryCard({
 
       {error && <p role="alert" className="type-body-sm text-danger">{error}</p>}
 
+      {(item.source_warnings?.length ?? 0) > 0 && (
+        <div
+          role="alert"
+          aria-label={`Source warnings for ${item.label}`}
+          className="flex flex-wrap items-center gap-2 rounded-control border border-warning/40 bg-warning/10 px-3 py-2 type-body-sm"
+        >
+          <Status tone="warning">Missing / gap</Status>
+          <span>{item.source_warnings!.join(' · ')}</span>
+        </div>
+      )}
+
       <button
         type="button"
         aria-expanded={showTable}
@@ -264,9 +275,12 @@ function LibraryCard({
               {busy ? 'Exporting…' : chapters.length ? 'Re-export MP3s' : 'Export MP3s'}
             </Button>
             {busy && (
-              <Status tone="info">
-                {job?.state === 'running' ? (job.progress?.current || 'Exporting MP3s…') : 'Export queued'}
-              </Status>
+              <>
+                <Status tone="info">
+                  {job?.state === 'running' ? (job.progress?.current || 'Exporting MP3s…') : 'Export queued'}
+                </Status>
+                <Link className="underline type-caption text-muted-foreground" to="/process">View in Processing</Link>
+              </>
             )}
             {chapters.length > 0 && (
               <Status tone="success">

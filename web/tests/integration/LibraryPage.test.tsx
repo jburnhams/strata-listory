@@ -289,4 +289,16 @@ describe('LibraryPage', () => {
     await user.click(within(exportSec).getByRole('button', { name: 'Re-export MP3s' }))
     expect(await within(exportSec).findByRole('alert')).toHaveTextContent('ffmpeg exited with status 1')
   })
+
+  it('displays source warnings for missing files or track gaps in advance of export', async () => {
+    configState.library[0] = {
+      ...configState.library[0],
+      source_warnings: ['Missing track 31 (30 files, expected 31)'],
+    }
+    setup(<LibraryPage />, { route: '/library' })
+    const dragon = await screen.findByRole('article', { name: 'Red Dragon' })
+    const warn = within(dragon).getByRole('alert', { name: 'Source warnings for Red Dragon' })
+    expect(warn).toHaveTextContent('Missing / gap')
+    expect(warn).toHaveTextContent('Missing track 31 (30 files, expected 31)')
+  })
 })
