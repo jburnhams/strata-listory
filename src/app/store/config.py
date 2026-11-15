@@ -431,13 +431,46 @@ def listen_mtimes(s: Session, ids: list[int] | None = None) -> dict[int, float]:
     return {int(lid): float(ns) / 1e9 for lid, ns in s.execute(stmt) if ns is not None}
 
 
-def input_paths(s: Session, listen: Listen) -> tuple[str, list[str]]:
-    """The source folder and ordered audio file paths for a listen."""
+def _resolve_part_files(s: Session, part: ListenPart) -> list[str] | None:
+    """Resolve the complete ordered audio file paths for one input ListenPart, or None if any expected file is unavailable on disk."""
     import os
 
     from app import details
     from app.process import probe
 
+    entries: list[tuple[int, str | None]] = []
+    if part.filegroup_id:
+        entries.extend(_group_files(s, part.filegroup_id))
+    elif part.file_id:
+        entries.append((part.file_id, None))
+    if entries:
+        fids = [fid for fid, _ in entries]
+        locs: dict[int, list[str]] = {}
+        for fid, path in s.execute(
+            select(PartFileLocation.file_id, PartFileLocation.path)
+            .where(PartFileLocation.file_id.in_(fids), PartFileLocation.gone_at.is_(None))
+            .order_by(PartFileLocation.id.desc())
+        ):
+            if os.path.isfile(path):
+                locs.setdefault(fid, []).append(path)
+        resolved: list[str] = []
+        for fid, gpath in entries:
+            cands = locs.get(fid, [])
+            picked = next((p for p in cands if gpath and os.path.dirname(p) == gpath), cands[0] if cands else "")
+            if not picked:
+                return None
+            resolved.append(picked)
+        return resolved
+    part_folder = str((part.detail or {}).get("path") or "")
+    if part_folder and os.path.isdir(part_folder):
+        found = [p for p in sorted(details.audio_files(part_folder), key=probe.natural_key) if os.path.isfile(p)]
+        if found:
+            return found
+    return None
+
+
+def input_paths(s: Session, listen: Listen) -> tuple[str, list[str]]:
+    """The source folder and complete ordered audio file paths for a listen (empty list if any required track or part is unavailable on disk)."""
     inputs = list(
         s.scalars(
             select(ListenPart)
@@ -446,30 +479,22 @@ def input_paths(s: Session, listen: Listen) -> tuple[str, list[str]]:
         )
     )
     parts = [p for p in inputs if (p.detail or {}).get("relation") == "part"]
-    selected = parts if parts else inputs[:1]
-    folder = str((selected[0].detail or {}).get("path") or "") if selected else ""
-    file_entries: list[tuple[int, str | None]] = []
-    for p in selected:
-        if p.filegroup_id:
-            file_entries.extend(_group_files(s, p.filegroup_id))
-    paths: list[str] = []
-    if file_entries:
-        fids = [fid for fid, _ in file_entries]
-        locs: dict[int, list[str]] = {}
-        for fid, path in s.execute(
-            select(PartFileLocation.file_id, PartFileLocation.path)
-            .where(PartFileLocation.file_id.in_(fids), PartFileLocation.gone_at.is_(None))
-            .order_by(PartFileLocation.id.desc())
-        ):
-            locs.setdefault(fid, []).append(path)
-        for fid, gpath in file_entries:
-            cands = locs.get(fid, [])
-            picked = next((p for p in cands if gpath and os.path.dirname(p) == gpath), cands[0] if cands else "")
-            if picked and os.path.isfile(picked):
-                paths.append(picked)
-    if not paths and folder and os.path.isdir(folder):
-        paths = [p for p in sorted(details.audio_files(folder), key=probe.natural_key) if os.path.isfile(p)]
-    return folder, paths
+    if parts:
+        folder = str((parts[0].detail or {}).get("path") or "")
+        paths: list[str] = []
+        for p in parts:
+            part_paths = _resolve_part_files(s, p)
+            if not part_paths:
+                return folder, []
+            paths.extend(part_paths)
+        return folder, paths
+    for p in inputs:
+        folder = str((p.detail or {}).get("path") or "")
+        part_paths = _resolve_part_files(s, p)
+        if part_paths:
+            return folder, part_paths
+    folder = str((inputs[0].detail or {}).get("path") or "") if inputs else ""
+    return folder, []
 
 
 def selected_metadata(s: Session, listen: Listen, cur: dict[str, ListenChoice] | None = None) -> dict[str, Any]:
@@ -545,6 +570,62 @@ def _export_job_info(listen_id: int, jobs=None) -> dict[str, Any] | None:
     return None
 
 
+def _out_dir_belongs_to(
+    s: Session,
+    listen: Listen,
+    cand: str,
+    cur: dict[str, ListenChoice] | None = None,
+) -> bool:
+    """Whether an existing output folder on disk belongs to `listen`."""
+    import json
+    import os
+
+    meta_file = os.path.join(cand, "metadata.json")
+    if not os.path.isfile(meta_file):
+        return False
+    try:
+        with open(meta_file, encoding="utf8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return False
+    book_meta = data.get("book") if isinstance(data, dict) else None
+    if not isinstance(book_meta, dict):
+        return False
+    if book_meta.get("listen_id") is not None:
+        try:
+            return int(book_meta["listen_id"]) == listen.id
+        except (TypeError, ValueError):
+            return False
+    other = s.scalar(
+        select(ListenChoice.listen_id).where(
+            ListenChoice.field == "output",
+            ListenChoice.is_current.is_(True),
+            ListenChoice.listen_id != listen.id,
+            ListenChoice.value["out_dir"].astext == cand,
+        )
+    )
+    if other is not None:
+        return False
+    out_c = (cur or {}).get("output")
+    if out_c and isinstance(out_c.value, dict) and out_c.value.get("out_dir") == cand:
+        return True
+    book_path = str(book_meta.get("path") or "")
+    if book_path:
+        input_folders = {
+            str((p.detail or {}).get("path") or "")
+            for p in s.scalars(
+                select(ListenPart).where(
+                    ListenPart.listen_id == listen.id,
+                    ListenPart.role == "input",
+                    ListenPart.unlinked_at.is_(None),
+                )
+            )
+            if (p.detail or {}).get("path")
+        }
+        return book_path in input_folders
+    return True
+
+
 def output_status(
     s: Session,
     listen: Listen,
@@ -565,7 +646,7 @@ def output_status(
     out_c = cur.get("output")
     if out_c and isinstance(out_c.value, dict) and out_c.value.get("out_dir"):
         cand = str(out_c.value["out_dir"])
-        if os.path.isfile(os.path.join(cand, "metadata.json")):
+        if _out_dir_belongs_to(s, listen, cand, cur):
             out_dir = cand
     if out_dir is None:
         meta = selected_metadata(s, listen, cur)
@@ -575,7 +656,7 @@ def output_status(
                 final_dir or settings.final_dir(),
                 meta["year"],
             )
-            if os.path.isfile(os.path.join(cand, "metadata.json")):
+            if _out_dir_belongs_to(s, listen, cand, cur):
                 out_dir = cand
     job = _export_job_info(listen.id, jobs)
     chapters: list[dict[str, Any]] = []
@@ -704,7 +785,22 @@ def export_listen(
             device="configured",
             level="gated rolling RMS ±3 dB",
         )
-    summary = R.execute(book, plan, force=True)
+    out_dir = plan["out_dir"]
+    if os.path.exists(out_dir) and not _out_dir_belongs_to(s, listen, out_dir, cur):
+        cands = []
+        if meta["narrator"]:
+            cands.append(f"{out_dir} ({P.clean_name(meta['narrator'])})")
+        cands.append(f"{out_dir} (listen {listen.id})")
+        picked_dir = next(
+            (c for c in cands if not os.path.exists(c) or _out_dir_belongs_to(s, listen, c, cur)),
+            None,
+        )
+        if picked_dir is None:
+            raise ValueError(f"output folder {out_dir} already belongs to another listen")
+        out_dir = picked_dir
+        plan["out_dir"] = out_dir
+    owns_existing = os.path.exists(out_dir) and _out_dir_belongs_to(s, listen, out_dir, cur)
+    summary = R.execute(book, plan, force=owns_existing)
     L.choose(
         s,
         listen,

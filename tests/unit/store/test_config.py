@@ -522,3 +522,130 @@ def test_export_listen_and_audio_streaming(s, listen, tmp_path, monkeypatch):
     assert C.export_job(listen.id, noise_reduction=False)["status"] == "done"
     with pytest.raises(ValueError, match="no listen"):
         C.export_job(99999)
+
+    # A second listen with the same author/title/year must not claim or overwrite the first listen's output.
+    inbox2 = tmp_path / "inbox" / "Mara Quill - Glass Orchard (Narrator Two)"
+    inbox2.mkdir(parents=True)
+    track2 = inbox2 / "01.mp3"
+    track2.write_bytes(b"ID3-second-recording")
+    pf2 = PartFile(
+        sha256=b"y" * 32, size=20, duration_s=120.0, codec="mp3", channels=1, sample_rate=44100, bit_rate=64000
+    )
+    s.add(pf2)
+    s.flush()
+    s.add(PartFileLocation(file_id=pf2.id, path=str(track2), size=20, mtime_ns=2))
+    listen2 = L.create_listen(s, "book")
+    listen2.label = "Glass Orchard"
+    L.link(
+        s,
+        listen2,
+        "input",
+        file_id=pf2.id,
+        ordinal=1,
+        actor_kind="rule",
+        detail=dict(path=str(inbox2), files=1, minutes=2, relation="copy"),
+    )
+    C.choose_field(s, listen2, "title", "Glass Orchard")
+    C.choose_field(s, listen2, "author", "Mara Quill")
+    C.choose_field(s, listen2, "year", 2005)
+    C.choose_field(s, listen2, "narrator", "Second Narrator")
+    L.choose(s, listen2, "cover", dict(image_id=img.id, source="audible", width=2000, height=2000), actor_kind="user")
+    s.commit()
+
+    assert C.output_status(s, listen2) is None
+    res2 = C.export_listen(s, listen2)
+    s.commit()
+    out1 = C.output_status(s, listen)
+    out2 = C.output_status(s, listen2)
+    assert out1 is not None and out2 is not None
+    assert res2["out_dir"] != out1["out_dir"]
+    assert "Second Narrator" in res2["out_dir"]
+    assert out1["out_dir"].endswith("[2005] Glass Orchard")
+    assert out2["out_dir"] == res2["out_dir"]
+
+
+def test_input_paths_rejects_incomplete_tracked_files_and_parts(s, tmp_path):
+    from app.store.models import (
+        PartFile,
+        PartFilegroup,
+        PartFilegroupMember,
+        PartFileLocation,
+        Run,
+    )
+
+    inbox = tmp_path / "inbox" / "Incomplete Book"
+    inbox.mkdir(parents=True)
+    present_track = inbox / "01.mp3"
+    present_track.write_bytes(b"ID3-present")
+    missing_track = inbox / "02.mp3"
+
+    run_row = Run(id="b" * 32, kind="group_folders", outcome="done")
+    s.add(run_row)
+    f1 = PartFile(
+        sha256=b"a" * 32, size=11, duration_s=60.0, codec="mp3", channels=1, sample_rate=44100, bit_rate=64000
+    )
+    f2 = PartFile(
+        sha256=b"b" * 32, size=11, duration_s=60.0, codec="mp3", channels=1, sample_rate=44100, bit_rate=64000
+    )
+    s.add_all([f1, f2])
+    s.flush()
+    s.add_all(
+        [
+            PartFileLocation(file_id=f1.id, path=str(present_track), size=11, mtime_ns=1_000_000_000),
+            PartFileLocation(file_id=f2.id, path=str(missing_track), size=11, mtime_ns=1_000_000_000),
+        ]
+    )
+    fg = PartFilegroup(
+        run_id=run_row.id, kind="book", label="Incomplete Book", path=str(inbox), file_count=2, total_bytes=22
+    )
+    s.add(fg)
+    s.flush()
+    s.add_all(
+        [
+            PartFilegroupMember(group_id=fg.id, ordinal=1, file_id=f1.id),
+            PartFilegroupMember(group_id=fg.id, ordinal=2, file_id=f2.id),
+        ]
+    )
+    listen = L.create_listen(s, "book")
+    listen.label = "Incomplete Book"
+    L.link(
+        s,
+        listen,
+        "input",
+        filegroup_id=fg.id,
+        ordinal=1,
+        actor_kind="rule",
+        detail=dict(path=str(inbox), files=2, minutes=2, relation="copy"),
+    )
+    C.choose_field(s, listen, "title", "Incomplete Book")
+    C.choose_field(s, listen, "author", "Author")
+    s.flush()
+
+    _, paths = C.input_paths(s, listen)
+    assert paths == []
+    with pytest.raises(ValueError, match="no source audio files"):
+        C.export_listen(s, listen, final_dir=str(tmp_path / "final"))
+
+    # Multipart listen where part 1 exists on disk and part 2 is missing must also be rejected.
+    mp_listen = L.create_listen(s, "book")
+    mp_listen.label = "Multipart Book"
+    L.link(
+        s,
+        mp_listen,
+        "input",
+        file_id=f1.id,
+        ordinal=1,
+        actor_kind="rule",
+        detail=dict(path=str(inbox), relation="part"),
+    )
+    L.link(
+        s,
+        mp_listen,
+        "input",
+        file_id=f2.id,
+        ordinal=2,
+        actor_kind="rule",
+        detail=dict(path=str(inbox), relation="part"),
+    )
+    s.flush()
+    assert C.input_paths(s, mp_listen)[1] == []
