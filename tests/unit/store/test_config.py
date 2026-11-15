@@ -203,3 +203,88 @@ def test_api_returns_the_configuration_and_saves_a_pick(s, listen, monkeypatch):
         .value
         == 2008
     )
+
+
+def test_sources_columns_and_library_endpoint(s, listen, monkeypatch):
+    from app.linkage import apply
+    from app.store.models import ListenPart
+
+    monkeypatch.setattr(C, "audible_rows", audible)
+    part1 = s.scalars(select(ListenPart).where(ListenPart.listen_id == listen.id, ListenPart.role == "match")).first()
+    apply.decide(s, listen, part1, "approve")
+
+    l2 = L.create_listen(s, "radio_series")
+    l2.label = "Alpha Broadcast"
+    w2 = Work(kind="radio_programme", title="Alpha Broadcast", year=1995)
+    s.add(w2)
+    s.flush()
+    part2 = L.link(s, l2, "match", work_id=w2.id, state="candidate", actor_kind="model")
+    apply.decide(s, l2, part2, "approve")
+    L.choose(s, l2, "title", "Alpha Broadcast", actor_kind="rule")
+    L.choose(s, l2, "author", "Alice", actor_kind="rule")
+    L.choose(s, l2, "year", 1995, actor_kind="rule")
+    L.choose(s, listen, "cover", dict(image_id=10, width=1000, height=1000), actor_kind="user")
+    L.choose(s, l2, "cover", dict(image_id=11, width=800, height=800), actor_kind="user")
+
+    # Confirmed match without a cover -> counted in without_cover, not in library rows
+    l3 = L.create_listen(s, "book")
+    l3.label = "No Cover Yet"
+    part3 = L.link(s, l3, "match", work_id=w2.id, state="candidate", actor_kind="model")
+    apply.decide(s, l3, part3, "approve")
+
+    # Model-accepted match (not user-confirmed) even with a cover -> excluded from library
+    l4 = L.create_listen(s, "book")
+    l4.label = "Auto Accepted Only"
+    L.link(s, l4, "match", work_id=w2.id, state="accepted", actor_kind="model")
+    L.choose(s, l4, "cover", dict(image_id=12, width=800, height=800), actor_kind="user")
+    s.commit()
+
+    app = FastAPI()
+    app.include_router(store_api.listens_router)
+    app.dependency_overrides[store_api.get_session] = lambda: s
+    client = TestClient(app)
+
+    lib = client.get("/api/listens/library").json()
+    assert lib["all_total"] == 2 and lib["total"] == 2 and lib["without_cover"] == 1
+    assert [r["label"] for r in lib["rows"]] == ["Alpha Broadcast", "Glass Orchard"]
+    go = lib["rows"][1]
+    assert [src["id"] for src in go["sources"]] == ["original", "audible:B0A", "audible:B0B", "openlibrary"]
+    assert go["sources"][0]["used"] is True and go["sources"][0]["used_fields"] == ["title"]
+    assert go["sources"][1]["used"] is False
+
+    # Clicking the Audible B0A column applies its values and highlights it
+    aud_values = {k: v for k, v in go["sources"][1]["values"].items() if v is not None}
+    updated = client.post(
+        f"/api/listens/{listen.id}/config", json=dict(values=aud_values, source="Audible UK · B0A")
+    ).json()
+    by_src = {src["id"]: src for src in updated["sources"]}
+    assert by_src["audible:B0A"]["used"] is True
+    assert "title" in by_src["audible:B0A"]["used_fields"] and "narrator" in by_src["audible:B0A"]["used_fields"]
+    assert by_src["openlibrary"]["used"] is True and "title" in by_src["openlibrary"]["used_fields"]
+
+    assert client.post("/api/listens/9999/config", json=dict(values=dict(title="x"))).status_code == 404
+    assert client.post(f"/api/listens/{listen.id}/config", json=dict(values=dict(year="bad"))).status_code == 400
+
+    # Search, filters, sorting and pagination
+    assert client.get("/api/listens/library?q=orchard").json()["total"] == 1
+    assert client.get("/api/listens/library?kind=radio_series").json()["total"] == 1
+    assert client.get("/api/listens/library?missing=narrator").json()["total"] == 1
+    assert client.get("/api/listens/library?missing=edited").json()["total"] == 1
+    assert client.get("/api/listens/library?missing=unedited").json()["total"] == 1
+    assert [r["listen_id"] for r in client.get("/api/listens/library?sort=title-desc").json()["rows"]] == [
+        listen.id,
+        l2.id,
+    ]
+    assert [r["listen_id"] for r in client.get("/api/listens/library?sort=year-asc").json()["rows"]] == [
+        l2.id,
+        listen.id,
+    ]
+    assert [r["listen_id"] for r in client.get("/api/listens/library?sort=year-desc").json()["rows"]] == [
+        listen.id,
+        l2.id,
+    ]
+    assert [r["listen_id"] for r in client.get("/api/listens/library?sort=author").json()["rows"]] == [
+        l2.id,
+        listen.id,
+    ]
+    assert len(client.get("/api/listens/library?limit=1&offset=1").json()["rows"]) == 1

@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
 import { ZoomIn } from 'lucide-react'
-import { AsyncButton, Button, DataView, Disclosure, EmptyState, Field, IconButton, Input, Lightbox, PageHeader, Skeleton, Status, Tabs, format, useAsyncAction, useJob, type Tone } from 'strata-react'
-import { api, coverApi, type CoverJob, type CoverMatch, type CoverRecording, type CoverFiles, type CoverPicture, type CoverRow, type CoverStatus } from '../api'
+import { AsyncButton, Button, DataView, Disclosure, EmptyState, Field, IconButton, Input, Lightbox, NativeSelect, PageHeader, Skeleton, Status, Tabs, format, useAsyncAction, useJob, type Tone } from 'strata-react'
+import { api, coverApi, type CoverJob, type CoverMatch, type CoverRecording, type CoverFiles, type CoverPicture, type CoverRow, type CoverSort, type CoverStatus } from '../api'
 import { size } from './FilesPage'
 import { hours } from './ListensPage'
 
@@ -212,9 +212,18 @@ function Card({ row, onPick, onBack, onChanged }: { row: CoverRow; onPick: (row:
   )
 }
 
+const COVER_SORTS: [CoverSort, string][] = [
+  ['recent', 'Newest search first'],
+  ['oldest', 'Oldest search first'],
+  ['title', 'Title (A–Z)'],
+  ['title-desc', 'Title (Z–A)'],
+  ['most-covers', 'Most covers found'],
+  ['fewest-covers', 'Fewest covers found'],
+]
+
 export default function CoversPage({ pollMs = 2000 }: { pollMs?: number }) {
   const [params, setParams] = useSearchParams()
-  const state = params.get('state') ?? 'choose', q = params.get('q') ?? ''
+  const state = params.get('state') ?? 'choose', q = params.get('q') ?? '', sort = (params.get('sort') ?? 'recent') as CoverSort
   const [typed, setTyped] = useState(q)
   useEffect(() => { setTyped(q) }, [q])
   useEffect(() => {
@@ -222,7 +231,7 @@ export default function CoversPage({ pollMs = 2000 }: { pollMs?: number }) {
     const t = setTimeout(() => setParams(p => { const n = new URLSearchParams(p); if (typed.trim()) n.set('q', typed.trim()); else n.delete('q'); return n }, { replace: true }), 250)
     return () => clearTimeout(t)
   }, [typed]) // eslint-disable-line react-hooks/exhaustive-deps
-  const load = useJob({ queryKey: ['covers', state, q], queryFn: () => coverApi.list(state === 'all' ? '' : state, q), staleTime: 0, every: pollMs, isRunning: x => x.job.running })   // polled while a search runs: the page fills as each listen is finished
+  const load = useJob({ queryKey: ['covers', state, q, sort], queryFn: () => coverApi.list(state === 'all' ? '' : state, q, sort), staleTime: 0, every: pollMs, isRunning: x => x.job.running })   // polled while a search runs: the page fills as each listen is finished
   const reload = load.poll
   const start = useAsyncAction(async () => { await coverApi.run(); reload() }, { settleMs: 800 })
   // a choice shows at once and the write follows in the background: the page answers from what was clicked, never from a refetch of the whole list
@@ -270,9 +279,16 @@ export default function CoversPage({ pollMs = 2000 }: { pollMs?: number }) {
         {d?.job.failed.map(f => <FailedSearch key={f.job_id} f={f} />)}
         <span className="type-caption text-muted-foreground">Looks for every confirmed or accepted book without a chosen cover that has not been searched since it last changed. Each search is a job on the queue, run one at a time with the other jobs. From a shell: <code>./app covers --queue</code>.</span>
       </section>
-      <Field label="Search covers" hint="Every word must appear in the title">
-        <Input type="search" value={typed} onChange={e => setTyped(e.target.value)} placeholder="e.g. glass orchard" />
-      </Field>
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Search covers" hint="Every word must appear in the title" className="min-w-64 flex-1">
+          <Input type="search" value={typed} onChange={e => setTyped(e.target.value)} placeholder="e.g. glass orchard" />
+        </Field>
+        <Field label="Sort by">
+          <NativeSelect value={sort} onChange={e => setParams(p => { const n = new URLSearchParams(p); if (e.target.value && e.target.value !== 'recent') n.set('sort', e.target.value); else n.delete('sort'); return n }, { replace: true })}>
+            {COVER_SORTS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+          </NativeSelect>
+        </Field>
+      </div>
       <Tabs param="state" label="Cover state" items={[{ value: '', label: `To choose${d ? ` (${counts.choose})` : ''}` }, { value: 'chosen', label: `Chosen${d ? ` (${counts.chosen})` : ''}` }, { value: 'none', label: `None found${d ? ` (${counts.none})` : ''}` }, { value: 'all', label: 'All searched' }]}>
         {() => (
           <DataView state={load} isEmpty={x => x.rows.length === 0} skeleton={<div className="space-y-3">{[0, 1].map(i => <Skeleton key={i} className="h-48 w-full" />)}</div>}
