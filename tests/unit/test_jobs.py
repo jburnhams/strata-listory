@@ -627,12 +627,25 @@ def test_a_failed_job_can_be_cleared_and_the_same_work_submitted_again():
 
 
 def test_retry_failed_requeues_all_failed_jobs_beyond_the_page_limit_and_skips_cleared():
-    q = JobQueue(lambda *args: (_ for _ in ()).throw(ValueError("boom")), workers=1)
+    from app import catalogue
+    from app.ingest import store
+
+    book = catalogue.add_book(title="Parent")
+
+    def handle(domain, kind, options):
+        if domain == "ingest" and kind == "run":
+            rid = store.create(book["id"], {})
+            q.submit("ingest", "continue", run_id=rid)
+        raise ValueError("boom")
+
+    q = JobQueue(handle, workers=1)
     ids = [q.submit("covers", "search", listen_id=i) for i in range(30)]
+    q.submit("ingest", "run", ids=[book["id"]])
     while q.run_one():
         pass
     q.dismiss(ids[0])
     assert len(q.failures()) == 25
     retried = q.retry_failed()
-    assert len(retried) == 29 and q.failures() == []
+    assert len(retried) == 30 and q.failures() == []
     assert [t["options"]["listen_id"] for t in q.tasks("covers")] == list(range(1, 30))
+    assert [(t["kind"], t["options"]) for t in q.tasks("ingest")] == [("run", dict(ids=[book["id"]], limit=1))]

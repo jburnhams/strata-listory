@@ -147,7 +147,7 @@ class JobQueue:
             candidates = [
                 r[0]
                 for r in c.execute(
-                    "SELECT j.id FROM jobs j WHERE j.state='failed' AND NOT EXISTS (SELECT 1 FROM job_work r WHERE r.kind IN ('retry','dismissed') AND r.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created) ORDER BY j.finished,j.id"
+                    "SELECT j.id FROM jobs j WHERE j.state='failed' AND NOT EXISTS (SELECT 1 FROM job_work r WHERE r.kind IN ('retry','dismissed') AND r.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs newer WHERE newer.dedupe=j.dedupe AND newer.created>j.created) ORDER BY j.error LIKE 'previous job failed: %',j.finished,j.id"
                 )
             ]
         finally:
@@ -165,7 +165,8 @@ class JobQueue:
         try:
             with c:
                 row = c.execute(
-                    "SELECT domain,kind,options FROM jobs WHERE id=? AND state='failed'", (ident,)
+                    "SELECT domain,kind,options FROM jobs WHERE id=? AND state='failed' AND NOT EXISTS (SELECT 1 FROM job_work WHERE kind IN ('retry','dismissed') AND owner=?)",
+                    (ident, ident),
                 ).fetchone()
                 if row is None:
                     raise ValueError("only failed jobs can be retried")
@@ -203,6 +204,10 @@ class JobQueue:
                         c.execute(f"DELETE FROM process_plan WHERE {owned}", (ident,))
                 retried = self._submit(row["domain"], kind, True, options, connection=c)
                 c.execute("INSERT OR REPLACE INTO job_work VALUES ('retry',?,?)", (ident, retried))
+                c.execute(
+                    "INSERT OR REPLACE INTO job_work(kind,owner,job_id) SELECT 'retry',id,? FROM jobs WHERE state='failed' AND domain='ingest' AND kind IN ('continue','restore') AND error LIKE 'previous job failed: %' AND json_extract(options,'$.run_id') IN (SELECT owner FROM job_work WHERE job_id=? AND kind='ingest')",
+                    (retried, ident),
+                )
                 return retried
         finally:
             c.close()
