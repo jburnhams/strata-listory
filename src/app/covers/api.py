@@ -224,6 +224,18 @@ def covers(
     ]
     if sort == "oldest":
         ids = sorted(filtered, key=lambda lid: (runs[lid].finished_at, lid))
+    elif sort == "added-recent":
+        ids = sorted(filtered, key=lambda lid: (listens[lid].created_at, lid), reverse=True)
+    elif sort == "added-oldest":
+        ids = sorted(filtered, key=lambda lid: (listens[lid].created_at, lid))
+    elif sort in ("file-recent", "file-oldest"):
+        from app.store import config as store_config
+
+        mtimes = store_config.listen_mtimes(s, filtered)
+        if sort == "file-recent":
+            ids = sorted(filtered, key=lambda lid: (mtimes.get(lid) is None, -(mtimes.get(lid) or 0.0), -lid))
+        else:
+            ids = sorted(filtered, key=lambda lid: (mtimes.get(lid) is None, mtimes.get(lid) or 0.0, lid))
     elif sort == "title":
         ids = sorted(filtered, key=lambda lid: (listens[lid].label.lower(), lid))
     elif sort == "title-desc":

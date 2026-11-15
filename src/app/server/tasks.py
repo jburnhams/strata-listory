@@ -80,6 +80,11 @@ def _execute(jobs, domain, kind, options):
             from app.covers import run as covers
 
             return covers.search_job(options["listen_id"])
+    if domain == "listens":
+        if kind == "export":
+            from app.store import config as store_config
+
+            return store_config.export_job(options["listen_id"], noise_reduction=bool(options.get("noise_reduction")))
     if domain == "system":
         if kind == "bootstrap":
             return bootstrap()

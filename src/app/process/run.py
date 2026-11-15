@@ -169,7 +169,7 @@ def execute(book: dict, plan: dict, force: bool = False) -> dict:
     shutil.rmtree(partial, ignore_errors=True)
     os.makedirs(partial)
     try:
-        cover_src = details.cover(book)
+        cover_src = book.get("cover_path") or (details.cover(book) if book.get("path") else None)
         small = _cover_small(cover_src, partial)
         retries = 0
         if plan.get("enhancement", {}).get("method") == "diamond-pause-level-v1":
@@ -271,10 +271,11 @@ def execute(book: dict, plan: dict, force: bool = False) -> dict:
         else:
             os.makedirs(os.path.dirname(out_dir), exist_ok=True)
             os.replace(partial, out_dir)
-        from app import read_models
+        if not book.get("is_listen"):
+            from app import read_models
 
-        with open(os.path.join(out_dir, "metadata.json"), encoding="utf8") as f:
-            read_models.save("output", book["id"], json.load(f))
+            with open(os.path.join(out_dir, "metadata.json"), encoding="utf8") as f:
+                read_models.save("output", book["id"], json.load(f))
         return summary
     except BaseException:
         shutil.rmtree(partial, ignore_errors=True)

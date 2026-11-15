@@ -11,7 +11,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.store import listens as L
-from app.store.models import Listen, ListenChoice, ListenPart, PartRecord, Work, WorkIdentifier
+from app.store.models import (
+    CoverImage,
+    Listen,
+    ListenChoice,
+    ListenPart,
+    PartFilegroup,
+    PartFilegroupMember,
+    PartFileLocation,
+    PartRecord,
+    Work,
+    WorkIdentifier,
+)
 
 FIELDS = (
     "title",
@@ -356,3 +367,373 @@ def choose_fields(
     """Apply several field choices at once (such as clicking a source column on the Library page)."""
     for field, value in values.items():
         choose_field(s, listen, field, value, source=source, actor_ref=actor_ref)
+
+
+def _group_files(s: Session, group_id: int) -> list[tuple[int, str | None]]:
+    """Ordered (file_id, group_path) pairs inside a filegroup and its child groups."""
+    grp = s.get(PartFilegroup, group_id)
+    gpath = grp.path if grp else None
+    out: list[tuple[int, str | None]] = []
+    for m in s.scalars(
+        select(PartFilegroupMember)
+        .where(PartFilegroupMember.group_id == group_id)
+        .order_by(PartFilegroupMember.ordinal)
+    ):
+        if m.file_id:
+            out.append((m.file_id, gpath))
+        elif m.child_group_id:
+            out.extend(_group_files(s, m.child_group_id))
+    return out
+
+
+def listen_mtimes(s: Session, ids: list[int] | None = None) -> dict[int, float]:
+    """Original source file last-modified timestamp (epoch seconds) for each listen.
+    Uses the earliest mtime observed for each file across locations (so a copy synced without preserving mtime does not mask the original source mtime), the latest track within each input part, and the earliest copy when a listen has multiple alternative copies."""
+    from sqlalchemy import func
+    from sqlalchemy.orm import aliased
+
+    if ids is not None and not ids:
+        return {}
+    m1 = aliased(PartFilegroupMember)
+    m2 = aliased(PartFilegroupMember)
+    fid = func.coalesce(ListenPart.file_id, m1.file_id, m2.file_id)
+    file_mtime = (
+        select(
+            ListenPart.listen_id.label("listen_id"),
+            ListenPart.id.label("part_id"),
+            func.coalesce(ListenPart.detail["relation"].astext, "copy").label("rel"),
+            func.min(PartFileLocation.mtime_ns).label("mtime_ns"),
+        )
+        .outerjoin(m1, m1.group_id == ListenPart.filegroup_id)
+        .outerjoin(m2, m2.group_id == m1.child_group_id)
+        .join(PartFileLocation, PartFileLocation.file_id == fid)
+        .where(ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+    )
+    if ids is not None:
+        file_mtime = file_mtime.where(ListenPart.listen_id.in_(ids))
+    file_mtime_sq = file_mtime.group_by(ListenPart.listen_id, ListenPart.id, fid).subquery()
+    part_mtime_sq = (
+        select(
+            file_mtime_sq.c.listen_id,
+            file_mtime_sq.c.rel,
+            func.max(file_mtime_sq.c.mtime_ns).label("mtime_ns"),
+        )
+        .group_by(file_mtime_sq.c.listen_id, file_mtime_sq.c.part_id, file_mtime_sq.c.rel)
+        .subquery()
+    )
+    stmt = select(
+        part_mtime_sq.c.listen_id,
+        func.coalesce(
+            func.max(part_mtime_sq.c.mtime_ns).filter(part_mtime_sq.c.rel == "part"),
+            func.min(part_mtime_sq.c.mtime_ns),
+        ),
+    ).group_by(part_mtime_sq.c.listen_id)
+    return {int(lid): float(ns) / 1e9 for lid, ns in s.execute(stmt) if ns is not None}
+
+
+def input_paths(s: Session, listen: Listen) -> tuple[str, list[str]]:
+    """The source folder and ordered audio file paths for a listen."""
+    import os
+
+    from app import details
+    from app.process import probe
+
+    inputs = list(
+        s.scalars(
+            select(ListenPart)
+            .where(ListenPart.listen_id == listen.id, ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+            .order_by(ListenPart.ordinal)
+        )
+    )
+    parts = [p for p in inputs if (p.detail or {}).get("relation") == "part"]
+    selected = parts if parts else inputs[:1]
+    folder = str((selected[0].detail or {}).get("path") or "") if selected else ""
+    file_entries: list[tuple[int, str | None]] = []
+    for p in selected:
+        if p.filegroup_id:
+            file_entries.extend(_group_files(s, p.filegroup_id))
+    paths: list[str] = []
+    if file_entries:
+        fids = [fid for fid, _ in file_entries]
+        locs: dict[int, list[str]] = {}
+        for fid, path in s.execute(
+            select(PartFileLocation.file_id, PartFileLocation.path)
+            .where(PartFileLocation.file_id.in_(fids), PartFileLocation.gone_at.is_(None))
+            .order_by(PartFileLocation.id.desc())
+        ):
+            locs.setdefault(fid, []).append(path)
+        for fid, gpath in file_entries:
+            cands = locs.get(fid, [])
+            picked = next((p for p in cands if gpath and os.path.dirname(p) == gpath), cands[0] if cands else "")
+            if picked and os.path.isfile(picked):
+                paths.append(picked)
+    if not paths and folder and os.path.isdir(folder):
+        paths = [p for p in sorted(details.audio_files(folder), key=probe.natural_key) if os.path.isfile(p)]
+    return folder, paths
+
+
+def selected_metadata(s: Session, listen: Listen, cur: dict[str, ListenChoice] | None = None) -> dict[str, Any]:
+    """The chosen output metadata fields and cover path for a listen."""
+    import os
+
+    from app.covers import run as covers_run
+
+    cur = cur if cur is not None else chosen(s, listen.id)
+
+    def _str(field: str, default: str = "") -> str:
+        c = cur.get(field)
+        return str(c.value).strip() if c and c.value not in (None, "") else default
+
+    pos_raw = _str("series_position")
+    try:
+        series_position: float | None = float(pos_raw) if pos_raw else None
+    except ValueError:
+        series_position = None
+    year_c = cur.get("year")
+    year = _year(year_c.value) if year_c and year_c.value is not None else None
+    cover_path: str | None = None
+    cov = cur.get("cover")
+    if cov and isinstance(cov.value, dict) and cov.value.get("image_id") is not None:
+        img = s.get(CoverImage, int(cov.value["image_id"]))
+        if img:
+            cand = covers_run.image_path(img)
+            if os.path.isfile(cand):
+                cover_path = cand
+    return dict(
+        title=_str("title", listen.label.strip()),
+        subtitle=_str("subtitle"),
+        author=_str("author"),
+        narrator=_str("narrator"),
+        series=_str("series"),
+        series_position=series_position,
+        year=year,
+        publisher=_str("publisher"),
+        language=_str("language"),
+        asin=_str("asin"),
+        isbn=_str("isbn"),
+        cover_path=cover_path,
+    )
+
+
+def _export_job_info(listen_id: int, jobs=None) -> dict[str, Any] | None:
+    if jobs is None:
+        return None
+    for t in jobs.tasks("listens"):
+        if t.get("kind") == "export" and t.get("options", {}).get("listen_id") == listen_id:
+            return dict(
+                id=t["id"],
+                state=t["state"],
+                noise_reduction=bool(t.get("options", {}).get("noise_reduction")),
+                progress=t.get("progress"),
+                error="",
+            )
+    for f in jobs.failures(domain="listens"):
+        try:
+            import json
+
+            opts = json.loads(f.get("options") or "{}")
+        except ValueError:
+            opts = {}
+        if f.get("kind") == "export" and opts.get("listen_id") == listen_id:
+            return dict(
+                id=f["id"],
+                state="failed",
+                noise_reduction=bool(opts.get("noise_reduction")),
+                progress=None,
+                error=f.get("error") or "export failed",
+            )
+    return None
+
+
+def output_status(
+    s: Session,
+    listen: Listen,
+    *,
+    cur: dict[str, ListenChoice] | None = None,
+    jobs=None,
+    final_dir: str | None = None,
+) -> dict[str, Any] | None:
+    """Existing exported output (chapters, loudness, folder) and/or active export job status for a listen."""
+    import json
+    import os
+
+    from app import settings
+    from app.process import plan as P
+
+    cur = cur if cur is not None else chosen(s, listen.id)
+    out_dir: str | None = None
+    out_c = cur.get("output")
+    if out_c and isinstance(out_c.value, dict) and out_c.value.get("out_dir"):
+        cand = str(out_c.value["out_dir"])
+        if os.path.isfile(os.path.join(cand, "metadata.json")):
+            out_dir = cand
+    if out_dir is None:
+        meta = selected_metadata(s, listen, cur)
+        if meta["title"] and meta["author"]:
+            cand = P.out_dir_for(
+                dict(title=meta["title"], author=meta["author"]),
+                final_dir or settings.final_dir(),
+                meta["year"],
+            )
+            if os.path.isfile(os.path.join(cand, "metadata.json")):
+                out_dir = cand
+    job = _export_job_info(listen.id, jobs)
+    chapters: list[dict[str, Any]] = []
+    res: dict[str, Any] = {}
+    if out_dir:
+        try:
+            with open(os.path.join(out_dir, "metadata.json"), encoding="utf8") as f:
+                data = json.load(f)
+            res = data.get("result") or {}
+            chapters = [
+                dict(
+                    index=i,
+                    file=c["file"],
+                    title=c["title"],
+                    duration=c["duration"],
+                    mode=c.get("mode"),
+                    tier=c.get("tier"),
+                )
+                for i, c in enumerate(data.get("chapters") or [])
+            ]
+        except (OSError, ValueError, KeyError):
+            out_dir = None
+    if not chapters and job is None:
+        return None
+    return dict(
+        status=job["state"]
+        if job and job["state"] in ("queued", "running")
+        else ("done" if chapters else job["state"]),
+        out_dir=out_dir if chapters else None,
+        finished=res.get("finished"),
+        out_bytes=res.get("out_bytes"),
+        out_seconds=res.get("out_seconds"),
+        loudness_before=res.get("loudness_before"),
+        loudness_after=res.get("loudness_after"),
+        gain_db=res.get("gain_db"),
+        noise_reduction=bool(res.get("enhancement")),
+        chapters=chapters,
+        job=job,
+    )
+
+
+def export_listen(
+    s: Session,
+    listen: Listen,
+    *,
+    noise_reduction: bool = False,
+    final_dir: str | None = None,
+    actor_ref: str = "web",
+) -> dict[str, Any]:
+    """Run the output pipeline (MP3 chapters, selected ID3 metadata + cover, loudness normalisation, optional noise reduction) for one listen."""
+    import os
+
+    from app import details, settings, sources
+    from app.process import plan as P
+    from app.process import run as R
+
+    cur = chosen(s, listen.id)
+    meta = selected_metadata(s, listen, cur)
+    sources.require_identity(meta["title"], meta["author"])
+    folder, paths = input_paths(s, listen)
+    if not paths:
+        raise ValueError("no source audio files are available on disk for this listen")
+    side = details.sidecar(folder) if folder and os.path.exists(folder) else None
+    audible = details.audible_summary(side) if side else None
+    locked = [
+        k
+        for k in ("title", "author", "narrator", "series", "series_position", "year", "asin")
+        if meta.get(k) not in (None, "")
+    ]
+    book = dict(
+        id=listen.id,
+        listen_id=listen.id,
+        is_listen=True,
+        title=meta["title"],
+        subtitle=meta["subtitle"],
+        author=meta["author"],
+        narrator=meta["narrator"],
+        series=meta["series"],
+        series_position=meta["series_position"],
+        year=meta["year"],
+        year_source="chosen on Library page" if meta["year"] else "",
+        publisher=meta["publisher"],
+        language=meta["language"],
+        asin=meta["asin"],
+        isbn=meta["isbn"],
+        path=folder,
+        locked=locked,
+        cover_path=meta["cover_path"],
+    )
+    records = dict(
+        catalogue=dict(
+            title=meta["title"],
+            subtitle=meta["subtitle"],
+            authors=[a.strip() for a in meta["author"].split(",") if a.strip()],
+            narrators=[n.strip() for n in meta["narrator"].split(",") if n.strip()],
+            publisher=meta["publisher"],
+            series=meta["series"],
+            series_position=meta["series_position"],
+            original_year=meta["year"],
+            year_kind="first_publication" if meta["year"] else "",
+            asin=meta["asin"],
+            language=meta["language"],
+            isbns=[meta["isbn"]] if meta["isbn"] else [],
+            genres=[],
+        )
+    )
+    plan = P.make_plan(book, final_dir or settings.final_dir(), audible, None, records, input_paths=paths)
+    plan.update(
+        title=meta["title"],
+        author=meta["author"],
+        narrator=meta["narrator"],
+        series=meta["series"],
+        series_position=meta["series_position"],
+        year=meta["year"],
+        publisher=meta["publisher"],
+    )
+    if noise_reduction:
+        for ch in plan["chapters"]:
+            ch["mode"] = "encode"
+            ch["tier"] = "V3"
+        plan["est_bytes"] = int(sum(ch["duration"] * P.TIERS["V3"]["kbps"] * 1000 / 8 for ch in plan["chapters"]))
+        plan["enhancement"] = dict(
+            method="diamond-pause-level-v1",
+            quality_rating="medium",
+            seed=0,
+            device="configured",
+            level="gated rolling RMS ±3 dB",
+        )
+    summary = R.execute(book, plan, force=True)
+    L.choose(
+        s,
+        listen,
+        "output",
+        dict(
+            out_dir=summary["out_dir"],
+            finished=summary["finished"],
+            chapters=summary["chapters"],
+            out_bytes=summary["out_bytes"],
+            out_seconds=summary["out_seconds"],
+            loudness_after=summary["loudness_after"],
+            noise_reduction=bool(noise_reduction),
+        ),
+        actor_kind="user",
+        actor_ref=actor_ref,
+        reason="exported from Library",
+    )
+    L.set_status(s, listen, "processed", actor_kind="user", actor_ref=actor_ref, reason="exported from Library")
+    return summary
+
+
+def export_job(listen_id: int, *, noise_reduction: bool = False) -> dict[str, Any]:
+    """Background job entrypoint for exporting one listen."""
+    from app.store.api import _engine
+
+    with Session(_engine()) as s:
+        listen = s.get(Listen, listen_id)
+        if listen is None:
+            raise ValueError(f"no listen {listen_id}")
+        res = export_listen(s, listen, noise_reduction=noise_reduction, actor_ref="job")
+        s.commit()
+        return res

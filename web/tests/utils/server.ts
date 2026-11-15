@@ -52,11 +52,11 @@ export function matchQueue(): import('../../src/api').QueueItem[] {
     evidence: { title: 'exact_rare', author: 'all', narrator: 'match', runtime: '1pct', sources: 'both', popularity: 'medium' }, p_none: 0, second: 0, ...extra })
   const files = (title: string, narrator?: string) => ({ kind: 'book', status: 'review', added: 1762000000, chosen: { title, author: 'Mara Quill', ...(narrator ? { narrator } : {}), year: 2015 }, tags: { album: `${title} (Unabridged)`, artist: 'Mara Quill', files: 12 }, folder: { title, folder: `Mara Quill - ${title}` }, copies: [{ minutes: 600, files: 12, bytes: 1, folder: `Mara Quill - ${title}`, path: `/x/${title}`, group_id: 7 }] })
   return [
-    { listen_id: 1, p: 0.99, label: 'Glass Orchard', cursor: '0.99:1', candidates: [cand(11, 0.99, 'Glass Orchard')], ...files('Glass Orchard', 'Ada Penn') },
-    { listen_id: 2, p: 0.6, label: 'Salt Roads', cursor: '0.6:2', candidates: [cand(21, 0.6, 'Salt Roads', { evidence: { title: 'partial', author: 'conflict', runtime: 'far' }, second: 0.55 }), cand(22, 0.3, 'Salt Roads Again', { ordinal: 2, authors: [], year: null })], ...files('Salt Roads'), added: 1762500000 },
-    { listen_id: 3, p: 0.4, label: 'Lune', cursor: '0.4:3', candidates: [cand(31, 0.4, 'Lune', { recordings: [], isbns: [], ol: [], evidence: {} })], ...files('Lune'), added: 1761000000 },
+    { listen_id: 1, p: 0.99, label: 'Glass Orchard', cursor: '0.99:1', candidates: [cand(11, 0.99, 'Glass Orchard')], ...files('Glass Orchard', 'Ada Penn'), mtime: 1600000000 },
+    { listen_id: 2, p: 0.6, label: 'Salt Roads', cursor: '0.6:2', candidates: [cand(21, 0.6, 'Salt Roads', { evidence: { title: 'partial', author: 'conflict', runtime: 'far' }, second: 0.55 }), cand(22, 0.3, 'Salt Roads Again', { ordinal: 2, authors: [], year: null })], ...files('Salt Roads'), added: 1762500000, mtime: 1700000000 },
+    { listen_id: 3, p: 0.4, label: 'Lune', cursor: '0.4:3', candidates: [cand(31, 0.4, 'Lune', { recordings: [], isbns: [], ol: [], evidence: {} })], ...files('Lune'), added: 1761000000, mtime: 1500000000 },
     { listen_id: 4, p: 0.2, label: 'Untagged folder', cursor: '0.2:4', candidates: [cand(41, 0.2, 'x', { title: null, authors: [], year: null, editions: null, isbns: [], recording: null, second: null, recordings: [{ asin: 'B0AAAAAAA9', title: 'x', narrators: [], minutes: null, fmt: 'original_recording', year: null }] })],
-      kind: 'radio_series', kind_info: kindInfos.series, status: 'review', added: null, chosen: {}, tags: { composer: 'Someone Else', publisher: 'A Press' }, folder: {}, copies: [{ minutes: 60, files: null, bytes: null, folder: 'Untagged folder', path: null, group_id: null }, { minutes: 61, files: 3, bytes: 1, folder: 'Copy', path: null, group_id: null }] },
+      kind: 'radio_series', kind_info: kindInfos.series, status: 'review', added: null, mtime: 1400000000, chosen: {}, tags: { composer: 'Someone Else', publisher: 'A Press' }, folder: {}, copies: [{ minutes: 60, files: null, bytes: null, folder: 'Untagged folder', path: null, group_id: null }, { minutes: 61, files: 3, bytes: 1, folder: 'Copy', path: null, group_id: null }] },
   ]
 }
 export const matchState: { queue: import('../../src/api').QueueItem[]; decided: { listen_id: number; action: string; part_id?: number }[]; retrains: number; training: boolean; model: string | null } = { queue: matchQueue(), decided: [], retrains: 0, training: false, model: 'fs-test' }
@@ -91,11 +91,11 @@ export function resetCovers() {
   const src = (source: string, ref: string, image_id: number, width = 500, height = 500, bytes = 80_000) => ({ source, ref, label: '', url: null, image_id, width, height, bytes })
   const sig = (name: string, weight: number, detail = '') => ({ name, weight, detail })
   coverState.rows = [
-    { listen_id: 1, label: 'Glass Orchard', kind: 'book', run_id: 1, searched: '2026-11-12T10:00:00', state: 'choose', chosen: null,
+    { listen_id: 1, label: 'Glass Orchard', kind: 'book', run_id: 1, searched: '2026-11-12T10:00:00', added: 1762000000, mtime: 1600000000, state: 'choose', chosen: null,
       covers: [{ image_id: 11, width: 2400, height: 2400, bytes: 1_500_000, sources: [src('apple', '5', 11, 2400, 2400, 1_500_000), src('audible', 'B0A', 11, 2400, 2400, 1_500_000)], members: [11], score: 5.4, share: 0.93, signals: [sig('audiobook cover', 2, 'apple, audible'), sig('resolution', 1.2, '2400×2400'), { ...sig('this recording', 1.5), prior: 1, learned: true }] }, { image_id: 12, width: 500, height: 750, bytes: 80_000, sources: [src('google', '978', 12, 500, 750)], members: [12], score: 2.6, share: 0.07, signals: [sig('print edition only', -0.5, 'google')] }],
       sources: [{ source: 'audible', status: 'found', detail: '', count: 1 }, { source: 'openlibrary', status: 'error', detail: 'error: down', count: 0 }, { source: 'google', status: 'limited', detail: 'rate limited: 9780000000002: HTTP Error 429', count: 0 }] , source: { title: 'Glass Orchard', author: 'Mara Quill', narrator: 'Anna Bell', minutes: 600, year: '1999', files: 12, folder: 'Glass Orchard', path: '/x/Glass Orchard', group_id: 7 }, match: { title: 'Glass Orchard', author: 'Mara Quill', narrator: 'Ben Hart', minutes: 690, year: '1999', recordings: 2, all_recordings: [{ asin: 'B0A', narrator: 'Ben Hart', minutes: 690, year: '2012', format: 'unabridged' }, { asin: 'B0B', narrator: 'Anna Bell', minutes: 600, year: '2015', format: 'abridged' }], probability: 0.99, accepted_by: 'model' } },
-    { listen_id: 2, label: 'Salt Roads', kind: 'book', run_id: 2, searched: '2026-11-12T10:05:00', state: 'none', chosen: null, covers: [], sources: [{ source: 'audible', status: 'skipped', detail: 'no ASIN known for this book', count: 0 }, { source: 'apple', status: 'none', detail: '8 results, none with a matching title', count: 0 }], source: { title: 'Salt Roads', author: '', narrator: '', minutes: null, year: '', files: null, folder: '', path: '', group_id: null }, match: null },
-    { listen_id: 3, label: 'Third Book', kind: 'radio_show', run_id: 3, searched: '2026-11-12T10:09:00Z', state: 'chosen', chosen: 31, covers: [{ image_id: 31, width: 800, height: 800, bytes: 90_000, sources: [src('folder', 'cover.jpg', 31, 800, 800, 90_000)], members: [31, 32], score: 1.8, share: 1, signals: [sig('from the listen\'s files', 1)] }], sources: [], source: { title: 'Third Book', author: 'Mara Quill', narrator: 'Anna Bell', minutes: 600, year: '1999', files: 12, folder: 'Glass Orchard', path: '/x/Third Book', group_id: null }, match: { title: 'Glass Orchard', author: 'Mara Quill', narrator: 'Ben Hart', minutes: 690, year: '1999', recordings: 2, all_recordings: [{ asin: 'B0A', narrator: 'Ben Hart', minutes: 690, year: '2012', format: 'unabridged' }, { asin: 'B0B', narrator: 'Anna Bell', minutes: 600, year: '2015', format: 'abridged' }], probability: 0.99, accepted_by: 'model' } },
+    { listen_id: 2, label: 'Salt Roads', kind: 'book', run_id: 2, searched: '2026-11-12T10:05:00', added: 1762500000, mtime: 1700000000, state: 'none', chosen: null, covers: [], sources: [{ source: 'audible', status: 'skipped', detail: 'no ASIN known for this book', count: 0 }, { source: 'apple', status: 'none', detail: '8 results, none with a matching title', count: 0 }], source: { title: 'Salt Roads', author: '', narrator: '', minutes: null, year: '', files: null, folder: '', path: '', group_id: null }, match: null },
+    { listen_id: 3, label: 'Third Book', kind: 'radio_show', run_id: 3, searched: '2026-11-12T10:09:00Z', added: 1761000000, mtime: 1500000000, state: 'chosen', chosen: 31, covers: [{ image_id: 31, width: 800, height: 800, bytes: 90_000, sources: [src('folder', 'cover.jpg', 31, 800, 800, 90_000)], members: [31, 32], score: 1.8, share: 1, signals: [sig('from the listen\'s files', 1)] }], sources: [], source: { title: 'Third Book', author: 'Mara Quill', narrator: 'Anna Bell', minutes: 600, year: '1999', files: 12, folder: 'Glass Orchard', path: '/x/Third Book', group_id: null }, match: { title: 'Glass Orchard', author: 'Mara Quill', narrator: 'Ben Hart', minutes: 690, year: '1999', recordings: 2, all_recordings: [{ asin: 'B0A', narrator: 'Ben Hart', minutes: 690, year: '2012', format: 'unabridged' }, { asin: 'B0B', narrator: 'Anna Bell', minutes: 600, year: '2015', format: 'abridged' }], probability: 0.99, accepted_by: 'model' } },
   ]
   coverState.waiting = 2; coverState.chosen = []; coverState.runs = []; coverState.sentBack = []; coverState.job = { running: false, queued: 0, current: '', error: '', failed: [] }
 }
@@ -104,10 +104,11 @@ resetCovers()
 export const configState: {
   picks: { field: string; value: unknown; source: string }[]
   bulkPicks: { listen_id: number; values: Record<string, unknown>; source: string }[]
+  exports: { listen_id: number; noise_reduction: boolean }[]
   withoutCover: number
   config: import('../../src/api').ListenConfig
   library: import('../../src/api').ListenConfig[]
-} = { picks: [], bulkPicks: [], withoutCover: 2, config: undefined as never, library: [] }
+} = { picks: [], bulkPicks: [], exports: [], withoutCover: 2, config: undefined as never, library: [] }
 
 function syncConfig(cfg: import('../../src/api').ListenConfig, updates: Record<string, string | number | null>): import('../../src/api').ListenConfig {
   const fields = cfg.fields.map(f => {
@@ -132,6 +133,7 @@ export function resetConfig() {
   const src = (source: string, label: string, ref = '', note = '') => ({ source, label, ref, note })
   configState.picks = []
   configState.bulkPicks = []
+  configState.exports = []
   configState.withoutCover = 2
   configState.config = syncConfig({
     listen_id: 1, label: 'Red Dragon', kind: 'book', status: 'identified', cover: null,
@@ -170,8 +172,8 @@ export function resetConfig() {
     ],
   }, {})
   configState.library = [
-    { ...configState.config, cover: { image_id: 11, width: 2400, height: 2400 }, minutes: 725, files: 24, path: '/audio/Red Dragon', group_id: 2 },
-    second,
+    { ...configState.config, cover: { image_id: 11, width: 2400, height: 2400 }, minutes: 725, files: 24, path: '/audio/Red Dragon', group_id: 2, mtime: 1600000000 },
+    { ...second, mtime: 1700000000 },
   ]
 }
 resetConfig()
@@ -206,6 +208,9 @@ export const handlers = [
       if (sort === 'length-desc') return (b.minutes ?? 0) - (a.minutes ?? 0)
       if (sort === 'length-asc') return (a.minutes ?? 0) - (b.minutes ?? 0)
       if (sort === 'recent') return b.listen_id - a.listen_id
+      if (sort === 'oldest') return a.listen_id - b.listen_id
+      if (sort === 'file-recent') return (b.mtime ?? 0) - (a.mtime ?? 0) || a.label.localeCompare(b.label)
+      if (sort === 'file-oldest') return (a.mtime ?? 0) - (b.mtime ?? 0) || a.label.localeCompare(b.label)
       return a.label.localeCompare(b.label)
     })
     return HttpResponse.json({
@@ -241,11 +246,39 @@ export const handlers = [
       : (configState.library.find(r => r.listen_id === id) ?? configState.config)
     return HttpResponse.json(found)
   }),
+  http.post('/api/listens/:id/export', async ({ request, params }) => {
+    const id = Number(params.id)
+    const b = await request.json() as { noise_reduction: boolean }
+    configState.exports.push({ listen_id: id, noise_reduction: Boolean(b.noise_reduction) })
+    const output: import('../../src/api').ListenOutput = {
+      status: 'done',
+      out_dir: '/final/Thomas Harris/[1981] Red Dragon',
+      finished: '2026-11-15T16:50:00Z',
+      out_bytes: 185_000_000,
+      out_seconds: 43500,
+      loudness_before: -21.2,
+      loudness_after: -18.0,
+      gain_db: 3.2,
+      noise_reduction: Boolean(b.noise_reduction),
+      chapters: [
+        { index: 0, file: '001 - Thomas Harris - Red Dragon.mp3', title: 'Chapter 1: The Tooth Fairy', duration: 1800, mode: b.noise_reduction ? 'encode' : 'copy', tier: b.noise_reduction ? 'V3' : 'copy' },
+        { index: 1, file: '002 - Thomas Harris - Red Dragon.mp3', title: 'Chapter 2: Graham', duration: 2100, mode: b.noise_reduction ? 'encode' : 'copy', tier: b.noise_reduction ? 'V3' : 'copy' },
+      ],
+      job: null,
+    }
+    configState.library = configState.library.map(r => r.listen_id === id ? { ...r, status: 'processed', output } : r)
+    const found = configState.library.find(r => r.listen_id === id) ?? { ...configState.config, status: 'processed', output }
+    return HttpResponse.json(found)
+  }),
   http.get('/api/covers', ({ request }) => {
     const u = new URL(request.url), state = u.searchParams.get('state') ?? '', q = (u.searchParams.get('q') ?? '').toLowerCase(), sort = u.searchParams.get('sort') ?? 'recent'
     const filtered = coverState.rows.filter(r => (!state || r.state === state) && q.split(' ').filter(Boolean).every(w => r.label.toLowerCase().includes(w)))
     const rows = [...filtered].sort((a, b) => {
       if (sort === 'oldest') return (a.searched ?? '').localeCompare(b.searched ?? '')
+      if (sort === 'added-recent') return (b.added ?? 0) - (a.added ?? 0)
+      if (sort === 'added-oldest') return (a.added ?? 0) - (b.added ?? 0)
+      if (sort === 'file-recent') return (b.mtime ?? 0) - (a.mtime ?? 0)
+      if (sort === 'file-oldest') return (a.mtime ?? 0) - (b.mtime ?? 0)
       if (sort === 'title') return a.label.localeCompare(b.label)
       if (sort === 'title-desc') return b.label.localeCompare(a.label)
       if (sort === 'most-covers') return b.covers.length - a.covers.length || a.label.localeCompare(b.label)
@@ -410,8 +443,8 @@ export const server = setupServer(
     const fits = open.filter(i => (qp('auto') !== 'skip' || !i.candidates[0].auto) && (qp('auto') !== 'only' || i.candidates[0].auto) && (!qp('kind') || (qp('kind') === 'review' ? i.kind_info?.band === 'review' : qp('kind') === 'not-book' ? i.kind !== 'book' : i.kind === qp('kind'))) && (!qp('status') || i.status === qp('status'))
       && (!qp('certainty') || band(i) === qp('certainty')) && (!qp('audible') || (i.candidates[0].recordings.length > 0) === (qp('audible') === 'yes'))
       && words.every(w => `${i.label} ${Object.values(i.chosen).join(' ')} ${i.candidates.map(c => `${c.title} ${c.authors.join(' ')}`).join(' ')}`.toLowerCase().includes(w)))
-    const sort = qp('sort') || 'certain', key = (i: typeof open[number]) => ({ certain: -i.p, uncertain: i.p, recent: -(i.added ?? 0), oldest: i.added ?? 0, 'kind-certain': -(i.kind_info?.confidence ?? 1), 'kind-uncertain': i.kind_info?.confidence ?? 1 } as Record<string, number>)[sort]
-    const ordered = [...fits].sort((a, b) => key(a) - key(b) || (sort === 'recent' ? b.listen_id - a.listen_id : a.listen_id - b.listen_id))
+    const sort = qp('sort') || 'certain', key = (i: typeof open[number]) => ({ certain: -i.p, uncertain: i.p, recent: -(i.added ?? 0), oldest: i.added ?? 0, 'file-recent': -(i.mtime ?? i.added ?? 0), 'file-oldest': i.mtime ?? i.added ?? 0, 'kind-certain': -(i.kind_info?.confidence ?? 1), 'kind-uncertain': i.kind_info?.confidence ?? 1 } as Record<string, number>)[sort]
+    const ordered = [...fits].sort((a, b) => key(a) - key(b) || (sort === 'recent' || sort === 'file-recent' ? b.listen_id - a.listen_id : a.listen_id - b.listen_id))
     const start = after ? ordered.findIndex(i => i.cursor === after) + 1 : 0
     const count = (f: (i: typeof open[number]) => string | null) => open.reduce<Record<string, number>>((m, i) => { const v = f(i); if (v) m[v] = (m[v] ?? 0) + 1; return m }, {})
     const facets = { kind: { ...count(i => i.kind), ...(open.some(i => i.kind_info?.band === 'review') ? { review: open.filter(i => i.kind_info?.band === 'review').length } : {}), ...(open.some(i => i.kind !== 'book') ? { 'not-book': open.filter(i => i.kind !== 'book').length } : {}) }, status: count(i => i.status), certainty: count(band), auto: { skip: 0, only: 0, ...count(i => i.candidates[0].auto ? 'only' : 'skip') }, audible: { yes: 0, no: 0, ...count(i => i.candidates[0].recordings.length ? 'yes' : 'no') } }

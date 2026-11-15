@@ -142,20 +142,36 @@ export interface ConfigColumn {
   asin?: string; region?: string; runtime_minutes?: number | null; abridged?: boolean | null
   values: Record<string, string | number | null>; used: boolean; used_fields: string[]
 }
+export interface ListenOutputChapter {
+  index: number; file: string; title: string; duration: number; mode?: string; tier?: string
+}
+export interface ListenOutputJob {
+  id: string | number; state: 'queued' | 'running' | 'failed'; noise_reduction: boolean
+  progress?: { current: string; done?: number | null; total?: number | null } | null; error: string
+}
+export interface ListenOutput {
+  status: 'done' | 'queued' | 'running' | 'failed'
+  out_dir: string | null; finished?: string | null; out_bytes?: number | null; out_seconds?: number | null
+  loudness_before?: number | null; loudness_after?: number | null; gain_db?: number | null; noise_reduction?: boolean
+  chapters: ListenOutputChapter[]; job?: ListenOutputJob | null
+}
 export interface ListenConfig {
   listen_id: number; label: string; kind: string; status: string; fields: ConfigField[]; sources?: ConfigColumn[]
   cover: { image_id: number; width: number; height: number } | null
   work: { id: number; title: string; authors: string[]; year: number | null } | null
   recordings: { asin: string; region: string; title: string; narrators: string[]; runtime_minutes: number | null; release: string | null; abridged: boolean | null }[]
   inputs: { part_id: number; group_id: number | null; path: string | null; files: number; minutes: number; relation: string }[]
-  minutes?: number; files?: number; path?: string | null; group_id?: number | null
+  minutes?: number; files?: number; path?: string | null; group_id?: number | null; mtime?: number | null
+  output?: ListenOutput | null
 }
-export type LibrarySort = 'title' | 'title-desc' | 'author' | 'year-desc' | 'year-asc' | 'length-desc' | 'length-asc' | 'recent'
+export type LibrarySort = 'title' | 'title-desc' | 'author' | 'year-desc' | 'year-asc' | 'length-desc' | 'length-asc' | 'recent' | 'oldest' | 'file-recent' | 'file-oldest'
 export interface LibraryList { total: number; all_total: number; without_cover: number; kinds: Record<string, number>; offset: number; limit: number; rows: ListenConfig[] }
 export const listenApi = {
   config: (id: number) => req<ListenConfig>(`/api/listens/${id}/config`),
   chooseField: (id: number, field: string, value: string | number | null, source = '') => req<ListenConfig>(`/api/listens/${id}/config/${field}`, send('POST', { value, source })),
   chooseFields: (id: number, values: Record<string, string | number | null>, source = '') => req<ListenConfig>(`/api/listens/${id}/config`, send('POST', { values, source })),
+  export: (id: number, noiseReduction = false) => req<ListenConfig>(`/api/listens/${id}/export`, send('POST', { noise_reduction: noiseReduction })),
+  audioUrl: (id: number, chapter: number) => withBase(`/api/listens/${id}/audio/${chapter}`),
   library: (q = '', kind = '', missing = '', sort: LibrarySort = 'title', limit = 10, offset = 0) => req<LibraryList>(`/api/listens/library?${new URLSearchParams({ q, kind, missing, sort, limit: String(limit), offset: String(offset) })}`),
   list: (q = '', kind = '', status = '', match = '', limit = 500) => req<ListenList>(`/api/listens?${new URLSearchParams({ q, kind, status, match, limit: String(limit) })}`),
   setKind: (id: number, kind: string) => req<{ ok: boolean; retraining: boolean; reidentified?: boolean; kind_info: KindInfoData | null }>(`/api/listens/${id}/kind`, send('POST', { kind })),
@@ -171,9 +187,9 @@ export interface CoverSide { title: string; author: string; narrator: string; mi
 export interface CoverFiles extends CoverSide { files: number | null; folder: string; path: string; group_id: number | null }
 export interface CoverRecording { asin: string; narrator: string; minutes: number | null; year: string; format: string }
 export interface CoverMatch extends CoverSide { recordings: number; all_recordings: CoverRecording[]; probability: number | null; accepted_by: string }
-export interface CoverRow { listen_id: number; label: string; kind: string; run_id: number; searched: string | null; state: 'choose' | 'chosen' | 'none'; chosen: number | null; covers: CoverPicture[]; sources: CoverStatus[]; source: CoverFiles; match: CoverMatch | null }
+export interface CoverRow { listen_id: number; label: string; kind: string; run_id: number; searched: string | null; added?: number | null; mtime?: number | null; state: 'choose' | 'chosen' | 'none'; chosen: number | null; covers: CoverPicture[]; sources: CoverStatus[]; source: CoverFiles; match: CoverMatch | null }
 export interface CoverJob { running: boolean; queued: number; current: string; error: string; failed: { job_id: string; label: string; error: string }[] }
-export type CoverSort = 'recent' | 'oldest' | 'title' | 'title-desc' | 'most-covers' | 'fewest-covers'
+export type CoverSort = 'recent' | 'oldest' | 'added-recent' | 'added-oldest' | 'file-recent' | 'file-oldest' | 'title' | 'title-desc' | 'most-covers' | 'fewest-covers'
 export interface CoverList { total: number; counts: Record<'choose' | 'chosen' | 'none', number>; waiting: number; rows: CoverRow[]; job: CoverJob }
 export const coverApi = {
   list: (state = '', q = '', sort: CoverSort = 'recent', limit = 24) => req<CoverList>(`/api/covers?${new URLSearchParams({ state, q, sort, limit: String(limit) })}`),
@@ -190,10 +206,10 @@ export type QueueEvidence = Partial<Record<'title' | 'author' | 'narrator' | 'ru
 export interface QueueProgramme { source: string; ref: string; title: string; service: string; channel: string; first_broadcast: string; type: string; episodes: number | null; genres: string[]; synopsis: string }
 export interface QueueCandidate { part_id: number; ordinal: number; state: string; auto: boolean; p: number; work_id: number; key: string; title: string | null; authors: string[]; year: number | null; editions: number | null; ol: string[]; isbns: string[]; recordings: QueueRecording[]; programmes?: QueueProgramme[]; recording: string | null; alias: string | null; reading: string | null; evidence: QueueEvidence; p_none: number | null; second: number | null }
 export interface QueueCopy { minutes: number | null; files: number | null; bytes: number | null; folder: string; path: string | null; group_id: number | null; relation?: 'copy' | 'part' }
-export interface QueueItem { listen_id: number; p: number; label: string; cursor: string; kind: string | null; status: string | null; added: number | null; kind_info?: KindInfoData | null; candidates: QueueCandidate[]; chosen: Record<string, string | number>; tags: Record<string, string | number>; folder: Record<string, string | number>; copies: QueueCopy[] }
+export interface QueueItem { listen_id: number; p: number; label: string; cursor: string; kind: string | null; status: string | null; added: number | null; mtime?: number | null; kind_info?: KindInfoData | null; candidates: QueueCandidate[]; chosen: Record<string, string | number>; tags: Record<string, string | number>; folder: Record<string, string | number>; copies: QueueCopy[] }
 export interface QueueSummary { waiting: number; auto_unconfirmed: number; confirmed: number; not_found: number; no_candidates: number; statuses: Record<string, number>; decisions: number; since_train: number | null; model: string | null; auto_retrain: number; training: { running: boolean; finished: number | null; error: string; counts: Record<string, number> | null } }
 /** The match queue's order and filters, as the page keeps them in its URL; '' means any. */
-export interface QueueFilters { sort: 'certain' | 'uncertain' | 'recent' | 'oldest' | 'kind-certain' | 'kind-uncertain'; auto: '' | 'skip' | 'only'; kind: string; status: string; certainty: '' | 'sure' | 'likely' | 'close' | 'unsure'; audible: '' | 'yes' | 'no'; q: string }
+export interface QueueFilters { sort: 'certain' | 'uncertain' | 'recent' | 'oldest' | 'file-recent' | 'file-oldest' | 'kind-certain' | 'kind-uncertain'; auto: '' | 'skip' | 'only'; kind: string; status: string; certainty: '' | 'sure' | 'likely' | 'close' | 'unsure'; audible: '' | 'yes' | 'no'; q: string }
 export type QueueFacets = Record<'kind' | 'status' | 'certainty' | 'auto' | 'audible', Record<string, number>>
 export interface QueuePage { summary: QueueSummary; total: number; facets: QueueFacets; items: QueueItem[] }
 export type QueueAction = 'approve' | 'reject' | 'none'

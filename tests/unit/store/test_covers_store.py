@@ -703,17 +703,24 @@ def test_the_covers_page_can_take_a_match_back_and_the_listen_leaves_it(s):
     assert client.post("/api/covers/9999/unaccept").status_code == 404
 
 
-def test_the_covers_page_sorts_by_search_time_title_and_cover_count(s):
+def test_the_covers_page_sorts_by_search_time_title_and_cover_count(s, monkeypatch):
+    from app.store import config as store_config
+
     z = make_listen(s, "Zebra")
     a = make_listen(s, "Alpha")
     r_z = R.search(s, z, run_sources=fake_sources(("audible", "B0A", png(800, 800))))
     r_z.finished_at = r_z.finished_at - timedelta(minutes=5)
     R.search(s, a, run_sources=fake_sources(("audible", "B0A", png(801, 801)), ("apple", "1", png(900, 900))))
     s.commit()
+    monkeypatch.setattr(store_config, "listen_mtimes", lambda sess, ids=None: {z.id: 2000.0, a.id: 1000.0})
     client = client_for(s)
     labels = lambda sort: [r["label"] for r in client.get("/api/covers", params=dict(sort=sort)).json()["rows"]]
     assert labels("recent") == ["Alpha", "Zebra"]
     assert labels("oldest") == ["Zebra", "Alpha"]
+    assert labels("added-recent") == ["Alpha", "Zebra"]
+    assert labels("added-oldest") == ["Zebra", "Alpha"]
+    assert labels("file-recent") == ["Zebra", "Alpha"]
+    assert labels("file-oldest") == ["Alpha", "Zebra"]
     assert labels("title") == ["Alpha", "Zebra"]
     assert labels("title-desc") == ["Zebra", "Alpha"]
     assert labels("most-covers") == ["Alpha", "Zebra"]

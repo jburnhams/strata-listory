@@ -7,7 +7,8 @@ from collections import defaultdict
 from functools import lru_cache
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import Float, func, select
 from sqlalchemy import Text as sa_text
@@ -438,7 +439,7 @@ def set_listen_kind(listen_id: int, body: KindChoice, s: Session = Depends(get_s
     )
 
 
-def _full_config(s: Session, l: Listen) -> dict:
+def _full_config(s: Session, l: Listen, jobs=None) -> dict:
     from app.store import config
 
     out = config.config(s, l)
@@ -467,11 +468,13 @@ def _full_config(s: Session, l: Listen) -> dict:
         files=files,
         path=inputs[0]["path"] if inputs else None,
         group_id=inputs[0]["group_id"] if inputs else None,
+        output=config.output_status(s, l, jobs=jobs),
     )
 
 
 @listens_router.get("/library")
 def list_library(
+    request: Request,
     q: str = "",
     kind: str = "",
     missing: str = "",
@@ -481,6 +484,7 @@ def list_library(
     s: Session = Depends(get_session),
 ):
     """Listens with a confirmed match and a chosen cover, paginated with search, kind and metadata filters, and sorting, each with its full metadata configuration table."""
+    jobs = getattr(request.app.state, "jobs", None)
     limit = max(1, min(limit, 50))
     offset = max(0, offset)
     cover_choices = {
@@ -519,7 +523,7 @@ def list_library(
     for c in s.scalars(
         select(ListenChoice).where(
             ListenChoice.listen_id.in_(all_ids or [0]),
-            ListenChoice.field != "cover",
+            ListenChoice.field.not_in(("cover", "output")),
             ListenChoice.unchosen_at.is_(None),
         )
     ):
@@ -614,6 +618,16 @@ def list_library(
         filtered.sort(key=lambda lid: (_minutes(lid), _title(lid), lid))
     elif sort == "recent":
         filtered.sort(key=lambda lid: (cover_choices[lid].chosen_at, lid), reverse=True)
+    elif sort == "oldest":
+        filtered.sort(key=lambda lid: (cover_choices[lid].chosen_at, lid))
+    elif sort in ("file-recent", "file-oldest"):
+        from app.store import config as store_config
+
+        mtimes = store_config.listen_mtimes(s, filtered)
+        if sort == "file-recent":
+            filtered.sort(key=lambda lid: (mtimes.get(lid) is None, -(mtimes.get(lid) or 0.0), _title(lid), lid))
+        else:
+            filtered.sort(key=lambda lid: (mtimes.get(lid) is None, mtimes.get(lid) or 0.0, _title(lid), lid))
     else:
         filtered.sort(key=lambda lid: (_title(lid), lid))
 
@@ -625,17 +639,22 @@ def list_library(
         kinds=dict(kinds),
         offset=offset,
         limit=limit,
-        rows=[_full_config(s, live[lid]) for lid in page_ids],
+        rows=[_full_config(s, live[lid], jobs=jobs) for lid in page_ids],
     )
 
 
 @listens_router.get("/{listen_id}/config")
-def get_listen_config(listen_id: int, s: Session = Depends(get_session)):
+def get_listen_config(
+    listen_id: int,
+    request: Request,
+    s: Session = Depends(get_session),
+):
     """The listen's output configuration: each field with every source's value and the one chosen (`store.config`), the chosen cover, and the files it is made from."""
     l = s.get(Listen, listen_id)
     if l is None:
         raise HTTPException(404, "no such listen")
-    return _full_config(s, l)
+    jobs = getattr(request.app.state, "jobs", None)
+    return _full_config(s, l, jobs=jobs)
 
 
 class FieldChoice(BaseModel):
@@ -648,8 +667,17 @@ class FieldsChoice(BaseModel):
     source: str = ""
 
 
+class ExportChoice(BaseModel):
+    noise_reduction: bool = False
+
+
 @listens_router.post("/{listen_id}/config")
-def choose_listen_fields(listen_id: int, b: FieldsChoice, s: Session = Depends(get_session)):
+def choose_listen_fields(
+    listen_id: int,
+    b: FieldsChoice,
+    request: Request,
+    s: Session = Depends(get_session),
+):
     """Apply several field choices at once (such as clicking a source column on the Library page)."""
     from app.store import config
 
@@ -661,11 +689,18 @@ def choose_listen_fields(listen_id: int, b: FieldsChoice, s: Session = Depends(g
     except ValueError as e:
         raise HTTPException(400, str(e))
     s.commit()
-    return _full_config(s, l)
+    jobs = getattr(request.app.state, "jobs", None)
+    return _full_config(s, l, jobs=jobs)
 
 
 @listens_router.post("/{listen_id}/config/{field}")
-def choose_listen_field(listen_id: int, field: str, b: FieldChoice, s: Session = Depends(get_session)):
+def choose_listen_field(
+    listen_id: int,
+    field: str,
+    b: FieldChoice,
+    request: Request,
+    s: Session = Depends(get_session),
+):
     """A person's pick for one field: a source's value or a typed one; empty clears it."""
     from app.store import config
 
@@ -677,7 +712,84 @@ def choose_listen_field(listen_id: int, field: str, b: FieldChoice, s: Session =
     except ValueError as e:
         raise HTTPException(400, str(e))
     s.commit()
-    return _full_config(s, l)
+    jobs = getattr(request.app.state, "jobs", None)
+    return _full_config(s, l, jobs=jobs)
+
+
+@listens_router.post("/{listen_id}/export")
+def export_listen_endpoint(
+    listen_id: int,
+    b: ExportChoice,
+    request: Request,
+    s: Session = Depends(get_session),
+):
+    """Run the output pipeline (MP3 files, selected metadata + cover, optional noise reduction) for a listen."""
+    from app import sources
+    from app.process import probe
+    from app.store import config
+
+    l = s.get(Listen, listen_id)
+    if l is None:
+        raise HTTPException(404, "no such listen")
+    meta = config.selected_metadata(s, l)
+    try:
+        sources.require_identity(meta["title"], meta["author"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _, paths = config.input_paths(s, l)
+    if not paths:
+        raise HTTPException(400, "no source audio files are available on disk for this listen")
+    jobs = getattr(request.app.state, "jobs", None)
+    if jobs is not None and getattr(jobs, "threads", None):
+        jobs.submit("listens", "export", retry=True, listen_id=listen_id, noise_reduction=b.noise_reduction)
+        return JSONResponse(_full_config(s, l, jobs=jobs), status_code=202)
+    try:
+        config.export_listen(s, l, noise_reduction=b.noise_reduction)
+    except (ValueError, probe.ToolError, OSError) as e:
+        raise HTTPException(400, str(e))
+    s.commit()
+    return _full_config(s, l, jobs=jobs)
+
+
+@listens_router.get("/{listen_id}/output")
+def get_listen_output(
+    listen_id: int,
+    request: Request,
+    s: Session = Depends(get_session),
+):
+    """The exported output summary and chapter list for a listen."""
+    from app.store import config
+
+    l = s.get(Listen, listen_id)
+    if l is None:
+        raise HTTPException(404, "no such listen")
+    jobs = getattr(request.app.state, "jobs", None)
+    out = config.output_status(s, l, jobs=jobs)
+    if out is None:
+        raise HTTPException(404, "no exported output")
+    return out
+
+
+@listens_router.get("/{listen_id}/audio/{chapter}")
+def get_listen_audio(listen_id: int, chapter: int, s: Session = Depends(get_session)):
+    """Stream one exported MP3 chapter of a listen for the media player."""
+    from app.store import config
+
+    l = s.get(Listen, listen_id)
+    if l is None:
+        raise HTTPException(404, "no such listen")
+    out = config.output_status(s, l)
+    if not out or not out.get("out_dir"):
+        raise HTTPException(404, "no exported output")
+    folder = os.path.realpath(str(out["out_dir"]))
+    chapters = out.get("chapters") or []
+    if chapter < 0 or chapter >= len(chapters):
+        raise HTTPException(404, "no such chapter")
+    name = chapters[chapter].get("file", "")
+    path = os.path.realpath(os.path.join(folder, name))
+    if not name or os.path.dirname(path) != folder or not name.lower().endswith(".mp3") or not os.path.isfile(path):
+        raise HTTPException(404, "chapter unavailable")
+    return FileResponse(path, media_type="audio/mpeg")
 
 
 @listens_router.get("/{listen_id}")
