@@ -649,3 +649,34 @@ def test_input_paths_rejects_incomplete_tracked_files_and_parts(s, tmp_path):
     )
     s.flush()
     assert C.input_paths(s, mp_listen)[1] == []
+
+    # Deeply nested filegroups (3+ levels: Book -> Part 1 -> CD 1 -> track) must be traversed by listen_mtimes.
+    cd_fg = PartFilegroup(run_id=run_row.id, kind="disc", label="CD 1", path=str(inbox), file_count=1, total_bytes=11)
+    part_fg = PartFilegroup(
+        run_id=run_row.id, kind="disc", label="Part 1", path=str(inbox), file_count=1, total_bytes=11
+    )
+    book_fg = PartFilegroup(
+        run_id=run_row.id, kind="book", label="Deep Book", path=str(inbox), file_count=1, total_bytes=11
+    )
+    s.add_all([cd_fg, part_fg, book_fg])
+    s.flush()
+    s.add_all(
+        [
+            PartFilegroupMember(group_id=cd_fg.id, ordinal=1, file_id=f1.id),
+            PartFilegroupMember(group_id=part_fg.id, ordinal=1, child_group_id=cd_fg.id),
+            PartFilegroupMember(group_id=book_fg.id, ordinal=1, child_group_id=part_fg.id),
+        ]
+    )
+    deep_listen = L.create_listen(s, "book")
+    deep_listen.label = "Deep Book"
+    L.link(
+        s,
+        deep_listen,
+        "input",
+        filegroup_id=book_fg.id,
+        ordinal=1,
+        actor_kind="rule",
+        detail=dict(path=str(inbox), relation="copy"),
+    )
+    s.flush()
+    assert C.listen_mtimes(s, [deep_listen.id])[deep_listen.id] == pytest.approx(1.0)

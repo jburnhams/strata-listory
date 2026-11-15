@@ -390,28 +390,39 @@ def listen_mtimes(s: Session, ids: list[int] | None = None) -> dict[int, float]:
     """Original source file last-modified timestamp (epoch seconds) for each listen.
     Uses the earliest mtime observed for each file across locations (so a copy synced without preserving mtime does not mask the original source mtime), the latest track within each input part, and the earliest copy when a listen has multiple alternative copies."""
     from sqlalchemy import func
-    from sqlalchemy.orm import aliased
 
     if ids is not None and not ids:
         return {}
-    m1 = aliased(PartFilegroupMember)
-    m2 = aliased(PartFilegroupMember)
-    fid = func.coalesce(ListenPart.file_id, m1.file_id, m2.file_id)
-    file_mtime = (
+    base_parts = select(
+        ListenPart.listen_id.label("listen_id"),
+        ListenPart.id.label("part_id"),
+        func.coalesce(ListenPart.detail["relation"].astext, "copy").label("rel"),
+        ListenPart.file_id.label("file_id"),
+        ListenPart.filegroup_id.label("group_id"),
+    ).where(ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+    if ids is not None:
+        base_parts = base_parts.where(ListenPart.listen_id.in_(ids))
+    part_tree = base_parts.cte(name="part_tree", recursive=True)
+    child_members = select(
+        part_tree.c.listen_id,
+        part_tree.c.part_id,
+        part_tree.c.rel,
+        PartFilegroupMember.file_id,
+        PartFilegroupMember.child_group_id.label("group_id"),
+    ).join(PartFilegroupMember, PartFilegroupMember.group_id == part_tree.c.group_id)
+    part_tree = part_tree.union_all(child_members)
+    file_mtime_sq = (
         select(
-            ListenPart.listen_id.label("listen_id"),
-            ListenPart.id.label("part_id"),
-            func.coalesce(ListenPart.detail["relation"].astext, "copy").label("rel"),
+            part_tree.c.listen_id,
+            part_tree.c.part_id,
+            part_tree.c.rel,
             func.min(PartFileLocation.mtime_ns).label("mtime_ns"),
         )
-        .outerjoin(m1, m1.group_id == ListenPart.filegroup_id)
-        .outerjoin(m2, m2.group_id == m1.child_group_id)
-        .join(PartFileLocation, PartFileLocation.file_id == fid)
-        .where(ListenPart.role == "input", ListenPart.unlinked_at.is_(None))
+        .join(PartFileLocation, PartFileLocation.file_id == part_tree.c.file_id)
+        .where(part_tree.c.file_id.is_not(None))
+        .group_by(part_tree.c.listen_id, part_tree.c.part_id, part_tree.c.rel, part_tree.c.file_id)
+        .subquery()
     )
-    if ids is not None:
-        file_mtime = file_mtime.where(ListenPart.listen_id.in_(ids))
-    file_mtime_sq = file_mtime.group_by(ListenPart.listen_id, ListenPart.id, fid).subquery()
     part_mtime_sq = (
         select(
             file_mtime_sq.c.listen_id,
@@ -570,6 +581,12 @@ def _export_job_info(listen_id: int, jobs=None) -> dict[str, Any] | None:
     return None
 
 
+import threading
+
+_EXPORT_DEST_LOCK = threading.Lock()
+_ACTIVE_EXPORTS: dict[str, int] = {}
+
+
 def _out_dir_belongs_to(
     s: Session,
     listen: Listen,
@@ -599,7 +616,7 @@ def _out_dir_belongs_to(
     other = s.scalar(
         select(ListenChoice.listen_id).where(
             ListenChoice.field == "output",
-            ListenChoice.is_current.is_(True),
+            ListenChoice.unchosen_at.is_(None),
             ListenChoice.listen_id != listen.id,
             ListenChoice.value["out_dir"].astext == cand,
         )
@@ -623,6 +640,43 @@ def _out_dir_belongs_to(
             if (p.detail or {}).get("path")
         }
         return book_path in input_folders
+    return True
+
+
+def _out_dir_available_for(
+    s: Session,
+    listen: Listen,
+    cand: str,
+    cur: dict[str, ListenChoice] | None = None,
+) -> bool:
+    """Whether `cand` is free or already owned/reserved by `listen`."""
+    import json
+    import os
+
+    active_owner = _ACTIVE_EXPORTS.get(cand)
+    if active_owner is not None and active_owner != listen.id:
+        return False
+    lock_file = cand + ".lock"
+    if os.path.isfile(lock_file):
+        try:
+            with open(lock_file, encoding="utf8") as f:
+                lock_data = json.load(f)
+            if int(lock_data.get("listen_id", -1)) != listen.id:
+                return False
+        except (OSError, ValueError, TypeError):
+            return False
+    other = s.scalar(
+        select(ListenChoice.listen_id).where(
+            ListenChoice.field == "output",
+            ListenChoice.unchosen_at.is_(None),
+            ListenChoice.listen_id != listen.id,
+            ListenChoice.value["out_dir"].astext == cand,
+        )
+    )
+    if other is not None:
+        return False
+    if os.path.exists(cand):
+        return _out_dir_belongs_to(s, listen, cand, cur)
     return True
 
 
@@ -785,41 +839,53 @@ def export_listen(
             device="configured",
             level="gated rolling RMS ±3 dB",
         )
-    out_dir = plan["out_dir"]
-    if os.path.exists(out_dir) and not _out_dir_belongs_to(s, listen, out_dir, cur):
-        cands = []
-        if meta["narrator"]:
-            cands.append(f"{out_dir} ({P.clean_name(meta['narrator'])})")
-        cands.append(f"{out_dir} (listen {listen.id})")
-        picked_dir = next(
-            (c for c in cands if not os.path.exists(c) or _out_dir_belongs_to(s, listen, c, cur)),
-            None,
-        )
+    import json
+
+    base_out_dir = plan["out_dir"]
+    cands = [base_out_dir]
+    if meta["narrator"]:
+        cands.append(f"{base_out_dir} ({P.clean_name(meta['narrator'])})")
+    cands.append(f"{base_out_dir} (listen {listen.id})")
+    with _EXPORT_DEST_LOCK:
+        picked_dir = next((c for c in cands if _out_dir_available_for(s, listen, c, cur)), None)
         if picked_dir is None:
-            raise ValueError(f"output folder {out_dir} already belongs to another listen")
+            raise ValueError(f"output folder {base_out_dir} already belongs to another listen")
         out_dir = picked_dir
         plan["out_dir"] = out_dir
-    owns_existing = os.path.exists(out_dir) and _out_dir_belongs_to(s, listen, out_dir, cur)
-    summary = R.execute(book, plan, force=owns_existing)
-    L.choose(
-        s,
-        listen,
-        "output",
-        dict(
-            out_dir=summary["out_dir"],
-            finished=summary["finished"],
-            chapters=summary["chapters"],
-            out_bytes=summary["out_bytes"],
-            out_seconds=summary["out_seconds"],
-            loudness_after=summary["loudness_after"],
-            noise_reduction=bool(noise_reduction),
-        ),
-        actor_kind="user",
-        actor_ref=actor_ref,
-        reason="exported from Library",
-    )
-    L.set_status(s, listen, "processed", actor_kind="user", actor_ref=actor_ref, reason="exported from Library")
-    return summary
+        owns_existing = os.path.exists(out_dir) and _out_dir_belongs_to(s, listen, out_dir, cur)
+        _ACTIVE_EXPORTS[out_dir] = listen.id
+        os.makedirs(os.path.dirname(out_dir), exist_ok=True)
+        with open(out_dir + ".lock", "w", encoding="utf8") as f:
+            json.dump(dict(listen_id=listen.id), f)
+    try:
+        summary = R.execute(book, plan, force=owns_existing)
+        L.choose(
+            s,
+            listen,
+            "output",
+            dict(
+                out_dir=summary["out_dir"],
+                finished=summary["finished"],
+                chapters=summary["chapters"],
+                out_bytes=summary["out_bytes"],
+                out_seconds=summary["out_seconds"],
+                loudness_after=summary["loudness_after"],
+                noise_reduction=bool(noise_reduction),
+            ),
+            actor_kind="user",
+            actor_ref=actor_ref,
+            reason="exported from Library",
+        )
+        L.set_status(s, listen, "processed", actor_kind="user", actor_ref=actor_ref, reason="exported from Library")
+        return summary
+    finally:
+        with _EXPORT_DEST_LOCK:
+            if _ACTIVE_EXPORTS.get(out_dir) == listen.id:
+                _ACTIVE_EXPORTS.pop(out_dir, None)
+            try:
+                os.remove(out_dir + ".lock")
+            except OSError:
+                pass
 
 
 def export_job(listen_id: int, *, noise_reduction: bool = False) -> dict[str, Any]:
