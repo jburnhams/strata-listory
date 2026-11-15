@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Navigate, Route, Routes, useParams } from 'react-router'
 import { AppShell, PageHeader, StrataToastRegion, Tabs } from 'strata-react'
-import { BookOpen, Image, FolderTree, Headphones, ListChecks, Settings, SlidersHorizontal } from 'lucide-react'
+import { BookOpen, Image, FolderTree, Headphones, Library as LibraryIcon, ListChecks, Settings, SlidersHorizontal } from 'lucide-react'
 import { api } from './api'
 import MatchQueuePage from './components/MatchQueuePage'
 import LibraryPage from './components/LibraryPage'
@@ -17,12 +17,13 @@ import ListensPage from './components/ListensPage'
 import CoversPage from './components/CoversPage'
 import ListenPage from './components/ListenPage'
 
-// The flow, top to bottom: raw files on disk, matches (what links file groups to works), listens (confirmed or accepted matches), covers (a picture per listen), processing; Library and Pipeline are the older per-book flow, kept at their paths until retired.
+// The flow, top to bottom: raw files on disk, matches (what links file groups to works), listens (confirmed or accepted matches), covers (a picture per listen), library (listens with chosen covers and their metadata), processing; Pipeline is the older per-book flow, kept at its path until retired.
 const nav = [
   { to: '/files', label: 'Files', icon: FolderTree },
   { to: '/', label: 'Matches', icon: ListChecks, end: true },
   { to: '/listens', label: 'Listens', icon: Headphones },
   { to: '/covers', label: 'Covers', icon: Image },
+  { to: '/library', label: 'Library', icon: LibraryIcon },
   { to: '/processing', label: 'Processing', icon: SlidersHorizontal },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]

@@ -40,12 +40,11 @@ describe('BookPage', () => {
     expect(await screen.findByText('This book has no path (entered by hand).')).toBeInTheDocument()
   })
 
-  it('reports a missing book and is reachable from the library', async () => {
+  it('reports a missing book and is reachable at /book/:id', async () => {
     const { unmount } = setup(<BookPage id={99} />)
     expect(await screen.findByRole('alert')).toHaveTextContent('no such book')
     unmount()
-    const { user } = setup(<App />, { route: '/library' })
-    await user.click(await screen.findByRole('link', { name: 'Dune' }))
+    setup(<App />, { route: '/book/1' })
     expect(await screen.findByRole('heading', { name: 'Dune' })).toBeInTheDocument()
   })
 })

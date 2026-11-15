@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 from functools import lru_cache
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -24,6 +25,7 @@ from app.store.models import (
     PartFilegroupMember,
     PartFileLocation,
     Run,
+    Work,
 )
 
 router = APIRouter(prefix="/api/filegroups")
@@ -436,14 +438,9 @@ def set_listen_kind(listen_id: int, body: KindChoice, s: Session = Depends(get_s
     )
 
 
-@listens_router.get("/{listen_id}/config")
-def get_listen_config(listen_id: int, s: Session = Depends(get_session)):
-    """The listen's output configuration: each field with every source's value and the one chosen (`store.config`), the chosen cover, and the files it is made from."""
+def _full_config(s: Session, l: Listen) -> dict:
     from app.store import config
 
-    l = s.get(Listen, listen_id)
-    if l is None:
-        raise HTTPException(404, "no such listen")
     out = config.config(s, l)
     inputs = [
         dict(
@@ -460,12 +457,211 @@ def get_listen_config(listen_id: int, s: Session = Depends(get_session)):
             .order_by(ListenPart.ordinal)
         )
     ]
-    return dict(out, inputs=inputs)
+    parts = [i for i in inputs if i["relation"] == "part"]
+    minutes = round(sum(i["minutes"] or 0 for i in parts)) if parts else (inputs[0]["minutes"] if inputs else 0)
+    files = round(sum(i["files"] or 0 for i in parts)) if parts else (inputs[0]["files"] if inputs else 0)
+    return dict(
+        out,
+        inputs=inputs,
+        minutes=minutes,
+        files=files,
+        path=inputs[0]["path"] if inputs else None,
+        group_id=inputs[0]["group_id"] if inputs else None,
+    )
+
+
+@listens_router.get("/library")
+def list_library(
+    q: str = "",
+    kind: str = "",
+    missing: str = "",
+    sort: str = "title",
+    limit: int = 10,
+    offset: int = 0,
+    s: Session = Depends(get_session),
+):
+    """Listens with a confirmed match and a chosen cover, paginated with search, kind and metadata filters, and sorting, each with its full metadata configuration table."""
+    limit = max(1, min(limit, 50))
+    offset = max(0, offset)
+    cover_choices = {
+        c.listen_id: c
+        for c in s.scalars(
+            select(ListenChoice).where(ListenChoice.field == "cover", ListenChoice.unchosen_at.is_(None))
+        )
+        if isinstance(c.value, dict) and c.value.get("image_id") is not None
+    }
+    confirmed_ids = {
+        lid
+        for (lid,) in s.execute(
+            select(Listen.id).where(
+                Listen.merged_into_id.is_(None),
+                Listen.retired_at.is_(None),
+                _match_clause("confirmed"),
+            )
+        )
+    }
+    live = {
+        l.id: l
+        for l in s.scalars(
+            select(Listen).where(
+                Listen.id.in_(list(set(cover_choices) & confirmed_ids) or [0]),
+                Listen.merged_into_id.is_(None),
+                Listen.retired_at.is_(None),
+            )
+        )
+    }
+    all_ids = sorted(live)
+    kinds: dict[str, int] = defaultdict(int)
+    for lid in all_ids:
+        kinds[live[lid].kind] += 1
+    without_cover = len(confirmed_ids - set(all_ids))
+    choices_by_lid: dict[int, dict[str, ListenChoice]] = defaultdict(dict)
+    for c in s.scalars(
+        select(ListenChoice).where(
+            ListenChoice.listen_id.in_(all_ids or [0]),
+            ListenChoice.field != "cover",
+            ListenChoice.unchosen_at.is_(None),
+        )
+    ):
+        choices_by_lid[c.listen_id][c.field] = c
+    inputs_by_lid: dict[int, list[ListenPart]] = defaultdict(list)
+    for p in s.scalars(
+        select(ListenPart)
+        .where(
+            ListenPart.listen_id.in_(all_ids or [0]),
+            ListenPart.role == "input",
+            ListenPart.unlinked_at.is_(None),
+        )
+        .order_by(ListenPart.listen_id, ListenPart.ordinal)
+    ):
+        inputs_by_lid[p.listen_id].append(p)
+    work_title_by_lid = dict(
+        s.execute(
+            select(ListenPart.listen_id, Work.title)
+            .join(Work, Work.id == ListenPart.work_id)
+            .where(
+                ListenPart.listen_id.in_(all_ids or [0]),
+                ListenPart.role.in_(("match", "candidate")),
+                ListenPart.state == "accepted",
+                ListenPart.unlinked_at.is_(None),
+            )
+        ).all()
+    )
+
+    def _minutes(lid: int) -> float:
+        ins = inputs_by_lid.get(lid, [])
+        parts = [p for p in ins if (p.detail or {}).get("relation") == "part"]
+        if parts:
+            return sum(float((p.detail or {}).get("minutes") or 0) for p in parts)
+        return float((ins[0].detail or {}).get("minutes") or 0) if ins else 0.0
+
+    def _path(lid: int) -> str:
+        ins = inputs_by_lid.get(lid, [])
+        return str((ins[0].detail or {}).get("path") or "") if ins else ""
+
+    def _val(lid: int, field: str) -> Any:
+        c = choices_by_lid[lid].get(field)
+        return c.value if c else None
+
+    words = q.lower().split()
+    filtered: list[int] = []
+    for lid in all_ids:
+        l = live[lid]
+        if kind and l.kind != kind:
+            continue
+        ch = choices_by_lid[lid]
+        if missing == "missing" and all(
+            _val(lid, f) not in (None, "") for f in ("title", "author", "narrator", "year")
+        ):
+            continue
+        if missing == "narrator" and _val(lid, "narrator") not in (None, ""):
+            continue
+        if missing == "year" and _val(lid, "year") not in (None, ""):
+            continue
+        if missing == "edited" and not any(c.chosen_by == "user" for c in ch.values()):
+            continue
+        if missing == "unedited" and any(c.chosen_by == "user" for c in ch.values()):
+            continue
+        if words:
+            haystack = " ".join(
+                [l.label, _path(lid), work_title_by_lid.get(lid, ""), str(lid), *(str(c.value) for c in ch.values())]
+            ).lower()
+            if not all(w in haystack for w in words):
+                continue
+        filtered.append(lid)
+
+    def _title(lid: int) -> str:
+        return str(_val(lid, "title") or live[lid].label or "").lower()
+
+    def _author(lid: int) -> str:
+        return str(_val(lid, "author") or "").lower()
+
+    def _year(lid: int) -> int | None:
+        v = _val(lid, "year")
+        return int(v) if isinstance(v, int) or (isinstance(v, str) and v.isdigit()) else None
+
+    if sort == "title-desc":
+        filtered.sort(key=lambda lid: (_title(lid), lid), reverse=True)
+    elif sort == "author":
+        filtered.sort(key=lambda lid: (_author(lid) == "", _author(lid), _title(lid), lid))
+    elif sort == "year-desc":
+        filtered.sort(key=lambda lid: (_year(lid) is None, -(_year(lid) or 0), _title(lid), lid))
+    elif sort == "year-asc":
+        filtered.sort(key=lambda lid: (_year(lid) is None, _year(lid) or 0, _title(lid), lid))
+    elif sort == "length-desc":
+        filtered.sort(key=lambda lid: (-_minutes(lid), _title(lid), lid))
+    elif sort == "length-asc":
+        filtered.sort(key=lambda lid: (_minutes(lid), _title(lid), lid))
+    elif sort == "recent":
+        filtered.sort(key=lambda lid: (cover_choices[lid].chosen_at, lid), reverse=True)
+    else:
+        filtered.sort(key=lambda lid: (_title(lid), lid))
+
+    page_ids = filtered[offset : offset + limit]
+    return dict(
+        total=len(filtered),
+        all_total=len(all_ids),
+        without_cover=without_cover,
+        kinds=dict(kinds),
+        offset=offset,
+        limit=limit,
+        rows=[_full_config(s, live[lid]) for lid in page_ids],
+    )
+
+
+@listens_router.get("/{listen_id}/config")
+def get_listen_config(listen_id: int, s: Session = Depends(get_session)):
+    """The listen's output configuration: each field with every source's value and the one chosen (`store.config`), the chosen cover, and the files it is made from."""
+    l = s.get(Listen, listen_id)
+    if l is None:
+        raise HTTPException(404, "no such listen")
+    return _full_config(s, l)
 
 
 class FieldChoice(BaseModel):
     value: str | int | None = None
     source: str = ""
+
+
+class FieldsChoice(BaseModel):
+    values: dict[str, str | int | None]
+    source: str = ""
+
+
+@listens_router.post("/{listen_id}/config")
+def choose_listen_fields(listen_id: int, b: FieldsChoice, s: Session = Depends(get_session)):
+    """Apply several field choices at once (such as clicking a source column on the Library page)."""
+    from app.store import config
+
+    l = s.get(Listen, listen_id)
+    if l is None:
+        raise HTTPException(404, "no such listen")
+    try:
+        config.choose_fields(s, l, b.values, source=b.source)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    s.commit()
+    return _full_config(s, l)
 
 
 @listens_router.post("/{listen_id}/config/{field}")
@@ -481,7 +677,7 @@ def choose_listen_field(listen_id: int, field: str, b: FieldChoice, s: Session =
     except ValueError as e:
         raise HTTPException(400, str(e))
     s.commit()
-    return config.config(s, l)
+    return _full_config(s, l)
 
 
 @listens_router.get("/{listen_id}")

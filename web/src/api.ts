@@ -48,13 +48,6 @@ export const api = {
   health: () => req<Health>('/api/health'),
   settings: () => req<Settings>('/api/settings'),
   saveSettings: (s: Partial<Omit<Settings, 'library_dirs'>> & { library_dirs?: string[] }) => req<Settings>('/api/settings', send('PUT', s)),
-  books: (f: Filters = {}) => req<Book[]>(booksUrl(f).slice(BASE.length)),
-  libraryWorkflow: () => req<{ books: Record<string, LibraryStage[]> }>('/api/library/workflow'),
-  addBook: (b: NewBook) => req<Book>('/api/books', send('POST', b)),
-  setStatus: (id: number, status: Status) => req<Book>(`/api/books/${id}`, send('PATCH', { status })),
-  removeBook: (id: number) => req<Book>(`/api/books/${id}`, { method: 'DELETE' }),
-  confirm: (id: number) => req<Book>(`/api/books/${id}/confirm`, { method: 'POST' }),
-  ignore: (id: number) => req<Book>(`/api/books/${id}/ignore`, { method: 'POST' }),
   details: (id: number) => req<BookDetails>(`/api/books/${id}/details`),
   source: (id: number) => req<SourceFilesInfo>(`/api/books/${id}/source`),
   enrichBook: (id: number) => req<{ found: boolean; extras: Extras }>(`/api/books/${id}/enrich`, { method: 'POST' }),
@@ -73,7 +66,6 @@ export const api = {
   scan: () => req<ScanResult>('/api/scan', send('POST', {})),
   buildListens: () => req<{ made: number; books: number; radio_series: number; already_had_listens: number; loose_files_left: number; metadata_read: number }>('/api/pipeline/listens-build', send('POST', {})),
   scanFolder: (folder: string) => req<{ files: number; folders: number; bytes: number }>('/api/filegroups/scan', send('POST', { folder })),
-  match: (limit = 25) => req<MatchResult>(`/api/match?limit=${limit}`, { method: 'POST' }),
 }
 
 export interface ProbeInfo { available: boolean; files_probed?: number; complete?: boolean; duration_seconds?: number; tags?: Record<string, string>; codec?: string; bitrate_kbps?: number | null; chapters?: number; has_cover_art?: boolean }
@@ -115,7 +107,6 @@ export const ingestApi = {
   prepareSamples: (id: string) => req<{ samples: ListeningSample[] }>(`/api/ingest/runs/${encodeURIComponent(id)}/samples`, { method: 'POST' }),
   samples: (id: string) => req<{ samples: ListeningSample[] }>(`/api/ingest/runs/${encodeURIComponent(id)}/samples`),
   dashboard: (offset = 0, phase?: 'metadata' | 'audiobook' | 'quality', sort?: ReviewSort) => req<IngestDashboard>('/api/ingest' + (offset || phase || sort ? `?offset=${offset}${phase ? `&phase=${phase}` : ''}${sort ? `&sort=${sort}` : ''}` : '')),
-  start: (ids: number[], online: boolean) => req('/api/ingest/run', send('POST', { ids, online, limit: ids.length })),
   resume: (id: string) => req(`/api/ingest/runs/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
   chooseRecording: (id: string, key: string) => req(`/api/ingest/runs/${encodeURIComponent(id)}/recording`, { method: 'PUT', body: JSON.stringify({ key }) }),
   approveStage: (id: string, phase: 'metadata' | 'audiobook' | 'quality') => req(`/api/ingest/runs/${encodeURIComponent(id)}/approve/${phase}`, { method: 'POST' }),
@@ -146,16 +137,26 @@ export interface ListenList { total: number; kinds: Record<string, number>; revi
 export interface ConfigSource { source: string; label: string; ref: string; note: string }
 export interface ConfigOption { value: string | number; sources: ConfigSource[]; chosen: boolean }
 export interface ConfigField { field: string; label: string; value: string | number | null; chosen_by: string | null; options: ConfigOption[] }
+export interface ConfigColumn {
+  id: string; kind: 'original' | 'audible' | 'openlibrary'; label: string
+  asin?: string; region?: string; runtime_minutes?: number | null; abridged?: boolean | null
+  values: Record<string, string | number | null>; used: boolean; used_fields: string[]
+}
 export interface ListenConfig {
-  listen_id: number; label: string; kind: string; status: string; fields: ConfigField[]
+  listen_id: number; label: string; kind: string; status: string; fields: ConfigField[]; sources?: ConfigColumn[]
   cover: { image_id: number; width: number; height: number } | null
   work: { id: number; title: string; authors: string[]; year: number | null } | null
   recordings: { asin: string; region: string; title: string; narrators: string[]; runtime_minutes: number | null; release: string | null; abridged: boolean | null }[]
   inputs: { part_id: number; group_id: number | null; path: string | null; files: number; minutes: number; relation: string }[]
+  minutes?: number; files?: number; path?: string | null; group_id?: number | null
 }
+export type LibrarySort = 'title' | 'title-desc' | 'author' | 'year-desc' | 'year-asc' | 'length-desc' | 'length-asc' | 'recent'
+export interface LibraryList { total: number; all_total: number; without_cover: number; kinds: Record<string, number>; offset: number; limit: number; rows: ListenConfig[] }
 export const listenApi = {
   config: (id: number) => req<ListenConfig>(`/api/listens/${id}/config`),
   chooseField: (id: number, field: string, value: string | number | null, source = '') => req<ListenConfig>(`/api/listens/${id}/config/${field}`, send('POST', { value, source })),
+  chooseFields: (id: number, values: Record<string, string | number | null>, source = '') => req<ListenConfig>(`/api/listens/${id}/config`, send('POST', { values, source })),
+  library: (q = '', kind = '', missing = '', sort: LibrarySort = 'title', limit = 10, offset = 0) => req<LibraryList>(`/api/listens/library?${new URLSearchParams({ q, kind, missing, sort, limit: String(limit), offset: String(offset) })}`),
   list: (q = '', kind = '', status = '', match = '', limit = 500) => req<ListenList>(`/api/listens?${new URLSearchParams({ q, kind, status, match, limit: String(limit) })}`),
   setKind: (id: number, kind: string) => req<{ ok: boolean; retraining: boolean; reidentified?: boolean; kind_info: KindInfoData | null }>(`/api/listens/${id}/kind`, send('POST', { kind })),
 }
@@ -172,9 +173,10 @@ export interface CoverRecording { asin: string; narrator: string; minutes: numbe
 export interface CoverMatch extends CoverSide { recordings: number; all_recordings: CoverRecording[]; probability: number | null; accepted_by: string }
 export interface CoverRow { listen_id: number; label: string; kind: string; run_id: number; searched: string | null; state: 'choose' | 'chosen' | 'none'; chosen: number | null; covers: CoverPicture[]; sources: CoverStatus[]; source: CoverFiles; match: CoverMatch | null }
 export interface CoverJob { running: boolean; queued: number; current: string; error: string; failed: { job_id: string; label: string; error: string }[] }
+export type CoverSort = 'recent' | 'oldest' | 'title' | 'title-desc' | 'most-covers' | 'fewest-covers'
 export interface CoverList { total: number; counts: Record<'choose' | 'chosen' | 'none', number>; waiting: number; rows: CoverRow[]; job: CoverJob }
 export const coverApi = {
-  list: (state = '', q = '', limit = 24) => req<CoverList>(`/api/covers?${new URLSearchParams({ state, q, limit: String(limit) })}`),
+  list: (state = '', q = '', sort: CoverSort = 'recent', limit = 24) => req<CoverList>(`/api/covers?${new URLSearchParams({ state, q, sort, limit: String(limit) })}`),
   choose: (listenId: number, imageId: number | null, via: 'pick' | 'accept' = 'pick') => req<{ ok: boolean; chosen: number | null }>(`/api/covers/${listenId}/choose`, send('POST', { image_id: imageId, via })),
   run: (listenIds?: number[], force = false) => req<{ queued: number; listen_ids: number[] }>('/api/covers/run', send('POST', { listen_ids: listenIds ?? null, force })),
   unaccept: (listenId: number) => req<{ ok: boolean }>(`/api/covers/${listenId}/unaccept`, send('POST', {})),

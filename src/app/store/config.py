@@ -125,9 +125,11 @@ def audible_rows(asins: list[str], connect=None) -> list[dict]:
 
 
 def gather(s: Session, listen: Listen, *, audible=None) -> tuple[Candidates, dict]:
-    """Every candidate value for the listen's fields, and facts the page shows beside them (the work, the Audible recordings)."""
+    """Every candidate value for the listen's fields, and facts the page shows beside them (the work, the Audible recordings, and each source column's values)."""
     cands = Candidates()
-    facts: dict[str, Any] = dict(work=None, recordings=[])
+    orig: dict[str, Any] = dict.fromkeys(FIELDS)
+    ol: dict[str, Any] = dict.fromkeys(FIELDS)
+    facts: dict[str, Any] = dict(work=None, recordings=[], original=orig, openlibrary=ol)
     for part in s.scalars(
         select(ListenPart)
         .where(ListenPart.listen_id == listen.id, ListenPart.role == "record", ListenPart.unlinked_at.is_(None))
@@ -149,10 +151,18 @@ def gather(s: Session, listen: Listen, *, audible=None) -> tuple[Candidates, dic
                             t,
                             f"{p[t]['n']} of {p.get('tagged')} tagged files",
                         )
+                        if orig[field] is None:
+                            v = _year(p[t]["value"]) if field == "year" else p[t]["value"]
+                            if v not in (None, ""):
+                                orig[field] = v
         elif rec.source == "folder_name":
             for field in ("title", "author", "narrator", "year", "asin"):
                 if p.get(field):
                     cands.add(field, p[field], "folder", "Folder name", p.get("folder") or "")
+                    if orig[field] is None:
+                        v = _year(p[field]) if field == "year" else p[field]
+                        if v not in (None, ""):
+                            orig[field] = v
     found = s.scalars(
         select(ListenPart)
         .where(
@@ -177,14 +187,19 @@ def gather(s: Session, listen: Listen, *, audible=None) -> tuple[Candidates, dic
             year=d.get("year") or work.year,
             confirmed=found.linked_by == "user" or None,
         )
-        cands.add("title", work.title, "openlibrary", "Open Library work", (ids.get("work") or [""])[0])
-        cands.add("author", d.get("authors") or [], "openlibrary", "Open Library work", (ids.get("work") or [""])[0])
+        ol_ref = (ids.get("work") or [""])[0]
+        ol["title"] = work.title or None
+        ol["author"] = ", ".join(d.get("authors") or []) or None
+        ol["year"] = _year(d.get("year") or work.year)
+        ol["isbn"] = (ids.get("isbn") or [None])[0]
+        cands.add("title", work.title, "openlibrary", "Open Library work", ol_ref)
+        cands.add("author", d.get("authors") or [], "openlibrary", "Open Library work", ol_ref)
         cands.add(
             "year",
             d.get("year") or work.year,
             "openlibrary",
             "Open Library work (first published)",
-            (ids.get("work") or [""])[0],
+            ol_ref,
         )
         for isbn in ids.get("isbn", [])[:12]:
             cands.add("isbn", isbn, "openlibrary", "Open Library edition", isbn)
@@ -214,10 +229,31 @@ def chosen(s: Session, listen_id: int) -> dict[str, ListenChoice]:
     }
 
 
+def _recording_values(r: dict) -> dict[str, Any]:
+    return dict(
+        title=r.get("title") or None,
+        subtitle=r.get("subtitle") or None,
+        author=", ".join(r["authors"]) if r.get("authors") else None,
+        narrator=", ".join(r["narrators"]) if r.get("narrators") else None,
+        series=r.get("series") or None,
+        series_position=str(r["series_position"]).strip() if r.get("series_position") not in (None, "") else None,
+        year=_year(r.get("release")),
+        publisher=r.get("publisher") or None,
+        language=r.get("language") or None,
+        asin=r.get("asin") or None,
+        isbn=r.get("isbn") or None,
+    )
+
+
 def config(s: Session, listen: Listen, *, audible=None) -> dict:
-    """The page's data: each field with its candidates (largest agreement first), the chosen value and how it was chosen (`rule` from tags or the folder name, `model`, `user`), and the recordings of the work."""
+    """The page's data: each field with its candidates (largest agreement first), the chosen value and how it was chosen (`rule` from tags or the folder name, `model`, `user`), the source columns (Original, each Audible recording, Open Library) with which fields currently use them, and the recordings of the work."""
     cands, facts = gather(s, listen, audible=audible)
     cur = chosen(s, listen.id)
+    orig = dict(facts["original"])
+    if all(v is None for v in orig.values()):
+        for f in FIELDS:
+            if (c := cur.get(f)) and c.chosen_by in ("rule", "import") and c.value not in (None, ""):
+                orig[f] = c.value
     fields = []
     for f in FIELDS:
         options = cands.lists()[f]
@@ -243,6 +279,34 @@ def config(s: Session, listen: Listen, *, audible=None) -> dict:
             o["chosen"] = o is match
         options.sort(key=lambda o: (not o["chosen"], -len(o["sources"])))
         fields.append(dict(field=f, label=LABEL[f], value=value, chosen_by=c.chosen_by if c else None, options=options))
+    sources = [
+        dict(id="original", kind="original", label="Original", values=orig),
+        *[
+            dict(
+                id=f"audible:{r['asin']}",
+                kind="audible",
+                label=f"Audible {r['region'].upper()} · {r['asin']}",
+                asin=r["asin"],
+                region=r["region"],
+                runtime_minutes=r.get("runtime_minutes"),
+                abridged=r.get("abridged"),
+                values=_recording_values(r),
+            )
+            for r in facts["recordings"]
+        ],
+        dict(id="openlibrary", kind="openlibrary", label="Open Library", values=dict(facts["openlibrary"])),
+    ]
+    for src in sources:
+        used_fields = [
+            f
+            for f in FIELDS
+            if (c := cur.get(f)) is not None
+            and c.value is not None
+            and src["values"].get(f) is not None
+            and _key(f, src["values"][f]) == _key(f, c.value)
+        ]
+        src["used_fields"] = used_fields
+        src["used"] = bool(used_fields)
     cover = cur.get("cover")
     return dict(
         listen_id=listen.id,
@@ -250,6 +314,7 @@ def config(s: Session, listen: Listen, *, audible=None) -> dict:
         kind=listen.kind,
         status=listen.status,
         fields=fields,
+        sources=sources,
         cover=cover.value if cover else None,
         work=facts["work"],
         recordings=facts["recordings"],
@@ -283,3 +348,11 @@ def choose_field(
         actor_ref=actor_ref,
         reason=f"chosen from {source or 'a typed value'}",
     )
+
+
+def choose_fields(
+    s: Session, listen: Listen, values: dict[str, Any], *, source: str = "", actor_ref: str = "web"
+) -> None:
+    """Apply several field choices at once (such as clicking a source column on the Library page)."""
+    for field, value in values.items():
+        choose_field(s, listen, field, value, source=source, actor_ref=actor_ref)

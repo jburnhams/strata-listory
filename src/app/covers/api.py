@@ -176,9 +176,15 @@ def _card(s: Session, listen: Listen, run: CoverRun, chosen: dict | None, info: 
 
 @router.get("")
 def covers(
-    request: Request, state: str = "", q: str = "", limit: int = 24, offset: int = 0, s: Session = Depends(get_session)
+    request: Request,
+    state: str = "",
+    q: str = "",
+    sort: str = "recent",
+    limit: int = 24,
+    offset: int = 0,
+    s: Session = Depends(get_session),
 ):
-    """Listens a cover search has run on, newest search first. `state`: choose (covers found, none chosen), chosen, none (nothing found); empty = all."""
+    """Listens a cover search has run on, sorted by `sort` (`recent` newest search first, `oldest` oldest search first, `title` A–Z, `title-desc` Z–A, `most-covers`, `fewest-covers`). `state`: choose (covers found, none chosen), chosen, none (nothing found); empty = all."""
     limit = max(1, min(limit, 100))
     runs = _latest_runs(s)
     accepted = set(
@@ -197,31 +203,37 @@ def covers(
     }  # a match taken back leaves the page until it is accepted again
     listens = {l.id: l for l in s.scalars(select(Listen).where(Listen.id.in_(list(runs) or [0])))}
     chosen = _chosen(s, list(runs))
-    with_pictures = set(
-        s.scalars(
-            select(CoverCandidate.run_id)
+    cand_counts = dict(
+        s.execute(
+            select(CoverCandidate.run_id, func.count(func.distinct(CoverCandidate.image_id)))
             .where(CoverCandidate.run_id.in_([r.id for r in runs.values()] or [0]))
-            .distinct()
-        )
+            .group_by(CoverCandidate.run_id)
+        ).all()
     )
-    has_cover = {lid: r.id in with_pictures for lid, r in runs.items()}
+    has_cover = {lid: cand_counts.get(r.id, 0) > 0 for lid, r in runs.items()}
 
     def st(lid):
         return "chosen" if (chosen.get(lid) or {}).get("image_id") else ("choose" if has_cover[lid] else "none")
 
     counts = {k: sum(1 for lid in runs if st(lid) == k) for k in ("choose", "chosen", "none")}
     words = q.lower().split()
-    ids = sorted(
-        (
-            lid
-            for lid in runs
-            if lid in listens
-            and (not state or st(lid) == state)
-            and all(w in listens[lid].label.lower() for w in words)
-        ),
-        key=lambda lid: (runs[lid].finished_at, lid),
-        reverse=True,
-    )
+    filtered = [
+        lid
+        for lid in runs
+        if lid in listens and (not state or st(lid) == state) and all(w in listens[lid].label.lower() for w in words)
+    ]
+    if sort == "oldest":
+        ids = sorted(filtered, key=lambda lid: (runs[lid].finished_at, lid))
+    elif sort == "title":
+        ids = sorted(filtered, key=lambda lid: (listens[lid].label.lower(), lid))
+    elif sort == "title-desc":
+        ids = sorted(filtered, key=lambda lid: (listens[lid].label.lower(), lid), reverse=True)
+    elif sort == "most-covers":
+        ids = sorted(filtered, key=lambda lid: (-cand_counts.get(runs[lid].id, 0), listens[lid].label.lower(), lid))
+    elif sort == "fewest-covers":
+        ids = sorted(filtered, key=lambda lid: (cand_counts.get(runs[lid].id, 0), listens[lid].label.lower(), lid))
+    else:
+        ids = sorted(filtered, key=lambda lid: (runs[lid].finished_at, lid), reverse=True)
     page = ids[offset : offset + limit]
     infos = _info(s, page) if page else {}
     return dict(

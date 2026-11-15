@@ -101,36 +101,157 @@ export function resetCovers() {
 }
 resetCovers()
 
-export const configState: { picks: { field: string; value: unknown; source: string }[]; config: import('../../src/api').ListenConfig } = { picks: [], config: undefined as never }
+export const configState: {
+  picks: { field: string; value: unknown; source: string }[]
+  bulkPicks: { listen_id: number; values: Record<string, unknown>; source: string }[]
+  withoutCover: number
+  config: import('../../src/api').ListenConfig
+  library: import('../../src/api').ListenConfig[]
+} = { picks: [], bulkPicks: [], withoutCover: 2, config: undefined as never, library: [] }
+
+function syncConfig(cfg: import('../../src/api').ListenConfig, updates: Record<string, string | number | null>): import('../../src/api').ListenConfig {
+  const fields = cfg.fields.map(f => {
+    if (!(f.field in updates)) return f
+    const val = updates[f.field]
+    const hasOpt = val != null && f.options.some(o => String(o.value).toLowerCase() === String(val).toLowerCase())
+    const options = [
+      ...f.options.map(o => ({ ...o, chosen: val != null && String(o.value).toLowerCase() === String(val).toLowerCase() })),
+      ...(val != null && !hasOpt ? [{ value: val, chosen: true, sources: [{ source: 'user', label: 'Chosen by you', ref: '', note: '' }] }] : []),
+    ]
+    return { ...f, value: val, chosen_by: val == null ? null : 'user', options }
+  })
+  const byField = Object.fromEntries(fields.map(f => [f.field, f.value]))
+  const sources = cfg.sources?.map(col => {
+    const used_fields = Object.entries(col.values).filter(([k, v]) => v != null && v !== '' && byField[k] != null && String(byField[k]) === String(v)).map(([k]) => k)
+    return { ...col, used: used_fields.length > 0, used_fields }
+  })
+  return { ...cfg, fields, sources }
+}
+
 export function resetConfig() {
   const src = (source: string, label: string, ref = '', note = '') => ({ source, label, ref, note })
   configState.picks = []
-  configState.config = {
+  configState.bulkPicks = []
+  configState.withoutCover = 2
+  configState.config = syncConfig({
     listen_id: 1, label: 'Red Dragon', kind: 'book', status: 'identified', cover: null,
     work: { id: 7, title: 'Red Dragon', authors: ['Thomas Harris'], year: 1981 },
     recordings: [{ asin: 'B0A', region: 'uk', title: 'Red Dragon', narrators: ['Steven Weber'], runtime_minutes: 725, release: '2004-05-01', abridged: false }],
     inputs: [{ part_id: 1, group_id: 2, path: '/audio/Red Dragon', files: 24, minutes: 725, relation: 'copy' }],
+    sources: [
+      { id: 'original', kind: 'original', label: 'Original', values: { title: 'Red Dragon', author: 'Thomas Harris', narrator: null, subtitle: null, year: 1981 }, used: true, used_fields: ['title'] },
+      { id: 'audible:B0A', kind: 'audible', label: 'Audible UK · B0A', asin: 'B0A', region: 'uk', runtime_minutes: 725, abridged: false, values: { title: 'Red Dragon', author: 'Thomas Harris', narrator: 'Steven Weber', subtitle: 'Hannibal Lecter #1', year: 2004 }, used: true, used_fields: ['title'] },
+      { id: 'audible:B0B', kind: 'audible', label: 'Audible US · B0B', asin: 'B0B', region: 'us', runtime_minutes: 300, abridged: true, values: { title: 'The Red Dragon', author: 'T. Harris', narrator: 'Alan Sklar', subtitle: null, year: 2000 }, used: false, used_fields: [] },
+      { id: 'openlibrary', kind: 'openlibrary', label: 'Open Library', values: { title: 'Red Dragon', author: 'Thomas Harris', narrator: null, subtitle: null, year: 1981 }, used: true, used_fields: ['title'] },
+    ],
     fields: [
       { field: 'title', label: 'Title', value: 'Red Dragon', chosen_by: 'rule', options: [{ value: 'Red Dragon', chosen: true, sources: [src('tags', 'Embedded tag', 'album', '24 of 24 tagged files'), src('openlibrary', 'Open Library work')] }, { value: 'The Red Dragon', chosen: false, sources: [src('folder', 'Folder name')] }] },
-      { field: 'narrator', label: 'Narrator', value: null, chosen_by: null, options: [{ value: 'Steven Weber', chosen: false, sources: [src('audible', 'Audible UK', 'B0A')] }] },
+      { field: 'author', label: 'Author', value: 'Thomas Harris', chosen_by: 'rule', options: [{ value: 'Thomas Harris', chosen: true, sources: [src('tags', 'Embedded tag', 'artist'), src('openlibrary', 'Open Library work')] }] },
+      { field: 'narrator', label: 'Narrator', value: null, chosen_by: null, options: [{ value: 'Steven Weber', chosen: false, sources: [src('audible', 'Audible UK', 'B0A')] }, { value: 'Alan Sklar', chosen: false, sources: [src('audible', 'Audible US', 'B0B')] }] },
       { field: 'subtitle', label: 'Subtitle', value: null, chosen_by: null, options: [] },
+      { field: 'year', label: 'Year', value: 1981, chosen_by: 'rule', options: [{ value: 1981, chosen: true, sources: [src('openlibrary', 'Open Library work')] }, { value: 2004, chosen: false, sources: [src('audible', 'Audible UK', 'B0A')] }] },
     ],
-  }
+  }, {})
+  const second = syncConfig({
+    listen_id: 3, label: 'Dead Ringers', kind: 'radio_series', status: 'identified',
+    cover: { image_id: 31, width: 800, height: 800 },
+    work: null, recordings: [],
+    inputs: [{ part_id: 3, group_id: null, path: '/audio/Dead Ringers', files: 6, minutes: 180, relation: 'copy' }],
+    minutes: 180, files: 6, path: '/audio/Dead Ringers', group_id: null,
+    sources: [
+      { id: 'original', kind: 'original', label: 'Original', values: { title: 'Dead Ringers', author: 'BBC Radio 4', narrator: 'Jon Culshaw', year: 2011 }, used: true, used_fields: ['title', 'author', 'narrator', 'year'] },
+      { id: 'openlibrary', kind: 'openlibrary', label: 'Open Library', values: { title: null, author: null, narrator: null, year: null }, used: false, used_fields: [] },
+    ],
+    fields: [
+      { field: 'title', label: 'Title', value: 'Dead Ringers', chosen_by: 'user', options: [{ value: 'Dead Ringers', chosen: true, sources: [src('tags', 'Embedded tag')] }] },
+      { field: 'author', label: 'Author', value: 'BBC Radio 4', chosen_by: 'rule', options: [{ value: 'BBC Radio 4', chosen: true, sources: [src('tags', 'Embedded tag')] }] },
+      { field: 'narrator', label: 'Narrator', value: 'Jon Culshaw', chosen_by: 'rule', options: [{ value: 'Jon Culshaw', chosen: true, sources: [src('tags', 'Embedded tag')] }] },
+      { field: 'year', label: 'Year', value: 2011, chosen_by: 'rule', options: [{ value: 2011, chosen: true, sources: [src('tags', 'Embedded tag')] }] },
+    ],
+  }, {})
+  configState.library = [
+    { ...configState.config, cover: { image_id: 11, width: 2400, height: 2400 }, minutes: 725, files: 24, path: '/audio/Red Dragon', group_id: 2 },
+    second,
+  ]
 }
 resetConfig()
 
 export const handlers = [
+  http.get('/api/listens/library', ({ request }) => {
+    const u = new URL(request.url)
+    const q = (u.searchParams.get('q') ?? '').toLowerCase()
+    const kind = u.searchParams.get('kind') ?? ''
+    const missing = u.searchParams.get('missing') ?? ''
+    const sort = u.searchParams.get('sort') ?? 'title'
+    const limit = Number(u.searchParams.get('limit') ?? 10)
+    const offset = Number(u.searchParams.get('offset') ?? 0)
+    const kinds = configState.library.reduce<Record<string, number>>((m, r) => { m[r.kind] = (m[r.kind] ?? 0) + 1; return m }, {})
+    const fval = (r: import('../../src/api').ListenConfig, k: string) => r.fields.find(f => f.field === k)?.value
+    const filtered = configState.library.filter(r => {
+      if (kind && r.kind !== kind) return false
+      if (missing === 'missing' && fval(r, 'title') && fval(r, 'author') && fval(r, 'narrator') && fval(r, 'year')) return false
+      if (missing === 'narrator' && fval(r, 'narrator')) return false
+      if (missing === 'year' && fval(r, 'year')) return false
+      if (missing === 'edited' && !r.fields.some(f => f.chosen_by === 'user')) return false
+      if (missing === 'unedited' && r.fields.some(f => f.chosen_by === 'user')) return false
+      const words = q.split(/\s+/).filter(Boolean)
+      if (!words.every(w => `${r.label} ${r.path ?? ''} ${r.fields.map(f => f.value ?? '').join(' ')}`.toLowerCase().includes(w))) return false
+      return true
+    })
+    const sorted = [...filtered].sort((a, b) => {
+      if (sort === 'title-desc') return b.label.localeCompare(a.label)
+      if (sort === 'author') return String(fval(a, 'author') ?? '').localeCompare(String(fval(b, 'author') ?? ''))
+      if (sort === 'year-desc') return Number(fval(b, 'year') ?? 0) - Number(fval(a, 'year') ?? 0)
+      if (sort === 'year-asc') return Number(fval(a, 'year') ?? 0) - Number(fval(b, 'year') ?? 0)
+      if (sort === 'length-desc') return (b.minutes ?? 0) - (a.minutes ?? 0)
+      if (sort === 'length-asc') return (a.minutes ?? 0) - (b.minutes ?? 0)
+      if (sort === 'recent') return b.listen_id - a.listen_id
+      return a.label.localeCompare(b.label)
+    })
+    return HttpResponse.json({
+      total: sorted.length,
+      all_total: configState.library.length,
+      without_cover: configState.withoutCover,
+      kinds,
+      offset,
+      limit,
+      rows: sorted.slice(offset, offset + limit),
+    })
+  }),
   http.get('/api/listens/:id/config', () => HttpResponse.json(configState.config)),
+  http.post('/api/listens/:id/config', async ({ request, params }) => {
+    const id = Number(params.id)
+    const b = await request.json() as { values: Record<string, string | number | null>; source: string }
+    configState.bulkPicks.push({ listen_id: id, values: b.values, source: b.source })
+    if (id === configState.config.listen_id) configState.config = syncConfig(configState.config, b.values)
+    configState.library = configState.library.map(r => r.listen_id === id ? syncConfig(r, b.values) : r)
+    const found = configState.library.find(r => r.listen_id === id) ?? configState.config
+    return HttpResponse.json(found)
+  }),
   http.post('/api/listens/:id/config/:field', async ({ request, params }) => {
+    const id = Number(params.id)
+    const field = String(params.field)
     const b = await request.json() as { value: string | number | null; source: string }
-    if (params.field === 'year' && b.value === 'soon') return HttpResponse.json({ detail: 'the year must be four digits' }, { status: 400 })
-    configState.picks.push({ field: String(params.field), value: b.value, source: b.source })
-    configState.config = { ...configState.config, fields: configState.config.fields.map(f => f.field !== params.field ? f : { ...f, value: b.value, chosen_by: b.value == null ? null : 'user', options: f.options.map(o => ({ ...o, chosen: o.value === b.value })) }) }
-    return HttpResponse.json(configState.config)
+    if (field === 'year' && b.value === 'soon') return HttpResponse.json({ detail: 'the year must be four digits' }, { status: 400 })
+    configState.picks.push({ field, value: b.value, source: b.source })
+    if (id === configState.config.listen_id) configState.config = syncConfig(configState.config, { [field]: b.value })
+    configState.library = configState.library.map(r => r.listen_id === id ? syncConfig(r, { [field]: b.value }) : r)
+    const found = id === configState.config.listen_id && !configState.library.some(r => r.listen_id === id)
+      ? configState.config
+      : (configState.library.find(r => r.listen_id === id) ?? configState.config)
+    return HttpResponse.json(found)
   }),
   http.get('/api/covers', ({ request }) => {
-    const u = new URL(request.url), state = u.searchParams.get('state') ?? '', q = (u.searchParams.get('q') ?? '').toLowerCase()
-    const rows = coverState.rows.filter(r => (!state || r.state === state) && q.split(' ').filter(Boolean).every(w => r.label.toLowerCase().includes(w)))
+    const u = new URL(request.url), state = u.searchParams.get('state') ?? '', q = (u.searchParams.get('q') ?? '').toLowerCase(), sort = u.searchParams.get('sort') ?? 'recent'
+    const filtered = coverState.rows.filter(r => (!state || r.state === state) && q.split(' ').filter(Boolean).every(w => r.label.toLowerCase().includes(w)))
+    const rows = [...filtered].sort((a, b) => {
+      if (sort === 'oldest') return (a.searched ?? '').localeCompare(b.searched ?? '')
+      if (sort === 'title') return a.label.localeCompare(b.label)
+      if (sort === 'title-desc') return b.label.localeCompare(a.label)
+      if (sort === 'most-covers') return b.covers.length - a.covers.length || a.label.localeCompare(b.label)
+      if (sort === 'fewest-covers') return a.covers.length - b.covers.length || a.label.localeCompare(b.label)
+      return (b.searched ?? '').localeCompare(a.searched ?? '')
+    })
     const count = (k: string) => coverState.rows.filter(r => r.state === k).length
     return HttpResponse.json({ total: rows.length + (q === 'big' ? 30 : 0), counts: { choose: count('choose'), chosen: count('chosen'), none: count('none') }, waiting: coverState.waiting, rows, job: coverState.job })
   }),

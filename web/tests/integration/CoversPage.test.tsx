@@ -226,7 +226,7 @@ describe('CoversPage', () => {
     await waitFor(() => expect(retried).toEqual(['j9']))
   })
 
-  it('searches by title, shows all searched listens, and says when nothing is there', async () => {
+  it('searches by title, sorts covers, shows all searched listens, and says when nothing is there', async () => {
     const { user } = setup(<CoversPage />, { route: '/covers' })
     await screen.findByRole('article', { name: 'Glass Orchard' })
     await user.click(screen.getByRole('tab', { name: 'All searched' }))
@@ -234,6 +234,16 @@ describe('CoversPage', () => {
     expect(within(third).getByText('/x/Third Book')).toBeInTheDocument()   // a listen with no file group shows its path as plain text
     expect(within(third).queryByRole('link', { name: '/x/Third Book' })).toBeNull()
     expect(screen.getByRole('article', { name: 'Salt Roads' })).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('Sort by'), 'title')
+    await waitFor(() => {
+      const names = screen.getAllByRole('article').map(a => a.getAttribute('aria-label'))
+      expect(names).toEqual(['Glass Orchard', 'Salt Roads', 'Third Book'])
+    })
+    await user.selectOptions(screen.getByLabelText('Sort by'), 'recent')
+    await waitFor(() => {
+      const names = screen.getAllByRole('article').map(a => a.getAttribute('aria-label'))
+      expect(names).toEqual(['Third Book', 'Salt Roads', 'Glass Orchard'])
+    })
     await user.type(screen.getByLabelText('Search covers'), 'zzz')
     expect(await screen.findByText('Nothing here yet')).toBeInTheDocument()
     expect(screen.getByText('Press Search for covers to look for the pictures.')).toBeInTheDocument()
