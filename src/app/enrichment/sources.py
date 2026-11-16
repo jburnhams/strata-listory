@@ -152,9 +152,10 @@ def openlibrary_local(ctx: Context) -> tuple[list[Result], dict[str, Any]]:
 
     items: list[Result] = []
     notes: list[str] = []
-    c = ident.connect() if has_ident else None
-    det = oldetail.connect() if has_detail else None
+    c = det = None
     try:
+        c = ident.connect() if has_ident else None
+        det = oldetail.connect() if has_detail else None
         keys = [k for k in ctx.ol_works if re.fullmatch(r"/works/OL\d+W", k)]
         mapped = ident.canonical(c, keys) if c and keys else {k: k for k in keys}
         seen: set[str] = set()
