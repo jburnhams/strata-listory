@@ -241,6 +241,34 @@ def cmd_covers(args):
     return 0
 
 
+def cmd_enrichment(args):
+    """Fetch ratings, reviews, and synopses for Library book listens (or the given listen ids)."""
+    from sqlalchemy.orm import Session
+    from strata_python.db import connect
+
+    from app.enrichment import run as R
+    from app.store.models import Listen
+
+    with Session(connect("listory")) as s:
+        if args.queue:
+            from app.jobs import JobQueue
+
+            queued = R.enqueue(
+                JobQueue(None), s, listen_ids=args.ids or None, force=args.force or bool(args.ids), limit=args.limit
+            )
+            print(f"{len(queued)} enrichment jobs queued")
+            return 0
+        todo = R.pending(s, listen_ids=args.ids or None, force=args.force or bool(args.ids), limit=args.limit)
+        print(f"{len(todo)} listens to enrich")
+        for n, lid in enumerate(todo, 1):
+            listen = s.get(Listen, lid)
+            run = R.fetch(s, listen)
+            s.commit()
+            found = [x["source"] for x in run.sources if x["status"] == "found"]
+            print(f"{n}/{len(todo)} {listen.label}: " + (", ".join(found) if found else "nothing found"))
+    return 0
+
+
 def cmd_filegroups_structure(args):
     """Infer books, discs and series from the newest folder grouping and store them as a new grouping run (the folder grouping is untouched)."""
     from sqlalchemy import select
@@ -1100,6 +1128,19 @@ def main(argv=None):
         help="only refit the best-fit ranking's weights on the covers chosen so far (the page does it after each choice)",
     )
     cvp.set_defaults(fn=cmd_covers)
+    enp = sub.add_parser(
+        "enrichment",
+        help="fetch ratings, reviews, and synopses for Library books (confirmed match + chosen cover)",
+    )
+    enp.add_argument("ids", nargs="*", type=int, help="listen ids (default: every Library book not yet fetched)")
+    enp.add_argument("--force", action="store_true", help="fetch again even if already fetched")
+    enp.add_argument("--limit", type=int, help="stop after this many listens")
+    enp.add_argument(
+        "--queue",
+        action="store_true",
+        help="put one job per listen on the server's job queue instead of running them here",
+    )
+    enp.set_defaults(fn=cmd_enrichment)
     fgs = sub.add_parser(
         "filegroups-structure",
         help="infer books, discs and series from the newest folder grouping into a new grouping run",

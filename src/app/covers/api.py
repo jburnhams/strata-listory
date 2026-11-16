@@ -308,7 +308,7 @@ def relearn() -> None:
 
 
 @router.post("/{listen_id}/choose")
-def choose(listen_id: int, b: Choice, s: Session = Depends(get_session)):
+def choose(listen_id: int, b: Choice, request: Request, s: Session = Depends(get_session)):
     listen = s.get(Listen, listen_id)
     if listen is None:
         raise HTTPException(404, "no such listen")
@@ -321,6 +321,12 @@ def choose(listen_id: int, b: Choice, s: Session = Depends(get_session)):
     s.commit()
     if img is not None:
         _relearn_every(s)
+        jobs = getattr(request.app.state, "jobs", None)
+        if jobs is not None:
+            from app.enrichment import run as enrichment_run
+
+            if enrichment_run.is_library_book(s, listen_id):
+                jobs.submit("enrichment", "fetch", retry=True, listen_id=listen_id)
     return dict(ok=True, chosen=b.image_id)
 
 

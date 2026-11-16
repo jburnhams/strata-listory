@@ -290,6 +290,9 @@ export const handlers = [
   }),
   http.post('/api/covers/run', async ({ request }) => { const b = await request.json() as { listen_ids: number[] | null }; coverState.runs.push({ ids: b.listen_ids }); return HttpResponse.json({ queued: 1, listen_ids: b.listen_ids ?? [] }, { status: 202 }) }),
   http.post('/api/covers/:id/unaccept', ({ params }) => { coverState.sentBack.push(Number(params.id)); return HttpResponse.json({ ok: true }) }),
+  http.post('/api/enrichment/fetch', () => HttpResponse.json({ queued: 1, listen_ids: [1] })),
+  http.get('/api/enrichment/:id', () => HttpResponse.json({ status: 'none', fetched_at: null, synopsis: null, synopses: [], ratings: [], reviews: [], tags: { genres: [], moods: [], content_warnings: [] }, sources: [] })),
+  http.post('/api/enrichment/:id/fetch', ({ params }) => HttpResponse.json({ ok: true, listen_id: Number(params.id), queued: true })),
   http.post('/api/covers/:id/choose', async ({ request, params }) => {
     const b = await request.json() as { image_id: number | null; via: string }
     coverState.chosen.push({ listen: Number(params.id), image: b.image_id, via: b.via })
