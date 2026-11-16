@@ -17,6 +17,8 @@ from app.store.filegroups import finish_run, new_run
 from app.store.models import (
     CoverCandidate,
     CoverRun,
+    EnrichmentResult,
+    EnrichmentRun,
     Listen,
     ListenChoice,
     ListenEvent,
@@ -34,6 +36,8 @@ KIND_OF_GROUP = {"book": "book", "programme": "radio_series"}
 def clear(s: Session) -> None:
     """Remove every listen and what hangs off it (events, choices, parts); runs stay, detached."""
     for model in (
+        EnrichmentResult,
+        EnrichmentRun,
         CoverCandidate,
         CoverRun,
         ListenEvent,

@@ -1,5 +1,5 @@
 // Shared ratings, synopsis, and reviews display for Library cards and Listen detail pages.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button, Status } from 'strata-react'
 import { enrichmentApi, type EnrichmentSummary } from '../api'
 
@@ -60,6 +60,12 @@ export function EnrichmentPanel({
   const tags = enrichment?.tags
   const hasTags = Boolean(tags && (tags.genres.length || tags.moods.length || tags.content_warnings.length))
   const isFetching = busy || enrichment?.status === 'queued' || enrichment?.status === 'running'
+
+  useEffect(() => {
+    if (enrichment?.status !== 'queued' && enrichment?.status !== 'running') return
+    const id = setInterval(() => onRefreshed(), 2000)
+    return () => clearInterval(id)
+  }, [enrichment?.status, onRefreshed])
 
   return (
     <div className="space-y-3">

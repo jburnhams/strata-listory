@@ -509,7 +509,7 @@ export default function LibraryPage() {
                   onPickField={onPickField}
                   onPickColumn={onPickColumn}
                   onExport={onExport}
-                  onRefresh={() => { void qc.invalidateQueries({ queryKey: ['library'] }) }}
+                  onRefresh={() => { void qc.invalidateQueries({ queryKey: ['library-listens'] }) }}
                 />
               ))}
               <nav aria-label="Pagination" className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
