@@ -633,6 +633,9 @@ def list_library(
         filtered.sort(key=lambda lid: (_title(lid), lid))
 
     page_ids = filtered[offset : offset + limit]
+    from app.enrichment import run as enrichment_run
+
+    enrichments = enrichment_run.summary_for_listens(s, page_ids, jobs=jobs)
     return dict(
         total=len(filtered),
         all_total=len(all_ids),
@@ -640,7 +643,7 @@ def list_library(
         kinds=dict(kinds),
         offset=offset,
         limit=limit,
-        rows=[_full_config(s, live[lid], jobs=jobs) for lid in page_ids],
+        rows=[dict(_full_config(s, live[lid], jobs=jobs), enrichment=enrichments[lid]) for lid in page_ids],
     )
 
 
@@ -655,7 +658,12 @@ def get_listen_config(
     if l is None:
         raise HTTPException(404, "no such listen")
     jobs = getattr(request.app.state, "jobs", None)
-    return _full_config(s, l, jobs=jobs)
+    from app.enrichment import run as enrichment_run
+
+    return dict(
+        _full_config(s, l, jobs=jobs),
+        enrichment=enrichment_run.summary_for_listens(s, [listen_id], jobs=jobs)[listen_id],
+    )
 
 
 class FieldChoice(BaseModel):

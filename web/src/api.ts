@@ -155,6 +155,19 @@ export interface ListenOutput {
   loudness_before?: number | null; loudness_after?: number | null; gain_db?: number | null; noise_reduction?: boolean
   chapters: ListenOutputChapter[]; job?: ListenOutputJob | null
 }
+export interface EnrichmentRating { source: string; label: string; rating: number; count: number | null; reviews_count: number | null; url: string | null }
+export interface EnrichmentSynopsis { source: string; label: string; text: string; url: string | null }
+export interface EnrichmentReview { source: string; label: string; user: string; rating: number | null; title: string; text: string; spoilers: boolean; likes: number; date: string; url: string | null }
+export interface EnrichmentSummary {
+  status: 'done' | 'queued' | 'running' | 'none'
+  fetched_at: string | null
+  synopsis: EnrichmentSynopsis | null
+  synopses: EnrichmentSynopsis[]
+  ratings: EnrichmentRating[]
+  reviews: EnrichmentReview[]
+  tags: { genres: string[]; moods: string[]; content_warnings: string[] }
+  sources: { source: string; status: string; detail: string; count: number }[]
+}
 export interface ListenConfig {
   listen_id: number; label: string; kind: string; status: string; fields: ConfigField[]; sources?: ConfigColumn[]
   cover: { image_id: number; width: number; height: number } | null
@@ -164,6 +177,12 @@ export interface ListenConfig {
   minutes?: number; files?: number; path?: string | null; group_id?: number | null; mtime?: number | null
   output?: ListenOutput | null
   source_warnings?: string[]
+  enrichment?: EnrichmentSummary
+}
+export const enrichmentApi = {
+  get: (listenId: number) => req<EnrichmentSummary>(`/api/enrichment/${listenId}`),
+  fetch: (listenId: number) => req<{ ok: boolean; listen_id: number; queued: boolean }>(`/api/enrichment/${listenId}/fetch`, send('POST', {})),
+  fetchAll: (force = false) => req<{ queued: number; listen_ids: number[] }>(`/api/enrichment/fetch?force=${force}`, send('POST', {})),
 }
 export type LibrarySort = 'title' | 'title-desc' | 'author' | 'year-desc' | 'year-asc' | 'length-desc' | 'length-asc' | 'recent' | 'oldest' | 'file-recent' | 'file-oldest'
 export interface LibraryList { total: number; all_total: number; without_cover: number; kinds: Record<string, number>; offset: number; limit: number; rows: ListenConfig[] }

@@ -51,13 +51,21 @@ def _retry_after(headers, attempt: int) -> float:
     return max(0.5, min(wait, MAX_WAIT))
 
 
-def get(url: str, *, timeout: float = 30) -> Reply:
-    """GET `url` (https only), waiting out the per-host interval. A 429 is retried up to ATTEMPTS times, waiting as long as the host says (up to MAX_WAIT); one that still says 429 puts the host on a cool-down (`limited`), during which calls return at once. 5xx and network errors are retried too, with short waits."""
+def request(
+    url: str,
+    *,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+    body: bytes | None = None,
+    timeout: float = 30,
+) -> Reply:
+    """Send an https request (`GET` or `POST`), waiting out the per-host interval, with 429 Retry-After/cool-down and 5xx retries."""
     if not url.startswith("https://"):
         return Reply(0, error="only https addresses are fetched")
     host = urllib.parse.urlsplit(url).netloc
     if _cool_until.get(host, 0) > time.monotonic():
         return Reply(429, error="rate limited a moment ago; not asking again yet", limited=True)
+    req_headers = {"User-Agent": USER_AGENT, **(headers or {})}
     last = Reply(0, error="unreachable")
     for attempt in range(1, ATTEMPTS + 1):
         time.sleep(max(0, _last.get(host, 0) + INTERVAL - time.monotonic()))
@@ -65,7 +73,7 @@ def get(url: str, *, timeout: float = 30) -> Reply:
         wait = 0.0
         try:
             with urllib.request.urlopen(
-                urllib.request.Request(url, headers={"User-Agent": USER_AGENT}), timeout=timeout
+                urllib.request.Request(url, data=body, headers=req_headers, method=method), timeout=timeout
             ) as r:
                 return Reply(r.status, r.read(MAX_BYTES))
         except urllib.error.HTTPError as e:
@@ -84,3 +92,8 @@ def get(url: str, *, timeout: float = 30) -> Reply:
     if last.limited:
         _cool_until[host] = time.monotonic() + COOL_DOWN
     return last
+
+
+def get(url: str, *, timeout: float = 30) -> Reply:
+    """GET `url` (https only), waiting out the per-host interval. A 429 is retried up to ATTEMPTS times, waiting as long as the host says (up to MAX_WAIT); one that still says 429 puts the host on a cool-down (`limited`), during which calls return at once. 5xx and network errors are retried too, with short waits."""
+    return request(url, timeout=timeout)

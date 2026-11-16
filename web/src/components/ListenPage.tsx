@@ -5,6 +5,7 @@ import { Link, useParams } from 'react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { AsyncButton, DataView, EmptyState, Input, PageHeader, Skeleton, Status, format, useAsyncAction, useLoad } from 'strata-react'
 import { coverApi, listenApi, type ConfigField, type ConfigOption } from '../api'
+import { EnrichmentPanel } from './EnrichmentPanel'
 import { hours } from './ListensPage'
 
 const SOURCE: Record<string, string> = { tags: 'Tags', folder: 'Folder', audible: 'Audible', openlibrary: 'Open Library', typed: 'Typed', rule: 'Earlier', model: 'Earlier', import: 'Earlier' }
@@ -63,6 +64,10 @@ export default function ListenPage() {
               </div>
             </section>
             <div>{d.fields.map(f => <Field key={f.field} f={f} listenId={listenId} onSaved={saved} />)}</div>
+            <section aria-label="Ratings, synopsis & reviews" className="space-y-2 border-t border-border pt-4">
+              <h2 className="type-body font-medium">Ratings, synopsis &amp; reviews</h2>
+              <EnrichmentPanel listenId={listenId} enrichment={d.enrichment} onRefreshed={saved} />
+            </section>
             {d.recordings.length > 0 && (
               <section aria-label="Audible recordings" className="space-y-2 border-t border-border pt-4">
                 <h2 className="type-body font-medium">Audible recordings of this work</h2>

@@ -80,6 +80,11 @@ def _execute(jobs, domain, kind, options):
             from app.covers import run as covers
 
             return covers.search_job(options["listen_id"])
+    if domain == "enrichment":
+        if kind == "fetch":
+            from app.enrichment import run as enrichment
+
+            return enrichment.fetch_job(options["listen_id"])
     if domain == "listens":
         if kind == "export":
             from app.store import config as store_config

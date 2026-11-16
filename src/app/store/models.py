@@ -417,3 +417,37 @@ class CoverCandidate(Base):
     ref: Mapped[str] = mapped_column(default="")  # ASIN, ISBN, Open Library cover id, file name
     label: Mapped[str] = mapped_column(default="")  # what it is the cover of: the recording or edition
     url: Mapped[str | None] = mapped_column(default=None, index=True)
+
+
+# ---------------------------------------------------------------- enrichment
+
+
+class EnrichmentRun(Base):
+    """One ratings/reviews/synopsis fetch for one listen: what each source answered and when."""
+
+    __tablename__ = "enrichment_run"
+    id: Mapped[int] = mapped_column(primary_key=True, init=False)
+    listen_id: Mapped[int] = mapped_column(ForeignKey("listen.id"), index=True)
+    listen_changed_at: Mapped[datetime | None] = mapped_column(default=None)
+    sources: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default_factory=list
+    )  # [{source, status: found|none|error|skipped|limited, detail, count}]
+    started_at: Mapped[datetime] = mapped_column(server_default=func.now(), init=False)
+    finished_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class EnrichmentResult(Base):
+    """Ratings, synopsis, reviews, and tags returned by one source in an enrichment run."""
+
+    __tablename__ = "enrichment_result"
+    id: Mapped[int] = mapped_column(primary_key=True, init=False)
+    run_id: Mapped[int] = mapped_column(ForeignKey("enrichment_run.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str]
+    ref: Mapped[str] = mapped_column(default="")
+    url: Mapped[str | None] = mapped_column(default=None)
+    rating: Mapped[float | None] = mapped_column(default=None)
+    ratings_count: Mapped[int | None] = mapped_column(default=None)
+    reviews_count: Mapped[int | None] = mapped_column(default=None)
+    synopsis: Mapped[str | None] = mapped_column(default=None)
+    reviews: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default_factory=list)
+    extra: Mapped[dict[str, Any]] = mapped_column(JSONB, default_factory=dict)

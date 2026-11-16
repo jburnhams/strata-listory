@@ -85,6 +85,16 @@ def create_app():
             threading.Thread(
                 target=covers_run.sweep_forever, args=(jobs, sweeping, every), daemon=True, name="cover-sweep"
             ).start()
+        enrich_every = float(os.environ.get("APP_ENRICHMENT_SWEEP_SECONDS", "60"))
+        if enrich_every > 0:
+            from app.enrichment import run as enrichment_run
+
+            threading.Thread(
+                target=enrichment_run.sweep_forever,
+                args=(jobs, sweeping, enrich_every),
+                daemon=True,
+                name="enrichment-sweep",
+            ).start()
         try:
             yield
         finally:
@@ -119,6 +129,9 @@ def create_app():
         from app.covers.api import router as covers_router
 
         app.include_router(covers_router)
+        from app.enrichment.api import router as enrichment_router
+
+        app.include_router(enrichment_router)
     except ImportError:
         pass
 
@@ -371,11 +384,16 @@ def create_app():
 
         view = operations.view(ingest_worker.tasks() + jobs.tasks("system"), worker.tasks(), completed)
         cover_jobs = jobs.tasks("covers")
+        enrichment_jobs = jobs.tasks("enrichment")
         export_jobs = jobs.tasks("listens")
         failures = jobs.failures()
         names = covers_labels(
-            [x["options"].get("listen_id") for x in cover_jobs + export_jobs]
-            + [json.loads(j["options"]).get("listen_id") for j in failures if j["domain"] in ("covers", "listens")]
+            [x["options"].get("listen_id") for x in cover_jobs + enrichment_jobs + export_jobs]
+            + [
+                json.loads(j["options"]).get("listen_id")
+                for j in failures
+                if j["domain"] in ("covers", "enrichment", "listens")
+            ]
         )
         for t in cover_jobs:
             lid = t["options"].get("listen_id")
@@ -387,6 +405,22 @@ def create_app():
                     run_id=None,
                     title=f"Search covers: {names.get(lid) or f'listen {lid}'}",
                     stage="Covers",
+                    state=t["state"],
+                    phase=None,
+                    error="",
+                    progress=t.get("progress"),
+                )
+            )
+        for t in enrichment_jobs:
+            lid = t["options"].get("listen_id")
+            view["rows"].append(
+                dict(
+                    id=f"enrichment-{t['id']}",
+                    job_id=t["id"],
+                    book_id=None,
+                    run_id=None,
+                    title=f"Fetch ratings & reviews: {names.get(lid) or f'listen {lid}'}",
+                    stage="Enrichment",
                     state=t["state"],
                     phase=None,
                     error="",
@@ -412,12 +446,15 @@ def create_app():
                     progress=prog,
                 )
             )
-        if cover_jobs or export_jobs:
+        if cover_jobs or enrichment_jobs or export_jobs:
             view["busy"] = True
         for job in failures:
             if job["domain"] == "covers":
                 lid = json.loads(job["options"]).get("listen_id")
                 job["kind"], job["title"] = "search covers", names.get(lid) or f"listen {lid}"
+            elif job["domain"] == "enrichment":
+                lid = json.loads(job["options"]).get("listen_id")
+                job["kind"], job["title"] = "fetch details", names.get(lid) or f"listen {lid}"
             elif job["domain"] == "listens":
                 lid = json.loads(job["options"]).get("listen_id")
                 job["kind"], job["title"] = "export", names.get(lid) or f"listen {lid}"
