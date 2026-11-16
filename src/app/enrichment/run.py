@@ -327,7 +327,7 @@ def call_strata_models_summarise(
             job = json.loads(r.read().decode("utf8"))
     if job.get("status") != "done":
         raise RuntimeError(f"strata-models job {job.get('id')} failed: {job.get('error')}")
-    out = job.get("output") or {}
+    out = job.get("result") or job.get("output") or {}
     text = (out.get("text") or "").strip()
     if not text:
         return None

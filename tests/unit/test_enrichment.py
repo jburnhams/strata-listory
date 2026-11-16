@@ -800,3 +800,23 @@ def test_enrichment_summary_generation(monkeypatch):
     r2.id = 10
     assert not run.summarise_run(s, r2, listen, call_fn=lambda t, inp: (_ for _ in ()).throw(RuntimeError("down")))
     assert r2.summary is None
+
+    # call_strata_models_summarise reads job["result"]["text"] and ["model"]
+    class FakeJobResp:
+        def __init__(self, body: dict):
+            self._body = json.dumps(body).encode("utf8")
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda req, timeout=15: FakeJobResp({"id": 1, "status": "done", "result": {"text": "Ok.", "model": "haiku"}}),
+    )
+    assert run.call_strata_models_summarise("Dune", [{"source": "s", "text": "t"}]) == ("Ok.", "haiku")
