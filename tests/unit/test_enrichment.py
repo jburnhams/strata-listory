@@ -770,7 +770,10 @@ def test_enrichment_summary_generation(monkeypatch):
         run_id=9,
         source="hardcover",
         synopsis="Desert planet politics.",
-        reviews=[{"user": "a", "rating": 5, "text": "Great narration.", "spoilers": False, "likes": 3}],
+        reviews=[
+            {"user": "a", "rating": 5, "text": "Great narration.", "spoilers": False, "likes": 3},
+            {"user": "b", "rating": 5, "text": "  Great   narration. ", "spoilers": False, "likes": 1},
+        ],
         extra={"genres": ["Sci-Fi"], "moods": ["Epic"]},
     )
 

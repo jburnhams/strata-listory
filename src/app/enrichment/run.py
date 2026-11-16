@@ -447,11 +447,17 @@ def summarize(
             )
 
     reviews: list[dict[str, Any]] = []
+    seen_rev: set[str] = set()
     for r in results:
         label = SOURCE_LABEL.get(r.source, r.source)
         for rev in r.reviews or []:
-            if not (rev.get("text") or "").strip():
+            text = (rev.get("text") or "").strip()
+            if not text:
                 continue
+            key = " ".join(text.lower().split())[:200]
+            if key in seen_rev:
+                continue
+            seen_rev.add(key)
             reviews.append(
                 dict(
                     source=r.source,
