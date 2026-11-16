@@ -585,6 +585,32 @@ def test_hardcover_asin_hit_and_empty_online_responses(monkeypatch):
     items, st = sources.hardcover(sources.Context(asins=["B001"]))
     assert st["status"] == "found" and items[0].ref == "88"
 
+    monkeypatch.setattr(
+        net,
+        "request",
+        lambda *a, **k: reply(200, json.dumps({"data": {"editions": [{"book": {"id": 88}}], "books": []}}).encode()),
+    )
+    assert sources.hardcover(sources.Context(asins=["B001"]))[1]["status"] == "none"
+
+    monkeypatch.setattr(
+        net,
+        "request",
+        lambda *a, **k: reply(
+            200,
+            json.dumps({"data": {"editions": [{"book": {"id": 88}}], "books": [{"id": 88, "title": "X"}]}}).encode(),
+        ),
+    )
+    assert sources.hardcover(sources.Context(asins=["B001"]))[1]["status"] == "none"
+
+    monkeypatch.setattr(
+        net,
+        "request",
+        lambda *a, **k: reply(
+            200, json.dumps({"data": {"editions": [], "search": {"results": {"hits": []}}}}).encode()
+        ),
+    )
+    assert sources.hardcover(sources.Context(title="Unknown", asins=["B001"]))[1]["status"] == "none"
+
     monkeypatch.setattr(net, "get", lambda *a, **k: reply(200, json.dumps({"items": [], "results": []}).encode()))
     ctx = sources.Context(title="X", asins=["B001"], isbns=["9780441172719"], ol_works=["/works/OL1W"])
     assert sources.audnexus(ctx)[1]["status"] == "none"
@@ -674,3 +700,49 @@ def test_cli_cmd_enrichment(monkeypatch):
 
     assert cli.cmd_enrichment(SimpleNamespace(ids=[], force=False, limit=None, queue=True)) == 0
     assert cli.cmd_enrichment(SimpleNamespace(ids=[42], force=False, limit=None, queue=False)) == 0
+
+
+def test_tasks_execute_enrichment_and_net_request(monkeypatch):
+    from app.server import tasks
+
+    monkeypatch.setattr("app.enrichment.run.fetch_job", lambda lid: {"listen_id": lid, "run_id": 1})
+    assert tasks._execute(None, "enrichment", "fetch", {"listen_id": 42}) == {"listen_id": 42, "run_id": 1}
+
+    class FakeResp:
+        status = 200
+
+        def read(self, n):
+            return b'{"ok":true}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=30: FakeResp())
+    r = net.request("https://example.com/api", method="POST", headers={"X-Test": "1"}, body=b"{}")
+    assert r.ok and r.json() == {"ok": True}
+
+    assert not net.request("http://example.com/api").ok
+    monkeypatch.setattr("app.covers.net._cool_until", {"example.com": 1e18})
+    assert net.request("https://example.com/api").limited
+    monkeypatch.setattr("app.covers.net._cool_until", {})
+
+    # Test pending limit=1
+    class FakeS:
+        def __init__(self):
+            self.n = 0
+
+        def scalars(self, q):
+            class _Seq(list):
+                def first(self):
+                    return self[0] if self else None
+
+            self.n += 1
+            return _Seq([42, 43] if self.n == 1 else [])
+
+        def scalar(self, q):
+            return None
+
+    assert run.pending(FakeS(), limit=1) == [42]
