@@ -266,9 +266,9 @@ function LibraryCard({
             aria-expanded={showDetails}
             aria-label={`Toggle synopsis and reviews for ${item.label}`}
             onClick={() => setShowDetails(v => !v)}
-            className="flex w-full items-baseline justify-between gap-3 rounded-control border border-border bg-muted/20 px-3 py-2 text-left type-body-sm transition-state hover:border-ring hover:bg-muted/40"
+            className="flex w-full items-start justify-between gap-3 rounded-control border border-border bg-muted/20 px-3 py-2 text-left type-body-sm transition-state hover:border-ring hover:bg-muted/40"
           >
-            <span className="min-w-0 flex-1 truncate">
+            <span className={item.enrichment.summary ? 'min-w-0 flex-1 leading-relaxed' : 'min-w-0 flex-1 truncate'}>
               {item.enrichment.summary ||
                 item.enrichment.synopsis?.text ||
                 (item.enrichment.reviews.length
