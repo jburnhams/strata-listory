@@ -585,6 +585,19 @@ def test_hardcover_asin_hit_and_empty_online_responses(monkeypatch):
     items, st = sources.hardcover(sources.Context(asins=["B001"]))
     assert st["status"] == "found" and items[0].ref == "88"
 
+    # ISBN fallback when ASIN is absent
+    def fake_isbn_req(url, *, method="GET", headers=None, body=None, timeout=30):
+        q = json.loads(body.decode())["query"]
+        if "isbn_13:" in q:
+            return reply(200, json.dumps({"data": {"editions": [{"book": {"id": 89}}]}}).encode())
+        return reply(
+            200, json.dumps({"data": {"books": [{"id": 89, "title": "Y", "rating": 4.2}], "user_books": []}}).encode()
+        )
+
+    monkeypatch.setattr(net, "request", fake_isbn_req)
+    items_isbn, st_isbn = sources.hardcover(sources.Context(isbns=["9780441172719"]))
+    assert st_isbn["status"] == "found" and items_isbn[0].ref == "89"
+
     monkeypatch.setattr(
         net,
         "request",
@@ -746,3 +759,67 @@ def test_tasks_execute_enrichment_and_net_request(monkeypatch):
             return None
 
     assert run.pending(FakeS(), limit=1) == [42]
+
+
+def test_enrichment_summary_generation(monkeypatch):
+    listen = Listen(label="Dune", kind="book")
+    listen.id = 42
+    r = EnrichmentRun(listen_id=42, sources=[{"source": "hardcover", "status": "found", "detail": "", "count": 1}])
+    r.id = 9
+    res = EnrichmentResult(
+        run_id=9,
+        source="hardcover",
+        synopsis="Desert planet politics.",
+        reviews=[
+            {"user": "a", "rating": 5, "text": "Great narration.", "spoilers": False, "likes": 3},
+            {"user": "b", "rating": 5, "text": "  Great   narration. ", "spoilers": False, "likes": 1},
+        ],
+        extra={"genres": ["Sci-Fi"], "moods": ["Epic"]},
+    )
+
+    class FakeSession:
+        def __init__(self, items):
+            self.items = items
+            self.flushed = False
+
+        def scalars(self, q):
+            return self.items
+
+        def flush(self):
+            self.flushed = True
+
+    monkeypatch.setattr("app.enrichment.run.accepted_work", lambda s, lid: None)
+    s = FakeSession([res])
+    called = []
+    ok = run.summarise_run(s, r, listen, call_fn=lambda t, inp: called.append((t, inp)) or ("Crisp summary.", "haiku"))
+    assert ok and s.flushed and r.summary == "Crisp summary." and r.summary_model == "haiku"
+    assert called[0][0] == "Dune" and len(called[0][1]) == 3
+
+    out = run.summarize(r, [res])
+    assert out["summary"] == "Crisp summary." and out["summary_model"] == "haiku"
+
+    # Service errors are swallowed without failing enrichment
+    r2 = EnrichmentRun(listen_id=42, sources=[])
+    r2.id = 10
+    assert not run.summarise_run(s, r2, listen, call_fn=lambda t, inp: (_ for _ in ()).throw(RuntimeError("down")))
+    assert r2.summary is None
+
+    # call_strata_models_summarise reads job["result"]["text"] and ["model"]
+    class FakeJobResp:
+        def __init__(self, body: dict):
+            self._body = json.dumps(body).encode("utf8")
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda req, timeout=15: FakeJobResp({"id": 1, "status": "done", "result": {"text": "Ok.", "model": "haiku"}}),
+    )
+    assert run.call_strata_models_summarise("Dune", [{"source": "s", "text": "t"}]) == ("Ok.", "haiku")

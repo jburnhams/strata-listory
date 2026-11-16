@@ -301,4 +301,28 @@ describe('LibraryPage', () => {
     expect(warn).toHaveTextContent('Missing / gap')
     expect(warn).toHaveTextContent('Missing track 31 (30 files, expected 31)')
   })
+
+  it('displays enrichment summary in collapsed and expanded synopsis boxes', async () => {
+    configState.library[0] = {
+      ...configState.library[0],
+      enrichment: {
+        status: 'done',
+        fetched_at: '2026-11-16T12:00:00',
+        summary: 'A tense thriller praised for its pacing and narration.',
+        summary_model: 'claude-haiku-5-5-api',
+        synopsis: { source: 'hardcover', label: 'Hardcover', text: 'Raw synopsis.', url: null },
+        synopses: [{ source: 'hardcover', label: 'Hardcover', text: 'Raw synopsis.', url: null }],
+        ratings: [],
+        reviews: [],
+        tags: { genres: [], moods: [], content_warnings: [] },
+        sources: [],
+      },
+    }
+    const { user } = setup(<LibraryPage />, { route: '/library' })
+    const dragon = await screen.findByRole('article', { name: 'Red Dragon' })
+    const toggle = within(dragon).getByRole('button', { name: 'Toggle synopsis and reviews for Red Dragon', expanded: false })
+    expect(toggle).toHaveTextContent('A tense thriller praised for its pacing and narration.')
+    await user.click(toggle)
+    expect(within(dragon).getAllByText('A tense thriller praised for its pacing and narration.')).toHaveLength(2)
+  })
 })

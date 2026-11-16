@@ -14,6 +14,8 @@ function wrap(ui: React.ReactNode) {
 const fullEnrichment: EnrichmentSummary = {
   status: 'done',
   fetched_at: '2026-11-16T12:00:00',
+  summary: 'Crisp spoiler-free summary of Dune.',
+  summary_model: 'claude-haiku-5-5-api',
   synopsis: { source: 'hardcover', label: 'Hardcover', text: 'A desert epic.', url: 'https://hardcover.app/books/dune' },
   synopses: [
     { source: 'hardcover', label: 'Hardcover', text: 'A desert epic.', url: 'https://hardcover.app/books/dune' },
@@ -51,6 +53,7 @@ describe('EnrichmentPanel', () => {
     const onRefreshed = vi.fn()
     wrap(<EnrichmentPanel listenId={7} enrichment={fullEnrichment} onRefreshed={onRefreshed} />)
 
+    expect(screen.getByText('Crisp spoiler-free summary of Dune.')).toBeInTheDocument()
     expect(screen.getByText('A desert epic.')).toBeInTheDocument()
     expect(screen.getByText('Sci-Fi')).toBeInTheDocument()
     expect(screen.getByText('Epic')).toBeInTheDocument()

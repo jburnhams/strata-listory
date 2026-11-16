@@ -274,8 +274,8 @@ def hardcover(ctx: Context) -> tuple[list[Result], dict[str, Any]]:
     token = hc.key()
     if not token:
         return [], record("hardcover", [], [], skipped="no Hardcover API key")
-    if not ctx.asins and not ctx.title:
-        return [], record("hardcover", [], [], skipped="no ASIN or title known")
+    if not ctx.asins and not ctx.isbns and not ctx.title:
+        return [], record("hardcover", [], [], skipped="no ASIN, ISBN, or title known")
 
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
@@ -295,16 +295,22 @@ def hardcover(ctx: Context) -> tuple[list[Result], dict[str, Any]]:
 
     book_id: int | None = None
     notes: list[str] = []
-    for asin in ctx.asins[:3]:
-        data, err = gql(hc.BY_ASIN, dict(a=asin))
-        if err:
-            notes.append(err)
-            if err.startswith("rate limited"):
-                return [], record("hardcover", [], notes)
-            continue
-        eds = (data or {}).get("editions") or []
-        if eds and (eds[0].get("book") or {}).get("id"):
-            book_id = int(eds[0]["book"]["id"])
+    for query, var, values in (
+        (hc.BY_ASIN, "a", ctx.asins[:3]),
+        (hc.BY_ISBN, "i", ctx.isbns[:3]),
+    ):
+        for val in values:
+            data, err = gql(query, {var: val})
+            if err:
+                notes.append(err)
+                if err.startswith("rate limited"):
+                    return [], record("hardcover", [], notes)
+                continue
+            eds = (data or {}).get("editions") or []
+            if eds and (eds[0].get("book") or {}).get("id"):
+                book_id = int(eds[0]["book"]["id"])
+                break
+        if book_id is not None:
             break
 
     if book_id is None and ctx.title:

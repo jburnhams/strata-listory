@@ -83,6 +83,15 @@ export function EnrichmentPanel({
         </div>
       )}
 
+      {enrichment?.summary && (
+        <div className="rounded-control border border-border/60 bg-muted/20 px-3 py-2 space-y-1">
+          <div className="type-caption text-muted-foreground">
+            Summary{enrichment.summary_model ? ` · ${enrichment.summary_model}` : ''}
+          </div>
+          <p className="type-body-sm leading-relaxed">{enrichment.summary}</p>
+        </div>
+      )}
+
       {activeSyn && (
         <div className="space-y-1.5">
           {synopses.length > 1 && (
