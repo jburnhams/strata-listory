@@ -269,11 +269,11 @@ function LibraryCard({
             className="flex w-full items-baseline justify-between gap-3 rounded-control border border-border bg-muted/20 px-3 py-2 text-left type-body-sm transition-state hover:border-ring hover:bg-muted/40"
           >
             <span className="min-w-0 flex-1 truncate">
-              {item.enrichment.synopsis
-                ? item.enrichment.synopsis.text
-                : item.enrichment.reviews.length
+              {item.enrichment.summary ||
+                item.enrichment.synopsis?.text ||
+                (item.enrichment.reviews.length
                   ? `${item.enrichment.reviews.length} reviews`
-                  : 'Synopsis & reviews'}
+                  : 'Synopsis & reviews')}
             </span>
             <span className="shrink-0 type-caption text-muted-foreground">
               {showDetails ? 'Hide details' : 'Show synopsis & reviews'}

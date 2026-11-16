@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import os
+import time
+import urllib.error
+import urllib.request
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -247,8 +255,118 @@ def fetch(s: Session, listen: Listen, *, run_sources=None) -> EnrichmentRun:
     return run
 
 
+def build_summary_inputs(s: Session, listen: Listen, summary_data: dict[str, Any]) -> tuple[str, list[dict[str, str]]]:
+    """Build `(title, inputs)` for `strata-models` `summarise` from a listen's enrichment data."""
+    found = accepted_work(s, listen.id)
+    title = listen.label
+    if found:
+        work, part = found
+        authors = ", ".join((part.detail or {}).get("authors") or [])
+        title = f"{work.title or listen.label} by {authors}" if authors else (work.title or listen.label)
+
+    inputs: list[dict[str, str]] = []
+    for syn in summary_data.get("synopses") or []:
+        text = (syn.get("text") or "").strip()
+        if text:
+            inputs.append(dict(source=f"{syn['label']} synopsis", text=text[:2500]))
+    for rev in (summary_data.get("reviews") or [])[:12]:
+        text = (rev.get("text") or "").strip()
+        if not text:
+            continue
+        rating = f" ({rev['rating']}/5)" if rev.get("rating") is not None else ""
+        spoiler = " [spoilers]" if rev.get("spoilers") else ""
+        inputs.append(dict(source=f"{rev['label']} review{rating}{spoiler}", text=text[:1500]))
+    tags = summary_data.get("tags") or {}
+    tag_parts = [f"{k}: {', '.join(v)}" for k, v in (("genres", tags.get("genres")), ("moods", tags.get("moods"))) if v]
+    if tag_parts:
+        inputs.append(dict(source="tags", text="; ".join(tag_parts)))
+    return title, inputs
+
+
+def call_strata_models_summarise(
+    title: str,
+    inputs: list[dict[str, str]],
+    *,
+    base_url: str | None = None,
+    timeout: float = 60.0,
+) -> tuple[str, str] | None:
+    """Call `strata-models` role `summarise` with `summarise-v3-xml` and return `(text, model)` or `None`."""
+    root = (base_url or os.environ.get("STRATA_MODELS_URL") or "http://127.0.0.1:8366").rstrip("/")
+    payload = dict(
+        role="summarise",
+        app="strata-listory",
+        priority="normal",
+        params=dict(
+            preset="summarise-v3-xml",
+            effort="low",
+            max_tokens=1500,
+            context=dict(
+                title=title,
+                purpose="helping an audiobook listener decide whether to listen",
+                audience="an audiobook listener browsing their library",
+                target_size="one short paragraph (3-4 sentences)",
+                inputs=inputs,
+            ),
+        ),
+    )
+    req = urllib.request.Request(
+        f"{root}/api/jobs",
+        data=json.dumps(payload).encode("utf8"),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as r:
+        job = json.loads(r.read().decode("utf8"))
+    deadline = time.monotonic() + timeout
+    while job.get("status") in ("queued", "running"):
+        rem = deadline - time.monotonic()
+        if rem <= 0:
+            raise TimeoutError(f"strata-models job {job.get('id')} timed out")
+        wait = min(30.0, max(rem, 1.0))
+        with urllib.request.urlopen(f"{root}/api/jobs/{job['id']}?wait={wait:.1f}", timeout=wait + 10) as r:
+            job = json.loads(r.read().decode("utf8"))
+    if job.get("status") != "done":
+        raise RuntimeError(f"strata-models job {job.get('id')} failed: {job.get('error')}")
+    out = job.get("output") or {}
+    text = (out.get("text") or "").strip()
+    if not text:
+        return None
+    return text, str(out.get("model") or job.get("model") or "")
+
+
+def summarise_run(
+    s: Session,
+    run: EnrichmentRun,
+    listen: Listen,
+    *,
+    call_fn=None,
+) -> bool:
+    """Generate and store `run.summary` for an EnrichmentRun if it has synopses/reviews; swallows service errors."""
+    results = list(
+        s.scalars(select(EnrichmentResult).where(EnrichmentResult.run_id == run.id).order_by(EnrichmentResult.id))
+    )
+    if not results:
+        return False
+    summary_data = summarize(run, results)
+    if not summary_data["synopses"] and not summary_data["reviews"]:
+        return False
+    title, inputs = build_summary_inputs(s, listen, summary_data)
+    if not inputs:
+        return False
+    try:
+        res = (call_fn or call_strata_models_summarise)(title, inputs)
+    except (OSError, urllib.error.URLError, ValueError, RuntimeError, TimeoutError) as e:
+        log.warning("enrichment summarise skipped for listen %s: %s", listen.id, e)
+        return False
+    if not res:
+        return False
+    run.summary, run.summary_model = res
+    s.flush()
+    return True
+
+
 def fetch_job(listen_id: int) -> dict[str, Any]:
-    """What a queued `enrichment`/`fetch` job does: fetch one listen on its own session and commit."""
+    """What a queued `enrichment`/`fetch` job does: fetch one listen on its own session, summarise it, and commit."""
     from app.store.api import _engine
 
     with Session(_engine()) as s:
@@ -256,11 +374,13 @@ def fetch_job(listen_id: int) -> dict[str, Any]:
         if listen is None:
             raise ValueError(f"no listen {listen_id}")
         run = fetch(s, listen)
+        summarised = summarise_run(s, run, listen)
         s.commit()
         return dict(
             listen_id=listen_id,
             label=listen.label,
             run_id=run.id,
+            summarised=summarised,
             sources={x["source"]: x["status"] for x in run.sources},
         )
 
@@ -273,6 +393,8 @@ def summarize(
         return dict(
             status=job_state or "none",
             fetched_at=None,
+            summary=None,
+            summary_model=None,
             synopsis=None,
             synopses=[],
             ratings=[],
@@ -364,6 +486,8 @@ def summarize(
     return dict(
         status=job_state or ("done" if run.finished_at else "running"),
         fetched_at=run.finished_at.isoformat() if run.finished_at else None,
+        summary=run.summary,
+        summary_model=run.summary_model,
         synopsis=synopses[0] if synopses else None,
         synopses=synopses,
         ratings=ratings,

@@ -9,6 +9,7 @@ from app.providers.base import Http, MatchError, Provider, candidate
 API = "https://api.hardcover.app/v1/graphql"
 SEARCH = 'query($q: String!, $n: Int) { search(query: $q, query_type: "Book", per_page: $n, page: 1) { results } }'
 BY_ASIN = "query($a: String!) { editions(where: {asin: {_eq: $a}}, limit: 1) { book { id title subtitle slug rating ratings_count release_date cached_image cached_contributors } } }"
+BY_ISBN = "query($i: String!) { editions(where: {_or: [{isbn_13: {_eq: $i}}, {isbn_10: {_eq: $i}}]}, limit: 1) { book { id } } }"
 DETAILS = """query($id: Int!) {
   books(where: {id: {_eq: $id}}, limit: 1) { id title subtitle slug cached_contributors description pages release_date rating ratings_count reviews_count users_count users_read_count lists_count cached_tags cached_contributors book_series { position series { name } } }
   user_books(where: {book_id: {_eq: $id}, has_review: {_eq: true}}, limit: 5, order_by: {likes_count: desc}) { rating review_raw review_has_spoilers likes_count reviewed_at user { username } }

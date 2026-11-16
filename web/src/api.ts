@@ -161,6 +161,8 @@ export interface EnrichmentReview { source: string; label: string; user: string;
 export interface EnrichmentSummary {
   status: 'done' | 'queued' | 'running' | 'none'
   fetched_at: string | null
+  summary?: string | null
+  summary_model?: string | null
   synopsis: EnrichmentSynopsis | null
   synopses: EnrichmentSynopsis[]
   ratings: EnrichmentRating[]

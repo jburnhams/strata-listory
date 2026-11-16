@@ -432,6 +432,8 @@ class EnrichmentRun(Base):
     sources: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, default_factory=list
     )  # [{source, status: found|none|error|skipped|limited, detail, count}]
+    summary: Mapped[str | None] = mapped_column(default=None)
+    summary_model: Mapped[str | None] = mapped_column(default=None)
     started_at: Mapped[datetime] = mapped_column(server_default=func.now(), init=False)
     finished_at: Mapped[datetime | None] = mapped_column(default=None)
 
