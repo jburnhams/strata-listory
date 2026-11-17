@@ -16,11 +16,11 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.107.1",
-    "lucide-react": "^1.70.0",
+    "lucide-react": "^1.73.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router": "^8.5.1",
-    "strata-react": "^1.0.39"
+    "strata-react": "^1.0.45"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.5",
