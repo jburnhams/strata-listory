@@ -67,12 +67,13 @@ def test_catalogue_commands(capsys):
         cli.main(["remove", "1"])
 
 
-def test_set_and_serve_commands(capsys, monkeypatch):
+def test_set_and_serve_commands(capsys, monkeypatch, tmp_path):
     assert cli.main(["set", "library_dir"]) == 0
     assert "library_dir = " in capsys.readouterr().out
 
-    assert cli.main(["set", "library_dir", "/books"]) == 0
-    assert f"library_dir = {os.path.abspath('/books')}" in capsys.readouterr().out
+    books = str(tmp_path / "books")  # absolute on every OS: a relative folder is refused
+    assert cli.main(["set", "library_dir", books]) == 0
+    assert f"library_dir = {books}" in capsys.readouterr().out
 
     assert cli.main(["set", "library_dir", "default"]) == 0
     assert "library_dir = " in capsys.readouterr().out
