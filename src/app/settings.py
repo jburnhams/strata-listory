@@ -1,79 +1,73 @@
-"""User settings: one JSON file, `~/.app/settings.json` (the folder can be moved with the APP_HOME environment variable).
+"""User settings, declared once with strata-python's `Settings`: one JSON file, `~/.app/settings.json` (the folder moves with APP_HOME), validated on save and overridden by the environment variables named below.
 
-  data_dir   where application data files live. Default: `data/` in this repository (gitignored) until configured.
-  library_dir  the folder the audiobook files live in (optional). Default: unset.
+  data_dir   where application data files live. Default: `data/` in this repository (gitignored) until configured. APP_DATA.
+  library_dir  the folder the audiobook files live in (optional). Default: unset. APP_LIBRARY.
   library_dirs  more folders to scan alongside library_dir (a list; the Files page edits it). `library_roots()` is library_dir then these, without duplicates or folders inside another.
-  backup_dir   where the catalogue database backups go (default: `backups/` inside data_dir). May be a network share (SMB): backups are built on the local disk and copied there.
-  match_providers  comma separated metadata providers in the order to try them (default: audnexus,audible,audiobookdb).
-  audible_region   which Audible store to search: uk (default), us, de, fr, ca or au.
-  final_dir        where processed books are written (default: ~/audiobooks).
+  backup_dir   where the catalogue database backups go (default: `backups/` inside data_dir). May be a network share (SMB): backups are built on the local disk and copied there. APP_BACKUP.
+  match_providers  comma separated metadata providers in the order to try them (default: audnexus,audible,audiobookdb). APP_PROVIDERS.
+  audible_region   which Audible store to search: uk (default), us, de, fr, ca or au. APP_AUDIBLE_REGION.
+  final_dir        where processed books are written (default: ~/audiobooks). APP_FINAL.
 
-The environment variables APP_DATA, APP_LIBRARY, APP_BACKUP, APP_PROVIDERS, APP_AUDIBLE_REGION and APP_FINAL override the file (handy for tests and one-off runs)."""
+The functions below read the declaration live (an environment variable beats the file beats the default), so a settings change reaches a running server at once."""
 
-import json
 import os
 
+from strata_python.settings import ListSetting, Setting, Settings, absolute_path
+
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_DATA_DIR = os.path.join(REPO, "data")
-KNOWN = ("data_dir", "library_dir", "library_dirs", "backup_dir", "match_providers", "audible_region", "final_dir")
+DEFAULT_DATA_DIR = os.path.join(REPO, "data")  # tests point this into a tmp folder (tests/conftest.py)
 
 
-def home():
-    return os.environ.get("APP_HOME") or os.path.join(os.path.expanduser("~"), ".app")
+def _optional_path(value: str) -> str:
+    """A folder that may be left unset: blank stays blank, anything else must be an absolute path (`~` expanded)."""
+    return absolute_path(value) if value.strip() else ""
 
 
-def _path():
-    return os.path.join(home(), "settings.json")
+def _names(value: str) -> str:
+    """A comma separated list of names, trimmed and without blanks."""
+    return ",".join(n.strip() for n in value.split(",") if n.strip())
 
 
-def load():
-    try:
-        with open(_path(), encoding="utf8") as f:
-            d = json.load(f)
-    except (OSError, ValueError):
-        d = {}
-    return d if isinstance(d, dict) else {}
-
-
-def save(changes):
-    """Merge `changes` (known keys only) into the settings file; returns the saved settings. A None value removes the setting (back to its default)."""
-    d = load()
-    for k, v in changes.items():
-        if k not in KNOWN:
-            raise KeyError(f"unknown setting {k!r}")
-        if v is None:
-            d.pop(k, None)
-        else:
-            d[k] = [str(x) for x in v] if isinstance(v, list | tuple) else str(v)
-    os.makedirs(home(), exist_ok=True)
-    tmp = _path() + ".tmp"
-    with open(tmp, "w", encoding="utf8") as f:
-        json.dump(d, f, indent=1)
-    os.replace(tmp, _path())
-    return d
+SETTINGS = Settings(
+    "app",  # ~/.app/settings.json, APP_HOME, APP_<KEY>
+    [
+        Setting("data_dir", default=lambda: DEFAULT_DATA_DIR, normalise=absolute_path, env="APP_DATA"),
+        Setting("library_dir", default="", normalise=_optional_path, env="APP_LIBRARY"),
+        ListSetting("library_dirs", item=absolute_path),
+        Setting(
+            "backup_dir",
+            default=lambda: os.path.join(SETTINGS.get("data_dir"), "backups"),
+            normalise=absolute_path,
+            env="APP_BACKUP",
+        ),
+        Setting("match_providers", default="", normalise=_names, env="APP_PROVIDERS"),
+        Setting("audible_region", default="uk", choices=["uk", "us", "de", "fr", "ca", "au"], env="APP_AUDIBLE_REGION"),
+        Setting(
+            "final_dir",
+            default=lambda: os.path.join(os.path.expanduser("~"), "audiobooks"),
+            normalise=absolute_path,
+            env="APP_FINAL",
+        ),
+    ],
+)
+KNOWN = SETTINGS.keys
+home, load, save = SETTINGS.home, SETTINGS.load, SETTINGS.save
 
 
 def data_dir():
     """The folder that holds application data (created when asked for)."""
-    p = os.environ.get("APP_DATA") or load().get("data_dir") or DEFAULT_DATA_DIR
-    p = os.path.abspath(os.path.expanduser(p))
-    os.makedirs(p, exist_ok=True)
-    return p
+    return SETTINGS.folder("data_dir")
 
 
 def library_dir():
     """The configured audiobook folder, or '' when none is set."""
-    p = (os.environ.get("APP_LIBRARY") or load().get("library_dir") or "").strip()
-    return os.path.abspath(os.path.expanduser(p)) if p else ""
+    return SETTINGS.get("library_dir")
 
 
 def library_roots():
     """Every folder that holds audiobooks: library_dir first, then the extra library_dirs. Duplicates and folders inside another root are left out (a file would be in two roots)."""
-    extra = load().get("library_dirs")
-    extra = extra if isinstance(extra, list) else []
     out: list[str] = []
-    for p in [library_dir(), *extra]:
-        p = os.path.abspath(os.path.expanduser(str(p))) if str(p).strip() else ""
+    for p in [library_dir(), *SETTINGS.get_list("library_dirs")]:
         if p and not any(p == r or p.startswith(r.rstrip(os.sep) + os.sep) for r in out):
             out = [r for r in out if not r.startswith(p.rstrip(os.sep) + os.sep)] + [p]
     return out
@@ -81,20 +75,18 @@ def library_roots():
 
 def backup_dir():
     """The folder for database backups (not created here; backup.py makes it when it writes)."""
-    p = (os.environ.get("APP_BACKUP") or load().get("backup_dir") or "").strip()
-    return os.path.abspath(os.path.expanduser(p)) if p else os.path.join(data_dir(), "backups")
+    return SETTINGS.get("backup_dir")
 
 
 def final_dir():
-    return os.path.abspath(
-        os.path.expanduser(os.environ.get("APP_FINAL") or load().get("final_dir") or os.path.join("~", "audiobooks"))
-    )
+    return SETTINGS.get("final_dir")
 
 
 def audible_region():
-    r = (os.environ.get("APP_AUDIBLE_REGION") or load().get("audible_region") or "uk").strip().lower()
-    return r or "uk"
+    return SETTINGS.get("audible_region")
 
 
 def all_settings():
-    return dict(data_dir=data_dir(), library_dir=library_dir(), library_dirs=library_roots(), backup_dir=backup_dir())
+    """Every setting as the API shows it; `library_dirs` is the roots (library_dir first, overlaps removed)."""
+    data_dir()
+    return {**SETTINGS.all(), "library_dirs": library_roots()}

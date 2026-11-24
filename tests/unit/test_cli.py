@@ -439,13 +439,13 @@ def test_process_approval_commands(capsys, monkeypatch, tmp_path):
     assert cli.main(["process-run"]) == 1 and "failed 1" in capsys.readouterr().out
 
 
-def test_doctor_audio_checks_optional_modules_and_native_tools(monkeypatch, capsys):
-    from app import cli
+def test_doctor_lists_the_audio_stack_and_native_tools_without_failing_on_them(monkeypatch, capsys):
+    from strata_python import cli as cli_lib
 
-    monkeypatch.setattr(cli.shutil, "which", lambda name: "/tools/" + name)
-    monkeypatch.setattr(cli.importlib, "import_module", lambda name: type("Module", (), {"__version__": "test"})())
-    assert cli.main(["doctor", "--audio"]) == 0
-    assert "numpy test" in capsys.readouterr().out
-    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
-    assert cli.main(["doctor", "--audio"]) == 1
-    assert "MISSING" in capsys.readouterr().out
+    monkeypatch.setattr(cli_lib.shutil, "which", lambda name: "/tools/" + name)
+    assert cli.main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "numpy" in out and "/tools/ffmpeg" in out
+    monkeypatch.setattr(cli_lib.shutil, "which", lambda name: None)
+    assert cli.main(["doctor"]) == 0  # the audio tools are optional: only processing needs them
+    assert "missing" in capsys.readouterr().out

@@ -20,6 +20,8 @@ from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 
+from strata_python.files import write_text_atomic
+
 from app import oslib, settings
 from app.identify import textkeys as tk
 
@@ -44,9 +46,7 @@ def _progress(stage, **values):
     root = folder()
     root.mkdir(parents=True, exist_ok=True)
     data = dict(status(), stage=stage, updated=datetime.now(UTC).isoformat(), **values)
-    temp = root / "identify-status.json.tmp"
-    temp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf8")
-    temp.replace(root / "identify-status.json")
+    write_text_atomic(root / "identify-status.json", json.dumps(data, ensure_ascii=False))
 
 
 def year(value):

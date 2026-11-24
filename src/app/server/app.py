@@ -2,7 +2,7 @@
 
     ./app serve [--host 127.0.0.1] [--port 8360]
 
-API (JSON): GET /api/health; GET /api/settings; PUT /api/settings {data_dir?, library_dir?, backup_dir?};
+API (JSON): GET /api/health; GET /api/system (versions and the disk space of the data, backup and final folders); GET /api/settings; PUT /api/settings {data_dir?, library_dir?, library_dirs?, backup_dir?};
 GET /api/books?q=&status=&review=&kind=; POST /api/scan {folder?}; POST /api/match?limit=&providers=; GET /api/providers; GET /api/process (the approval queue); POST /api/process/propose?limit=, /approve, /reject, /repropose {ids}, /run; POST /api/enrich?limit=; POST /api/books/{id}/enrich (Hardcover ratings and reviews); POST /api/books/{id}/confirm|ignore; POST /api/books {title, author?, narrator?, series?, series_position?, duration_seconds?, path?, status?};
 GET|PATCH|DELETE /api/books/{id}; GET /api/books/{id}/details (files, embedded tags, Audible metadata file); GET /api/books/{id}/cover (image).
 The page at / serves `src/app/server/static/index.html` when built (`cd web && npm run build`), else the plain stand-in `landing.html`."""
@@ -13,10 +13,11 @@ import threading
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
+from strata_python import web
+from strata_python.settings import absolute_path
 
 from app import __version__, catalogue, db, details, providers, read_models, settings
 from app.jobs import JobQueue
@@ -38,6 +39,10 @@ class SettingsIn(BaseModel):
     library_dir: str | None = None
     library_dirs: list[str] | None = None
     backup_dir: str | None = None
+
+
+class SystemNumbers(BaseModel):
+    jobs_busy: bool  # a job is queued or running
 
 
 class BookIn(BaseModel):
@@ -101,7 +106,13 @@ def create_app():
             sweeping.set()
             jobs.stop()
 
-    app = FastAPI(title="strata-listory", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=lifespan)
+    app = web.base_app(
+        "strata-listory", __version__, commit=web.source_commit(__file__)
+    )  # GET /api/health (with the commit), /api/docs
+    app.router.lifespan_context = lifespan
+    web.add_error_handlers(
+        app, {catalogue.CatalogueError: 400, catalogue.NotFound: 404, db.CorruptDatabase: 503}
+    )  # an exception raised in a route becomes {detail, payload} with its status: no try/except in the routes
 
     @app.middleware("http")
     async def saved_reads(request, call_next):
@@ -165,75 +176,50 @@ def create_app():
             raise HTTPException(400, str(e))
         return JSONResponse(dict(queued=True, job_id=ident, url=f"/api/jobs/{ident}"), status_code=202)
 
-    def guard(fn, *a, **kw):
-        try:
-            return fn(*a, **kw)
-        except catalogue.CatalogueError as e:
-            raise HTTPException(400, str(e))
-        except db.CorruptDatabase as e:
-            raise HTTPException(503, str(e))
-        except catalogue.NotFound:
-            raise HTTPException(404, "no such book")
-
-    @app.get("/", response_class=HTMLResponse)
-    def index():
-        built = os.path.join(
-            STATIC, "index.html"
-        )  # the React app when it has been built (cd web && npm run build), else the plain stand-in page
-        with open(built if os.path.exists(built) else LANDING, encoding="utf8") as f:
-            return f.read()
-
-    @app.get("/api/health")
-    def get_health():
-        return dict(ok=True, version=__version__)
-
-    @app.get("/api/settings")
+    @app.get("/api/settings", response_model=settings.SETTINGS.model())
     def get_settings():
         return (
             settings.all_settings()
-        )  # read live: a saved copy went stale (and showed "not set") when the environment or settings file changed
+        )  # read live: the environment and the settings file can change under a running server
 
-    @app.put("/api/settings")
+    @app.put("/api/settings", response_model=settings.SETTINGS.model())
     def put_settings(s: SettingsIn):
-        for label, v in (("data", s.data_dir), ("library", s.library_dir), ("backup", s.backup_dir)):
-            if v and not os.path.isabs(os.path.expanduser(v)):
-                raise HTTPException(400, f"the {label} folder must be an absolute path")
-        extra = [x.strip() for x in s.library_dirs or [] if x.strip()]
-        for x in extra:
-            if not os.path.isabs(os.path.expanduser(x)):
-                raise HTTPException(400, f"the library folder {x} must be an absolute path")
         changes = {
             k: v
             for k, v in (("data_dir", s.data_dir), ("library_dir", s.library_dir), ("backup_dir", s.backup_dir))
             if v is not None
         }
+        if s.library_dirs is not None:
+            changes["library_dirs"] = [x.strip() for x in s.library_dirs if x.strip()]
+        # an empty value resets the setting; a value that is not acceptable (a relative folder) is a ValueError, answered as a 400 naming it
+        changes = {k: v or None for k, v in changes.items()}
         # Serialize a database switch with job submission/claiming. Once a job
         # is active, its domain writes and completion must stay in that database.
         with jobs.configuration_lock:
-            target = os.environ.get("APP_DATA") or changes.get("data_dir") or settings.DEFAULT_DATA_DIR
-            normalize = lambda path: os.path.normcase(os.path.abspath(os.path.expanduser(path)))
-            if "data_dir" in changes and normalize(target) != normalize(settings.data_dir()) and jobs.pending():
+            target = (
+                (absolute_path(changes["data_dir"]) if changes["data_dir"] else settings.DEFAULT_DATA_DIR)
+                if "data_dir" in changes
+                else None
+            )
+            if target and "APP_DATA" not in os.environ and target != settings.data_dir() and jobs.pending():
                 raise HTTPException(409, "wait for queued and running jobs to finish before changing the data folder")
             if changes:
-                settings.save({k: v or None for k, v in changes.items()})  # an empty value resets the setting
-            if s.library_dirs is not None:
-                settings.save({"library_dirs": extra or None})
-            value = settings.all_settings()
-            return value
+                settings.save(changes)
+            return settings.all_settings()
 
     @app.get("/api/books")
     def get_books(q: str = "", status: str | None = None, review: str | None = None, kind: str | None = None):
-        return guard(catalogue.list_books, q, status, review, kind)
+        return catalogue.list_books(q, status, review, kind)
 
     @app.get("/api/books/{book_id}/source")
     def book_source(book_id: int):
         from app import source_files
 
-        return guard(source_files.describe, guard(catalogue.get_book, book_id))
+        return source_files.describe(catalogue.get_book(book_id))
 
     @app.post("/api/books")
     def post_book(b: BookIn):
-        return guard(catalogue.add_book, **b.model_dump())
+        return catalogue.add_book(**b.model_dump())
 
     @app.post("/api/scan")
     def post_scan(b: ScanIn):
@@ -278,12 +264,12 @@ def create_app():
 
     @app.post("/api/books/{book_id}/enrich")
     def enrich_one(book_id: int):
-        guard(catalogue.get_book, book_id)
+        catalogue.get_book(book_id)
         return queued("system", "enrich_book", book_id=book_id)
 
     @app.post("/api/books/{book_id}/inspect")
     def inspect_book(book_id: int):
-        guard(catalogue.get_book, book_id)
+        catalogue.get_book(book_id)
         return queued("system", "inspect", book_id=book_id)
 
     worker = pq.Worker()
@@ -301,7 +287,7 @@ def create_app():
         return catalogue.list_processed()
 
     def output_metadata(book_id):
-        guard(catalogue.get_book, book_id)
+        catalogue.get_book(book_id)
         result = catalogue.get_processed(book_id)
         if not result or result.get("status") != "done" or not result.get("out_dir"):
             raise HTTPException(404, "no finished output")
@@ -365,8 +351,8 @@ def create_app():
 
     def ingest_guard(fn, *args, **kwargs):
         try:
-            return guard(fn, *args, **kwargs)
-        except (ValueError, OSError) as e:
+            return fn(*args, **kwargs)
+        except OSError as e:  # a missing or unreadable file of the run (ValueError is a 400 through the error handlers)
             raise HTTPException(400, str(e))
 
     @app.get("/api/ingest")
@@ -500,7 +486,7 @@ def create_app():
     def library_workflow():
         from app.ingest import operations
 
-        return guard(operations.library, ingest_worker.tasks(), worker.tasks())
+        return operations.library(ingest_worker.tasks(), worker.tasks())
 
     @app.post("/api/ingest/run")
     def run_ingest(b: IngestIn):
@@ -508,7 +494,7 @@ def create_app():
             if not b.ids:
                 raise HTTPException(400, "select at least one book ID")
             for bid in b.ids:
-                guard(catalogue.get_book, bid)
+                catalogue.get_book(bid)
         if b.limit > max(200, len(b.ids or [])):
             raise HTTPException(422, "limit must be 1..200, or at most the number of explicitly selected book IDs")
         return queued("ingest", "run", ids=b.ids, limit=b.limit, online=b.online)
@@ -596,50 +582,52 @@ def create_app():
 
     @app.post("/api/books/{book_id}/confirm")
     def confirm_book(book_id: int):
-        return guard(catalogue.confirm, book_id)
+        return catalogue.confirm(book_id)
 
     @app.post("/api/books/{book_id}/ignore")
     def ignore_book(book_id: int):
-        return guard(catalogue.ignore, book_id)
+        return catalogue.ignore(book_id)
 
     @app.get("/api/books/{book_id}/details")
     def book_details(book_id: int):
-        b = guard(catalogue.get_book, book_id)
-        d = guard(details.saved_description, b)
+        b = catalogue.get_book(book_id)
+        d = details.saved_description(b)
         return dict(book=b, extras=catalogue.get_extras(book_id), processed=catalogue.get_processed(book_id), **d)
 
     @app.get("/api/books/{book_id}/cover")
     def book_cover(book_id: int):
-        p = guard(lambda: details.saved_cover(catalogue.get_book(book_id)))
+        p = details.saved_cover(catalogue.get_book(book_id))
         if not p or not os.path.isfile(p):
             raise HTTPException(404, "no cover")
         return FileResponse(p, headers={"Cache-Control": "private, max-age=3600"})
 
     @app.get("/api/books/{book_id}")
     def get_book(book_id: int):
-        return guard(catalogue.get_book, book_id)
+        return catalogue.get_book(book_id)
 
     @app.patch("/api/books/{book_id}")
     def patch_book(book_id: int, b: BookPatch):
-        return guard(catalogue.update_book, book_id, **b.model_dump(exclude_unset=True))
+        return catalogue.update_book(book_id, **b.model_dump(exclude_unset=True))
 
     @app.delete("/api/books/{book_id}")
     def delete_book(book_id: int):
-        return guard(catalogue.remove_book, book_id)
+        return catalogue.remove_book(book_id)
 
-    if os.path.isdir(os.path.join(STATIC, "assets")):
-        app.mount("/assets", StaticFiles(directory=os.path.join(STATIC, "assets")), name="assets")
+    def system_numbers() -> SystemNumbers:
+        return SystemNumbers(jobs_busy=jobs.pending())
+
+    web.add_system(
+        app,
+        __version__,
+        commit=web.source_commit(__file__),
+        folders={"data": settings.data_dir, "backups": settings.backup_dir, "final": settings.final_dir},
+        extra=system_numbers,
+    )  # GET /api/system: versions, the disk space of each folder
+    web.add_web(app, STATIC, LANDING)  # last: /assets and the page at every other path outside /api
     return app
 
 
 def main(argv=None):
-    import argparse
-
-    import uvicorn
-
-    a = argparse.ArgumentParser()
-    a.add_argument("--host", default="127.0.0.1")
-    a.add_argument("--port", type=int, default=8360)
-    a = a.parse_args(argv)
-    print(f"data folder: {settings.data_dir()}\nhttp://{a.host}:{a.port}/")
-    uvicorn.run(create_app(), host=a.host, port=a.port, log_level="warning")
+    app = create_app()
+    print(f"data folder: {settings.data_dir()}")
+    web.serve(app, argv, default_port=8360)

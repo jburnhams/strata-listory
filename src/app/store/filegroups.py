@@ -4,13 +4,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import re
 import secrets
-import shutil
-import subprocess
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -18,6 +14,8 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from strata_python import media
+from strata_python.files import sha256
 
 from app.store.models import PartFile, PartFilegroup, PartFilegroupMember, PartFileLocation, Run
 
@@ -35,26 +33,12 @@ def natural_key(name: str) -> list:
 
 
 def sha256_of(path: str) -> bytes:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while block := f.read(CHUNK):
-            h.update(block)
-    return h.digest()
+    return sha256(path)
 
 
 def probe_file(path: str) -> dict:
-    """The complete ffprobe description of a file: container format with every tag, all streams, chapters."""
-    if not shutil.which("ffprobe"):
-        raise RuntimeError("ffprobe is not installed")
-    r = subprocess.run(
-        ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if r.returncode:
-        raise RuntimeError((r.stderr or "ffprobe failed").strip().splitlines()[-1][:300])
-    return json.loads(r.stdout)
+    """The complete ffprobe description of a file: container format with every tag, all streams, chapters. A file ffprobe cannot read, or no ffprobe, is a RuntimeError (`media.MediaError`) saying why."""
+    return media.probe(path, timeout=120).raw
 
 
 def _num(v, cast=float):

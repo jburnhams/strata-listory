@@ -7,6 +7,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from strata_python.files import write_text_atomic
+
 from app import settings
 from app.identify import candidates as olc
 from app.identify import textkeys as tk
@@ -110,10 +112,7 @@ def load_cache(name: str = "vectors.json") -> dict:
 
 
 def save_cache(data: dict, name: str = "vectors.json") -> None:
-    folder().mkdir(parents=True, exist_ok=True)
-    tmp = folder() / (name + ".tmp")
-    tmp.write_text(json.dumps(data), encoding="utf8")
-    tmp.replace(folder() / name)
+    write_text_atomic(folder() / name, json.dumps(data))
 
 
 def positive_key(clusters: dict[str, dict], target: dict, canonical=None) -> str | None:

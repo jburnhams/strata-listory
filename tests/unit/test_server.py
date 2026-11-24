@@ -4,6 +4,7 @@ import pytest
 import uvicorn
 from job_client import JobClient as TestClient
 
+from app import settings
 from app.server import app as server_app
 from app.server.app import create_app
 
@@ -25,7 +26,12 @@ def test_landing_page_and_built_static_index(tmp_path, monkeypatch):
     (static / "assets" / "main.js").write_text("console.log(1)", encoding="utf8")
     monkeypatch.setattr(server_app, "STATIC", str(static))
     c2 = TestClient(create_app())
-    assert c2.get("/").text == "<h1>built react app</h1>"
+    assert (
+        c2.get("/").text == '<base href="./"><h1>built react app</h1>'
+    )  # a relative base, so one build works behind a reverse proxy
+    assert (
+        c2.get("/listens/3").text == '<base href="../">' + "<h1>built react app</h1>"
+    )  # a deep link opens the page too
     assert "console.log(1)" in c2.get("/assets/main.js").text
 
 
@@ -55,7 +61,13 @@ def test_settings_roundtrip_and_server_main(client, tmp_path, monkeypatch):
     monkeypatch.delenv("APP_DATA", raising=False)
     res = client.put("/api/settings", json=dict(data_dir=new_dir, library_dir=lib)).json()
     assert res == dict(
-        data_dir=new_dir, library_dir=lib, library_dirs=[lib], backup_dir=os.path.join(new_dir, "backups")
+        data_dir=new_dir,
+        library_dir=lib,
+        library_dirs=[lib],
+        backup_dir=os.path.join(new_dir, "backups"),
+        match_providers="",
+        audible_region="uk",
+        final_dir=settings.final_dir(),
     )
     more = str(tmp_path / "more")
     assert client.put("/api/settings", json=dict(library_dirs=[more])).json()["library_dirs"] == [lib, more]

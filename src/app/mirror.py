@@ -10,6 +10,8 @@ import os
 import re
 from datetime import UTC, datetime
 
+from strata_python.files import write_bytes_atomic
+
 from app import fs, read_models, settings
 
 IMAGES = (".jpg", ".png", ".webp")
@@ -62,11 +64,7 @@ def cover_file(book: dict) -> str | None:
 
 
 def _atomic(path: str, data: bytes):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "wb") as f:
-        f.write(data)
-    os.replace(tmp, path)
+    write_bytes_atomic(path, data)
 
 
 def read_meta(book: dict) -> dict:

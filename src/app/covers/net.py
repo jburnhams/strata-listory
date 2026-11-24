@@ -1,18 +1,29 @@
-"""Fetching: one throttled GET per host. Returns what the server said instead of raising, so a source can report why it found nothing."""
+"""Fetching: one throttled GET per host (strata-python's `Http`: a gap per host, Retry-After, a cool-down for a host that keeps saying 429, retries of 5xx). Returns what the server said instead of raising, so a source can report why it found nothing.
+
+`Reply` stays the app's own small shape (status, body, error, limited) because the sources and their test doubles are written against it."""
 
 import json
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
+
+from strata_python.http import Http
 
 USER_AGENT = "strata-listory/0.1 (personal audiobook catalogue)"
 MAX_BYTES = 40_000_000
-_last: dict[str, float] = {}
 INTERVAL = 0.4
+ATTEMPTS = 4
+MAX_WAIT = 60.0  # the longest a single Retry-After is honoured
+COOL_DOWN = 600.0  # a host that still says 429 after the retries is left alone this long, so one rate limit does not make every lookup wait
+
+# One client for the process, so the gap between requests to a host is shared by every source and thread.
+HTTP = Http(
+    USER_AGENT,
+    min_interval=INTERVAL,
+    attempts=ATTEMPTS,
+    max_wait=MAX_WAIT,
+    cool_down=COOL_DOWN,
+    max_bytes=MAX_BYTES,
+    https_only=True,
+)
 
 
 @dataclass
@@ -26,29 +37,10 @@ class Reply:
 
     @property
     def ok(self) -> bool:
-        return self.status == 200
+        return self.status == 200 and not self.error
 
     def json(self):
         return json.loads(self.body.decode("utf8"))
-
-
-ATTEMPTS = 4
-MAX_WAIT = 60.0  # the longest a single Retry-After is honoured
-COOL_DOWN = 600.0  # a host that still says 429 after the retries is left alone this long, so one rate limit does not make every lookup wait
-_cool_until: dict[str, float] = {}
-
-
-def _retry_after(headers, attempt: int) -> float:
-    """Seconds to wait before trying again: the server's Retry-After (a number of seconds or an HTTP date) when it sends one, else 2, 4, 8... seconds."""
-    value = headers.get("Retry-After", "") if headers is not None else ""
-    try:
-        wait = float(value)
-    except (TypeError, ValueError):
-        try:  # an HTTP date: wait until then
-            wait = (parsedate_to_datetime(value) - datetime.now(UTC)).total_seconds()
-        except (TypeError, ValueError):
-            wait = 2.0**attempt
-    return max(0.5, min(wait, MAX_WAIT))
 
 
 def request(
@@ -59,39 +51,9 @@ def request(
     body: bytes | None = None,
     timeout: float = 30,
 ) -> Reply:
-    """Send an https request (`GET` or `POST`), waiting out the per-host interval, with 429 Retry-After/cool-down and 5xx retries."""
-    if not url.startswith("https://"):
-        return Reply(0, error="only https addresses are fetched")
-    host = urllib.parse.urlsplit(url).netloc
-    if _cool_until.get(host, 0) > time.monotonic():
-        return Reply(429, error="rate limited a moment ago; not asking again yet", limited=True)
-    req_headers = {"User-Agent": USER_AGENT, **(headers or {})}
-    last = Reply(0, error="unreachable")
-    for attempt in range(1, ATTEMPTS + 1):
-        time.sleep(max(0, _last.get(host, 0) + INTERVAL - time.monotonic()))
-        _last[host] = time.monotonic()
-        wait = 0.0
-        try:
-            with urllib.request.urlopen(
-                urllib.request.Request(url, data=body, headers=req_headers, method=method), timeout=timeout
-            ) as r:
-                return Reply(r.status, r.read(MAX_BYTES))
-        except urllib.error.HTTPError as e:
-            last = Reply(e.code, error=str(e))
-            if e.code == 429:
-                last.limited = True
-                wait = _retry_after(e.headers, attempt)
-            elif e.code in (500, 502, 503, 504):
-                wait = 1.0 * attempt
-            else:
-                return last
-        except (OSError, ValueError) as e:
-            last, wait = Reply(0, error=str(e)), 1.0 * attempt
-        if attempt < ATTEMPTS:
-            time.sleep(wait)
-    if last.limited:
-        _cool_until[host] = time.monotonic() + COOL_DOWN
-    return last
+    """Send an https request (`GET` or `POST`), waiting out the per-host interval, with 429 Retry-After/cool-down and 5xx retries. Every call here only reads (a POST is a search query), so each is retried alike."""
+    got = HTTP.request(method, url, headers=headers, data=body, timeout=timeout, idempotent=True)
+    return Reply(got.status, got.body, got.error, got.limited)
 
 
 def get(url: str, *, timeout: float = 30) -> Reply:
