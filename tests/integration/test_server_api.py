@@ -2,7 +2,8 @@
 
 
 def test_health_endpoint(client):
-    assert client.get("/api/health").json() == dict(ok=True, version="0.1.0")
+    health = client.get("/api/health").json()
+    assert health["ok"] is True and health["version"] == "0.1.0"  # and the source commit, when run from a checkout
 
 
 def test_books_created_via_http_are_shared_with_the_cli(client, cli):
