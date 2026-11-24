@@ -49,6 +49,6 @@ def test_encoded_excerpt_matches_but_other_recording_does_not(tmp_path):
     control, _ = A.extract(other, tmp_path / "other.f32")
     index = A.Index(ref)
     match = index.locate(query)
-    assert match["status"] == "matched"
+    assert match["status"] == "matched", match  # the numbers say why on a platform where it fails
     assert abs(match["reference_start"] - 21) <= 0.2
     assert index.locate(control[100:400])["status"] == "unmatched"
