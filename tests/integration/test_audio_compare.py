@@ -13,13 +13,16 @@ from app import audio_compare as A
 
 
 def make_audio(path, seed):
+    """A tone whose loudness wanders: a random level every 300 ms, joined by straight lines. Steps would make the level at 100 ms steps change by a different amount for every tenth of a frame an encoder shifts the audio (an encoder's priming delay differs between ffmpeg builds: 25 ms on one, none on another), so the test would pass on one platform and fail on another."""
     rng = random.Random(seed)
     samples = array("h")
     rate = 8000
+    levels = [rng.uniform(0.02, 0.7) for _ in range(302)]
     for block in range(900):
-        amplitude = rng.uniform(0.02, 0.7)
         for i in range(800):
             t = (block * 800 + i) / rate
+            knot, along = divmod(block * 800 + i, 2400)
+            amplitude = levels[knot] + (levels[knot + 1] - levels[knot]) * along / 2400
             samples.append(
                 int(25000 * amplitude * (math.sin(2 * math.pi * 183 * t) + 0.25 * math.sin(2 * math.pi * 713 * t)))
             )
