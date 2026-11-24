@@ -131,7 +131,11 @@ def test_header_diagnostics_measure_duration_and_force_encoding_only_when_damage
         format=dict(duration="60"),
         streams=[dict(codec_type="audio", codec_name="mp3", channels=1, sample_rate="22050", bit_rate="64000")],
     )
-    monkeypatch.setattr(probe, "run", lambda *a: subprocess.CompletedProcess(a[0], 0, json.dumps(raw), diagnostic))
+    monkeypatch.setattr(
+        probe.media,
+        "probe",
+        lambda path, **k: probe.media.Probe.from_json(path, json.loads(json.dumps(raw)), diagnostic),
+    )
     monkeypatch.setattr(probe, "decoded_duration", lambda path: dict(duration=decoded, decode_messages=""))
     info = probe.probe_file("source.mp3")
     assert info["duration"] == decoded and info["reported_duration"] == 60 and info["requires_reencode"] == damaged

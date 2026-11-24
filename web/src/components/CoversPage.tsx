@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
 import { ZoomIn } from 'lucide-react'
-import { AsyncButton, Button, DataView, Disclosure, EmptyState, Field, IconButton, Input, Lightbox, NativeSelect, PageHeader, Skeleton, Status, Tabs, format, useAsyncAction, useJob, type Tone } from 'strata-react'
+import { AsyncButton, Button, DataView, Disclosure, EmptyState, Field, IconButton, Input, Lightbox, NativeSelect, PageHeader, Skeleton, Status, Tabs, Tooltip, format, useAsyncAction, useJob, type Tone } from 'strata-react'
 import { api, coverApi, type CoverJob, type CoverMatch, type CoverRecording, type CoverFiles, type CoverPicture, type CoverRow, type CoverSort, type CoverStatus } from '../api'
 import { size } from './FilesPage'
 import { hours } from './ListensPage'
@@ -173,7 +173,7 @@ function Card({ row, onPick, onBack, onChanged }: { row: CoverRow; onPick: (row:
         {row.source.path && <p className="type-caption basis-full break-all text-muted-foreground">{row.source.group_id != null ? <Link className="underline" to={`/files?group=${row.source.group_id}`} title="Open this file group on the Files page">{row.source.path}</Link> : row.source.path}</p>}
         <span className="ml-auto flex gap-2">
           {row.chosen != null && <Button variant="ghost" onClick={() => void pick.run({ id: null, via: 'pick' })}>Clear choice</Button>}
-          <Button variant="ghost" title="Take the match back: this listen returns to the Matches page to be decided again" onClick={() => onBack(row)}>Back to matches</Button>
+          <Tooltip label="Take the match back: this listen returns to the Matches page to be decided again"><Button variant="ghost" onClick={() => onBack(row)}>Back to matches</Button></Tooltip>
           <AsyncButton variant="outline" phase={again.phase} error={again.error} onClick={() => void again.run()} labels={{ idle: 'Search again', pending: 'Queuing…', done: 'Queued' }} />
         </span>
       </header>

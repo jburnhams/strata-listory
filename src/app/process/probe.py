@@ -2,11 +2,12 @@
 
 A *segment* is (file, start, end) in seconds within that file (end None = to the end); a chapter or a whole book is a list of segments. They are fed to ffmpeg directly (one segment) or through the concat demuxer with in/out points (several)."""
 
-import json
 import os
 import re
 import subprocess
 import tempfile
+
+from strata_python import media
 
 FFMPEG = ["ffmpeg", "-hide_banner", "-nostats", "-v", "info"]
 SILENCE_DB = -38
@@ -33,13 +34,11 @@ def natural_key(s: str):
 
 def probe_file(path: str) -> dict:
     """Facts about one audio file: duration, codec, channels, sample_rate, bit_rate (kbps), embedded chapters, tags."""
-    r = run(
-        ["ffprobe", "-v", "warning", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path],
-        120,
-    )
-    if r.returncode or not r.stdout.strip():
-        raise ToolError(f"cannot read {path}: {r.stderr.strip()[:200]}")
-    d = json.loads(r.stdout)
+    try:
+        got = media.probe(path, timeout=120)
+    except media.MediaError as e:
+        raise ToolError(str(e))
+    d, stderr = got.raw, got.warnings
     a = next((s for s in d.get("streams", []) if s.get("codec_type") == "audio"), None)
     if not a:
         raise ToolError(f"no audio stream in {path}")
@@ -62,12 +61,10 @@ def probe_file(path: str) -> dict:
         tags={k.lower(): v for k, v in (fmt.get("tags") or {}).items()},
     )
     bad_header = bool(
-        re.search(r"filesize and duration do not match|invalid.*(?:xing|vbri|header)|header missing", r.stderr, re.I)
+        re.search(r"filesize and duration do not match|invalid.*(?:xing|vbri|header)|header missing", stderr, re.I)
     )
-    if bad_header or "estimating duration from bitrate" in r.stderr.lower():
-        info = apply_decoded_duration(
-            info, decoded_duration(path), header_warning=r.stderr.strip() if bad_header else ""
-        )
+    if bad_header or "estimating duration from bitrate" in stderr.lower():
+        info = apply_decoded_duration(info, decoded_duration(path), header_warning=stderr.strip() if bad_header else "")
     return info
 
 

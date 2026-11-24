@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -1498,7 +1498,6 @@ wheels = [
 name = "strata-listory"
 version = "0.1.0"
 source = { editable = "." }
-default-groups = ["db", "dev"]
 dependencies = [
     { name = "fastapi" },
     { name = "pydantic" },
@@ -1532,8 +1531,8 @@ dev = [
 ]
 model = [
     { name = "scikit-learn" },
-    { name = "xgboost", version = "3.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and platform_machine != 'AMD64' and platform_machine != 'x86_64') or (python_full_version < '3.12' and sys_platform != 'linux' and sys_platform != 'win32')" },
-    { name = "xgboost", version = "3.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and platform_machine != 'AMD64' and platform_machine != 'x86_64') or (python_full_version >= '3.12' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "xgboost", version = "3.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and platform_machine != 'AMD64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.12' and platform_machine != 'AMD64' and platform_machine != 'x86_64' and sys_platform == 'win32') or (python_full_version < '3.12' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "xgboost", version = "3.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and platform_machine != 'AMD64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.12' and platform_machine != 'AMD64' and platform_machine != 'x86_64' and sys_platform == 'win32') or (python_full_version >= '3.12' and sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "xgboost-cpu", version = "3.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.12' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version < '3.12' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.12' and platform_machine == 'AMD64' and sys_platform == 'win32') or (python_full_version < '3.12' and platform_machine == 'x86_64' and sys_platform == 'win32')" },
     { name = "xgboost-cpu", version = "3.4.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and platform_machine == 'AMD64' and sys_platform == 'linux') or (python_full_version >= '3.12' and platform_machine == 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.12' and platform_machine == 'AMD64' and sys_platform == 'win32') or (python_full_version >= '3.12' and platform_machine == 'x86_64' and sys_platform == 'win32')" },
 ]
@@ -1542,7 +1541,7 @@ model = [
 requires-dist = [
     { name = "fastapi" },
     { name = "pydantic" },
-    { name = "strata-python", specifier = ">=0.2.3,<0.3" },
+    { name = "strata-python", specifier = ">=0.2.17,<0.3" },
     { name = "tzdata", marker = "sys_platform == 'win32'" },
     { name = "uvicorn" },
     { name = "zstandard", marker = "python_full_version < '3.14'" },
@@ -1569,13 +1568,13 @@ dev = [
 ]
 model = [
     { name = "scikit-learn", specifier = ">=1.7,<2" },
-    { name = "xgboost", marker = "(platform_machine != 'AMD64' and platform_machine != 'x86_64') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=3,<4" },
+    { name = "xgboost", marker = "(platform_machine != 'AMD64' and platform_machine != 'x86_64' and sys_platform == 'linux') or (platform_machine != 'AMD64' and platform_machine != 'x86_64' and sys_platform == 'win32') or (sys_platform != 'linux' and sys_platform != 'win32')", specifier = ">=3,<4" },
     { name = "xgboost-cpu", marker = "(platform_machine == 'AMD64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32') or (platform_machine == 'x86_64' and sys_platform == 'win32')", specifier = ">=3,<4" },
 ]
 
 [[package]]
 name = "strata-python"
-version = "0.2.3"
+version = "0.2.17"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
@@ -1584,9 +1583,9 @@ dependencies = [
     { name = "tzdata", marker = "sys_platform == 'win32'" },
     { name = "uvicorn" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/99/7d/0d2fd6eee0f3015de7dc88d6776682533819b5feacac7278eb2a5551edeb/strata_python-0.2.3.tar.gz", hash = "sha256:5c0d6e158404ddb9471b3dc99b6ee13fb1977da68325ae0bc958891fee4b466a", size = 174299, upload-time = "2026-11-14T20:51:15.906Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/32/0afcb0ae660f74dbd0e4e96bf02d7783cd92f9dfcdd564bef9925d86b730/strata_python-0.2.17.tar.gz", hash = "sha256:707d329190fb5e754e738bb0493a30ebea120ea43732e1ceb8b58a51679a9112", size = 302725, upload-time = "2026-11-24T11:28:53.841Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/48/3f/84aa88fb60e3e921e0e826be88b57df39afd9a8e3e8e4e5ce2a4261fd02b/strata_python-0.2.3-py3-none-any.whl", hash = "sha256:1a5c251318ea8d4f8cb2c7376e7ba947cadea21de2cc22b2c502ac63b7acb810", size = 129479, upload-time = "2026-11-14T20:51:14.592Z" },
+    { url = "https://files.pythonhosted.org/packages/be/3a/29bd02b8e919dfe31d18f021cacc0ad6126f1864006072bf89313914bb04/strata_python-0.2.17-py3-none-any.whl", hash = "sha256:9133c8bba645b5f6fab337c3af4d6f424ba2745146286d7f179b71a3f64790d5", size = 213134, upload-time = "2026-11-24T11:28:52.253Z" },
 ]
 
 [package.optional-dependencies]

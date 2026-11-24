@@ -2,8 +2,6 @@
 
 The order matters: ASIN lookups and searches try the providers in the configured order (`match_providers` setting or APP_PROVIDERS, comma separated; default: all, in the order below). A provider that cannot run (for example no API key) is skipped and listed with the reason by `./app providers`."""
 
-import os
-
 from app import settings
 from app.providers.applebooks import AppleBooks
 from app.providers.audible import AudibleSearch
@@ -28,7 +26,7 @@ def get(name: str) -> Provider:
 
 
 def configured() -> list[str]:
-    raw = os.environ.get("APP_PROVIDERS") or settings.load().get("match_providers") or ""
+    raw = settings.SETTINGS.get("match_providers")
     names = [n.strip() for n in raw.split(",") if n.strip()] or [c.name for c in ALL if c.matching]
     for n in names:
         get(n)  # unknown names fail loudly

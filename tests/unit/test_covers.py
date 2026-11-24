@@ -1,6 +1,8 @@
 """The cover sources and picture helpers: size rewriting, header parsing, hashing distance, source records. No network: `net.get` is replaced."""
 
 import struct
+import urllib.error
+import urllib.request
 
 import pytest
 from pictures import jpeg, png, webp_x
@@ -153,15 +155,15 @@ def test_local_reads_images_from_the_folder_cover_names_first(tmp_path):
 
 def test_get_refuses_plain_http_and_reports_unreachable_hosts(monkeypatch):
     assert net.get("http://example.invalid/x").status == 0
-    monkeypatch.setattr(net.time, "sleep", lambda s: None)
-    monkeypatch.setattr(net.urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(OSError("no route")))
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(OSError("no route")))
     r = net.get("https://example.invalid/x")
     assert (r.status, r.ok) == (0, False) and "no route" in r.error
 
 
 class _Resp:
     def __init__(self, status, body=b""):
-        self.status, self._b = status, body
+        self.status, self._b, self.headers = status, body, {}
 
     def __enter__(self):
         return self
@@ -174,23 +176,23 @@ class _Resp:
 
 
 def test_get_returns_the_body_and_retries_a_busy_server_once(monkeypatch):
-    monkeypatch.setattr(net.time, "sleep", lambda s: None)
+    monkeypatch.setattr("time.sleep", lambda s: None)
     calls = []
 
     def fake(req, timeout=None):
         calls.append(1)
         if len(calls) == 1:
-            raise net.urllib.error.HTTPError(req.full_url, 503, "busy", {}, None)
+            raise urllib.error.HTTPError(req.full_url, 503, "busy", {}, None)
         return _Resp(200, b'{"a": 1}')
 
-    monkeypatch.setattr(net.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
     r = net.get("https://example.test/x")
     assert r.ok and r.json() == {"a": 1} and len(calls) == 2
 
     def missing(req, timeout=None):
-        raise net.urllib.error.HTTPError(req.full_url, 404, "nf", {}, None)
+        raise urllib.error.HTTPError(req.full_url, 404, "nf", {}, None)
 
-    monkeypatch.setattr(net.urllib.request, "urlopen", missing)
+    monkeypatch.setattr(urllib.request, "urlopen", missing)
     assert net.get("https://example.test/y").status == 404
 
 
@@ -328,52 +330,36 @@ class _Hdr(dict):
 
 def test_get_waits_as_long_as_retry_after_says_then_succeeds(monkeypatch):
     sleeps, calls = [], []
-    monkeypatch.setattr(net.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
 
     def fake(req, timeout=None):
         calls.append(1)
         if len(calls) < 3:
-            raise net.urllib.error.HTTPError(req.full_url, 429, "slow", _Hdr({"Retry-After": "7"}), None)
+            raise urllib.error.HTTPError(req.full_url, 429, "slow", _Hdr({"Retry-After": "7"}), None)
         return _Resp(200, b"{}")
 
-    monkeypatch.setattr(net.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
     r = net.get("https://slow.test/x")
     assert r.ok and len(calls) == 3 and sleeps.count(7.0) == 2
 
 
 def test_a_host_that_keeps_saying_429_is_left_alone_for_a_while(monkeypatch):
-    monkeypatch.setattr(net.time, "sleep", lambda s: None)
+    monkeypatch.setattr("time.sleep", lambda s: None)
     calls = []
 
     def fake(req, timeout=None):
         calls.append(1)
-        raise net.urllib.error.HTTPError(req.full_url, 429, "slow", _Hdr({"Retry-After": "never"}), None)
+        raise urllib.error.HTTPError(req.full_url, 429, "slow", _Hdr({"Retry-After": "never"}), None)
 
-    monkeypatch.setattr(net.urllib.request, "urlopen", fake)
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
     r = net.get("https://busy.test/x")
     assert r.limited and r.status == 429 and len(calls) == net.ATTEMPTS
     again = net.get("https://busy.test/y")
     assert (
         again.limited and len(calls) == net.ATTEMPTS and "not asking again" in again.error
     )  # no new request during the cool-down
-    monkeypatch.setitem(net._cool_until, "busy.test", 0)
+    monkeypatch.setitem(net.HTTP._cool_until, "busy.test", 0)
     assert net.get("https://busy.test/z").limited and len(calls) == 2 * net.ATTEMPTS
-
-
-def test_retry_after_is_capped_and_defaults_to_growing_waits():
-    assert net._retry_after({"Retry-After": "9999"}, 1) == net.MAX_WAIT
-    assert net._retry_after({}, 3) == 8.0 and net._retry_after(None, 1) == 2.0
-
-
-def test_retry_after_may_be_an_http_date():
-    from datetime import UTC, datetime, timedelta
-    from email.utils import format_datetime
-
-    soon = format_datetime(datetime.now(UTC) + timedelta(seconds=45), usegmt=True)
-    assert 40 <= net._retry_after({"Retry-After": soon}, 1) <= 45
-    past = format_datetime(datetime.now(UTC) - timedelta(seconds=45), usegmt=True)
-    assert net._retry_after({"Retry-After": past}, 1) == 0.5  # already passed: the smallest wait
-    assert net._retry_after({"Retry-After": "not a date"}, 2) == 4.0
 
 
 def test_bbc_follows_the_programme_to_its_image_and_offers_the_original_and_the_1920_rendition(monkeypatch):

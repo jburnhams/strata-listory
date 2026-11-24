@@ -67,12 +67,13 @@ def test_catalogue_commands(capsys):
         cli.main(["remove", "1"])
 
 
-def test_set_and_serve_commands(capsys, monkeypatch):
+def test_set_and_serve_commands(capsys, monkeypatch, tmp_path):
     assert cli.main(["set", "library_dir"]) == 0
     assert "library_dir = " in capsys.readouterr().out
 
-    assert cli.main(["set", "library_dir", "/books"]) == 0
-    assert f"library_dir = {os.path.abspath('/books')}" in capsys.readouterr().out
+    books = str(tmp_path / "books")  # absolute on every OS: a relative folder is refused
+    assert cli.main(["set", "library_dir", books]) == 0
+    assert f"library_dir = {books}" in capsys.readouterr().out
 
     assert cli.main(["set", "library_dir", "default"]) == 0
     assert "library_dir = " in capsys.readouterr().out
@@ -439,13 +440,13 @@ def test_process_approval_commands(capsys, monkeypatch, tmp_path):
     assert cli.main(["process-run"]) == 1 and "failed 1" in capsys.readouterr().out
 
 
-def test_doctor_audio_checks_optional_modules_and_native_tools(monkeypatch, capsys):
-    from app import cli
+def test_doctor_lists_the_audio_stack_and_native_tools_without_failing_on_them(monkeypatch, capsys):
+    from strata_python import cli as cli_lib
 
-    monkeypatch.setattr(cli.shutil, "which", lambda name: "/tools/" + name)
-    monkeypatch.setattr(cli.importlib, "import_module", lambda name: type("Module", (), {"__version__": "test"})())
-    assert cli.main(["doctor", "--audio"]) == 0
-    assert "numpy test" in capsys.readouterr().out
-    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
-    assert cli.main(["doctor", "--audio"]) == 1
-    assert "MISSING" in capsys.readouterr().out
+    monkeypatch.setattr(cli_lib.shutil, "which", lambda name: "/tools/" + name)
+    assert cli.main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "numpy" in out and "/tools/ffmpeg" in out
+    monkeypatch.setattr(cli_lib.shutil, "which", lambda name: None)
+    assert cli.main(["doctor"]) == 0  # the audio tools are optional: only processing needs them
+    assert "missing" in capsys.readouterr().out

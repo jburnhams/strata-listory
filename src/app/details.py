@@ -13,6 +13,8 @@ import time
 import urllib.request
 from datetime import UTC, datetime, timedelta
 
+from strata_python import media
+
 from app import db, fs, mirror, providers, read_models, scan, settings
 
 IMAGES = (".jpg", ".jpeg", ".png", ".webp")
@@ -99,24 +101,8 @@ def _ffprobe(path: str) -> dict | None:
     if not shutil.which("ffprobe"):
         return None
     try:
-        r = subprocess.run(
-            [
-                "ffprobe",
-                "-v",
-                "quiet",
-                "-print_format",
-                "json",
-                "-show_format",
-                "-show_streams",
-                "-show_chapters",
-                path,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
-    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return media.probe(path, timeout=60).raw
+    except media.MediaError:  # unreadable, or ffprobe gave up: this file has no facts
         return None
 
 

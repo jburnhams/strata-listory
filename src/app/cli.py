@@ -1,34 +1,23 @@
 """Command line: `doctor` checks the environment, `add`/`list`/`show`/`edit`/`remove` manage the audiobook catalogue, `set` changes settings, `serve` starts the web server."""
 
 import argparse
-import importlib
 import json
 import os
-import shutil
 import sys
+
+from strata_python import cli as cli_lib
 
 from app import __version__, backup, catalogue, db, enrich, fs, matcher, mirror, providers, scan, settings
 
-CHECKS = (("fastapi", "fastapi"), ("uvicorn", "uvicorn"), ("pydantic", "pydantic"))
-
-
-def doctor(args):
-    ok = True
-    print(f"app {__version__}, python {sys.version.split()[0]}")
-    checks = CHECKS + (("numpy", "numpy"), ("scipy", "scipy")) if getattr(args, "audio", False) else CHECKS
-    for label, mod in checks:
-        try:
-            m = importlib.import_module(mod)
-            print(f"  ok       {label} {getattr(m, '__version__', '')}".rstrip())
-        except ImportError:
-            ok = False
-            print(f"  MISSING  {label}: pip install -r requirements.txt")
-    if getattr(args, "audio", False):
-        for tool in ("ffmpeg", "ffprobe", "mp3gain", "fpcalc"):
-            path = shutil.which(tool)
-            print(f"  {'ok' if path else 'MISSING':9} {tool} {path or ''}")
-            ok = bool(path) and ok
-    return 0 if ok else 1
+# `doctor` (strata-python's cli.add_doctor): required modules, then the audio stack and its native tools, which only processing needs
+MODULES = (
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    cli_lib.Module("numpy", optional=True),
+    cli_lib.Module("scipy", optional=True),
+)
+TOOLS = [cli_lib.Check(t, cli_lib.program(t), optional=True) for t in ("ffmpeg", "ffprobe", "mp3gain", "fpcalc")]
 
 
 def _fmt_duration(sec):
@@ -928,18 +917,6 @@ def cmd_ignore(args):
     return 0
 
 
-def cmd_set(args):
-    if args.value is None:
-        print(f"{args.key} = {settings.all_settings().get(args.key)}")
-        return 0
-    try:
-        settings.save({args.key: None if args.value == "default" else args.value})
-    except KeyError as e:
-        sys.exit(str(e))
-    print(f"{args.key} = {settings.all_settings()[args.key]}")
-    return 0
-
-
 def cmd_ingest(args):
     from app.ingest import pipeline, policy, store
 
@@ -983,11 +960,10 @@ def cmd_openlibrary(args):
     return 0
 
 
-def cmd_serve(args):
+def serve(host, port):
     from app.server import app as server_app
 
-    server_app.main(["--host", args.host, "--port", str(args.port)])
-    return 0
+    server_app.main(["--host", host, "--port", str(port)])
 
 
 def main(argv=None):
@@ -1017,9 +993,7 @@ def main(argv=None):
     ip.add_argument("phase", choices=("metadata", "audiobook", "quality"))
     ip.set_defaults(fn=cmd_ingest)
     sub.add_parser("ingest-status", help="stage metrics, runs and current thresholds").set_defaults(fn=cmd_ingest)
-    check = sub.add_parser("doctor", help="check the environment")
-    check.add_argument("--audio", action="store_true", help="also check NumPy, SciPy and native audio tools")
-    check.set_defaults(fn=doctor)
+    cli_lib.add_doctor(sub, "app", __version__, MODULES, checks=TOOLS, hint="uv sync")
 
     def book_fields(sp, edit=False):
         sp.add_argument("--title" if edit else "title", **(dict(help="new title") if edit else {}))
@@ -1306,17 +1280,8 @@ def main(argv=None):
     )
     rs.add_argument("backup", nargs="?", help="path from `backups`")
     rs.set_defaults(fn=cmd_restore)
-    s = sub.add_parser(
-        "set",
-        help='show or change a setting (data_dir, library_dir, backup_dir, match_providers, audible_region, final_dir); value "default" resets it',
-    )
-    s.add_argument("key")
-    s.add_argument("value", nargs="?")
-    s.set_defaults(fn=cmd_set)
-    v = sub.add_parser("serve", help="start the web server")
-    v.add_argument("--host", default="127.0.0.1")
-    v.add_argument("--port", type=int, default=8360)
-    v.set_defaults(fn=cmd_serve)
+    cli_lib.add_set(sub, settings.SETTINGS)  # app set KEY [VALUE|default]
+    cli_lib.add_serve(sub, serve, default_port=8360)
     a = p.parse_args(argv)
     try:
         return a.fn(a)

@@ -22,12 +22,15 @@ def test_defaults_and_env_overrides(tmp_path, monkeypatch):
     assert settings.library_dir() == os.path.abspath(os.path.expanduser("~/books"))
 
 
-def test_save_load_and_reset():
+def test_save_load_and_reset(tmp_path):
     assert settings.load() == {}
-    saved = settings.save(dict(library_dir="/tmp/books", data_dir="/tmp/appdata"))
-    assert saved == dict(library_dir="/tmp/books", data_dir="/tmp/appdata")
+    books, data = str(tmp_path / "books"), str(tmp_path / "appdata")
+    saved = settings.save(dict(library_dir=books, data_dir=data))
+    assert saved == dict(library_dir=books, data_dir=data)
     assert settings.load() == saved
-    assert settings.library_dir() == os.path.abspath("/tmp/books")
+    assert settings.library_dir() == books
+    with pytest.raises(ValueError, match="absolute"):
+        settings.save(dict(library_dir="relative/books"))
 
     after = settings.save(dict(library_dir=None))
     assert "library_dir" not in after

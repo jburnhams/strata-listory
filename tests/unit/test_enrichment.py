@@ -723,6 +723,7 @@ def test_tasks_execute_enrichment_and_net_request(monkeypatch):
 
     class FakeResp:
         status = 200
+        headers: dict = {}
 
         def read(self, n):
             return b'{"ok":true}'
@@ -738,9 +739,9 @@ def test_tasks_execute_enrichment_and_net_request(monkeypatch):
     assert r.ok and r.json() == {"ok": True}
 
     assert not net.request("http://example.com/api").ok
-    monkeypatch.setattr("app.covers.net._cool_until", {"example.com": 1e18})
+    monkeypatch.setattr(net.HTTP, "_cool_until", {"example.com": 1e18})
     assert net.request("https://example.com/api").limited
-    monkeypatch.setattr("app.covers.net._cool_until", {})
+    monkeypatch.setattr(net.HTTP, "_cool_until", {})
 
     # Test pending limit=1
     class FakeS:

@@ -2,6 +2,17 @@
 
 Newest first, grouped by day. One entry per change, in the same commit or PR as the change.
 
+## 2026-11-24
+
+**strata-python 0.2.17 and strata-react 1.3.10 (branch `claude/project-thread-ewarvp`)**
+
+- `pyproject.toml`, `uv.lock`: `strata-python>=0.2.17,<0.3` (was 0.2.3). `web/package.json`: `strata-react ^1.3.10` (was 1.0.39).
+- `src/app/settings.py` is now a `strata_python.settings.Settings` declaration (validated saves, one atomic file write under a lock, `audible_region` as a fixed set of choices); the old function names stay. `./app set`, `./app doctor` and `./app serve` are strata-python's `add_set`, `add_doctor` and `add_serve`; `doctor` always lists the audio modules and tools (optional rows) instead of needing `--audio`.
+- `src/app/server/app.py`: `web.base_app` (health with the source commit), `web.add_error_handlers` (the `guard()` wrapper is gone: `CatalogueError` 400, `NotFound` 404, `CorruptDatabase` 503), `web.add_system` (`GET /api/system`: versions and the disk space of the data, backup and final folders), `web.add_web` (relative `<base href>`, so a deep link reloads behind a reverse proxy) and `web.serve`. `PUT /api/settings` keeps the rule that the data folder cannot change under running jobs.
+- `src/app/covers/net.py` is a thin adapter over `strata_python.http.Http` (per-host gap, Retry-After, cool-down, retries); `ffprobe` calls in `details.py`, `store/filegroups.py` and `process/probe.py` go through `media.probe`; sha256 and temp-file-then-rename writes use `strata_python.files`.
+- Web: strata-react now refuses `title` on `Button` (a `Tooltip` in `CoversPage`); the Node 25 `localStorage` shim in the test setup is gone (`installLayoutShims` does it).
+- Left as they were, on purpose: `providers/base.py` keeps its own client (its retry rules, `MatchError` and per-attempt `emit` are tested, and differ from `Http`'s); the web `req` helper keeps the 202 job wait that `fetchJson` has no hook for; `strata-api-types` needs `openapi-typescript`, a new dependency that needs a decision first.
+
 ## 2026-11-14
 
 **Tests and OS helpers from strata-python (branch `strata-python-adopt`, on top of the PyPI move)**

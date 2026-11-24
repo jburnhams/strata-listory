@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
+from strata_python.files import sha256_hex
+
 from app import catalogue, contributors, details, fs, matcher, merge, scan, sources
 from app.ingest import grouping
 from app.ingest.observe import report
@@ -15,11 +17,7 @@ from app.process import probe
 
 
 def digest(path):
-    h = hashlib.sha256()
-    with Path(path).open("rb") as f:
-        for b in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(b)
-    return h.hexdigest()
+    return sha256_hex(path)
 
 
 def signature(book):

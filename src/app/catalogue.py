@@ -108,7 +108,7 @@ def _row(r) -> dict:
 def _one(c, book_id):
     r = c.execute(f"SELECT {COLUMNS} FROM books WHERE id=?", (book_id,)).fetchone()
     if r is None:
-        raise NotFound(book_id)
+        raise NotFound("no such book")
     return _row(r)
 
 
