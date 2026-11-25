@@ -65,9 +65,14 @@ def test_a_job_runs_in_a_job_process_and_its_outcome_is_recorded(tmp_path):
 @pytest.mark.skipif(oslib.WIN, reason="POSIX priorities and process states")
 def test_timeout_kills_a_real_job_process_at_idle_priority_and_the_next_job_proceeds(tmp_path, stalling):
     before = os.getpriority(os.PRIO_PROCESS, 0)
-    queue = JobQueue(None, workers=1, timeout_seconds=1)
+    queue = JobQueue(None, workers=1, timeout_seconds=60)
     queue.start()
     try:
+        # A deadline is fixed at submission and counts the job process's start-up (seconds of imports on a slow runner):
+        # run one job first so the process is warm, then give the stalled one a short deadline.
+        warm = queue.submit("system", "scan", folder=str(tmp_path))
+        wait_until(lambda: queue.get(warm)["state"] == "done", "the warm-up job")
+        queue.timeout_seconds = 1
         stalled = queue.submit("system", "scan", folder="stalled")
         wait_until(stalling.exists, "the stalled job running")
         seen = json.loads(stalling.read_text())
@@ -76,9 +81,7 @@ def test_timeout_kills_a_real_job_process_at_idle_priority_and_the_next_job_proc
         assert queue.get(stalled)["error"] == "took longer than 1 s"
         wait_until(lambda: not oslib.pid_alive(seen["pid"]), "the job process gone")
         assert queue.submit("system", "scan", folder="stalled") == stalled  # still shown, not run again by itself
-        queue.timeout_seconds = (
-            30  # a deadline is fixed at submission; a new job process needs seconds to import the app on a slow runner
-        )
+        queue.timeout_seconds = 60  # the killed process is replaced by a new one that must import the app first
         following = queue.submit("system", "scan", folder=str(tmp_path))
         wait_until(lambda: queue.get(following)["state"] == "done", "the next job")
     finally:
