@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
@@ -16,6 +13,7 @@ log = logging.getLogger(__name__)
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from strata_python.clients import models as sm
 
 from app.covers.run import accepted_work
 from app.enrichment import sources
@@ -287,16 +285,16 @@ def call_strata_models_summarise(
     title: str,
     inputs: list[dict[str, str]],
     *,
-    base_url: str | None = None,
     timeout: float = 60.0,
 ) -> tuple[str, str] | None:
-    """Call `strata-models` role `summarise` with `summarise-v3-xml` and return `(text, model)` or `None`."""
-    root = (base_url or os.environ.get("STRATA_MODELS_URL") or "http://127.0.0.1:8366").rstrip("/")
-    payload = dict(
-        role="summarise",
-        app="strata-listory",
-        priority="normal",
-        params=dict(
+    """Call `strata-models` role `summarise` with `summarise-v3-xml` and return `(text, model)` or `None`.
+
+    Through strata-python's client, not hand-made HTTP: strata-models takes a normal priority job only on its bulk
+    endpoint now (a single `POST /api/jobs` is high priority only), and the client routes it there. Its errors
+    (`Unavailable`, `JobFailed`: RuntimeErrors; TimeoutError) are the ones `summarise_run` already swallows."""
+    out = sm.run(
+        "summarise",
+        dict(
             preset="summarise-v3-xml",
             effort="low",
             max_tokens=1500,
@@ -308,30 +306,14 @@ def call_strata_models_summarise(
                 inputs=inputs,
             ),
         ),
+        "strata-listory",
+        "normal",
+        timeout=timeout,
     )
-    req = urllib.request.Request(
-        f"{root}/api/jobs",
-        data=json.dumps(payload).encode("utf8"),
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=15) as r:
-        job = json.loads(r.read().decode("utf8"))
-    deadline = time.monotonic() + timeout
-    while job.get("status") in ("queued", "running"):
-        rem = deadline - time.monotonic()
-        if rem <= 0:
-            raise TimeoutError(f"strata-models job {job.get('id')} timed out")
-        wait = min(30.0, max(rem, 1.0))
-        with urllib.request.urlopen(f"{root}/api/jobs/{job['id']}?wait={wait:.1f}", timeout=wait + 10) as r:
-            job = json.loads(r.read().decode("utf8"))
-    if job.get("status") != "done":
-        raise RuntimeError(f"strata-models job {job.get('id')} failed: {job.get('error')}")
-    out = job.get("result") or job.get("output") or {}
-    text = (out.get("text") or "").strip()
+    text = str(out.get("text") or "").strip()
     if not text:
         return None
-    return text, str(out.get("model") or job.get("model") or "")
+    return text, str(out.get("model") or "")
 
 
 def summarise_run(
