@@ -2,6 +2,19 @@
 
 Newest first, grouped by day. One entry per change, in the same commit or PR as the change.
 
+## 2026-11-25
+
+**The job queue is strata-python's `tasks.queue` (branch `claude/project-thread-ewarvp`)**
+
+Jonathan chose "jobs and ingest pipeline" for the follow-up to the 0.2.17 upgrade. This is the jobs half; the ingest pipeline is left, with the reason below.
+
+- `src/app/jobs.py` is rewritten on `strata_python.tasks.queue` (`Queue`, `Worker`): the claim loop, supervisor, deadlines, heartbeats and lost-worker recovery are the library's; kept here are the app's rules (see the file's opening comment). A job is `domain.kind`; `submit` still returns the failed job until a person retries or clears it; `retries=0`, so a failure waits for a person; the failure cascade onto ingest runs and process plans is `on_fail`, in the same transaction; a stopping server fails its job with a known message that the next start replays (bounded as before). `JobQueue`'s methods and the HTTP routes under `/api/jobs` are unchanged; ids are integers in the table and text in the API.
+- `src/app/db.py`: schema 14 creates `queue` (the library's table, frozen as SQL here) and carries over queued jobs, failed jobs nobody retried or cleared, and jobs that were running (as failed); `job_work` rows follow their job to its new id. `jobs` stays as history. **New:** a migration may be a function.
+- **Removed:** `src/app/job_worker.py` (a job process is `strata_python.tasks.child`'s, kept between jobs), `oslib.start_job`, `kill_job`, `lower_job_priority`, `lower_priority`, `watch_supervisor`; the review lane and the `training_features` priority (nothing has submitted those kinds since the old matching was retired).
+- A failure now reads as its message everywhere (`jobs.plain` strips the library's `TypeName: ` prefix); a timeout reads "took longer than N s".
+- Tests: `tests/unit/test_jobs.py` rewritten for the new queue (the fake-supervisor tests are gone with the supervisor); `tests/unit/test_backup.py` has the migration test; `tests/integration/test_jobs.py` runs real job processes (a scan, a stalled job killed at its deadline at idle priority, a stop and its replay); `tests/unit/test_oslib.py` keeps the two tests that are still the app's own.
+- **Left out on purpose, and why:** `tasks.web.add_jobs` (its `retry` queues the same row again, which would skip the cleanup of a failed job's runs and plans that `JobQueue.retry` does by making a new job; its `cancel` would need the same cascade) and `workflow.Pipeline` for `src/app/ingest/` (5.5k lines of run, event and approval-signature code that the listens flow replaces; moving it would carry the old design over, not retire it). The listens steps (`pipeline_steps.py`) are the candidate: their state lives in Postgres, where `workflow.store.DbStore` fits, and that needs a migration (Jonathan's explicit words).
+
 ## 2026-11-24
 
 **strata-python 0.2.17 and strata-react 1.3.10 (branch `claude/project-thread-ewarvp`)**

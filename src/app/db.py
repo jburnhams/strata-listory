@@ -43,7 +43,86 @@ SCHEMA = (
     """CREATE INDEX jobs_history_dedupe ON jobs(dedupe,created);
        CREATE INDEX jobs_failures ON jobs(finished) WHERE state='failed'""",
     "ALTER TABLE jobs ADD COLUMN progress TEXT",  # JSON {done, total, current} the running handler reports for the Processing page
+    lambda c: _queue_table(c),  # strata_python.tasks.queue's table replaces `jobs` (kept as history)
 )  # schema version n is SCHEMA[n-1]; append new migrations, never edit old ones (PRAGMA user_version tracks the applied count)
+
+
+QUEUE = """CREATE TABLE queue (
+    id INTEGER NOT NULL, kind VARCHAR(100) NOT NULL, domain VARCHAR(500), options TEXT NOT NULL, dedupe VARCHAR(64),
+    resources TEXT NOT NULL, state VARCHAR(20) NOT NULL, priority INTEGER NOT NULL, attempts INTEGER NOT NULL,
+    run_after FLOAT, timeout_s FLOAT, created_at FLOAT NOT NULL, started_at FLOAT, finished_at FLOAT, heartbeat_at FLOAT,
+    owner VARCHAR(200), owner_pid INTEGER, claim_token VARCHAR(32), cancel_requested BOOLEAN NOT NULL, error TEXT,
+    result TEXT, progress TEXT, PRIMARY KEY (id));
+    CREATE INDEX ix_queue_dedupe ON queue (dedupe);
+    CREATE INDEX ix_queue_claim ON queue (state, priority, id);
+    CREATE INDEX ix_queue_domain ON queue (domain)"""  # strata_python.tasks.queue.jobs_table(metadata, "queue") as SQLite writes it, frozen here: a migration never follows the library
+OLD_SHUTDOWN = ("job interrupted by server shutdown", "job worker exited without a completed result (exit -15)")
+
+
+def _progress(raw):
+    """The old {current, done, total} as the library's Progress JSON."""
+    import json
+
+    if not raw:
+        return None
+    p = json.loads(raw)
+    return json.dumps(dict(done=p.get("done") or 0, total=p.get("total"), text=p.get("current") or ""))
+
+
+def _queue_table(c):
+    """Create the queue and carry over what a person still has to see: queued jobs (they run), failed jobs nobody retried or cleared (they stay on the Processing page) and jobs that were running when the old server stopped (failed, as the old server's own start would have; a stop it asked for is replayed). `job_work` rows that point at a carried job follow it to its new id."""
+    import json
+    from datetime import datetime
+
+    from strata_python.tasks.queue import dedupe_key
+
+    c.executescript(QUEUE)
+
+    def seconds(text):
+        try:
+            return datetime.fromisoformat(text).timestamp() if text else None
+        except ValueError:
+            return None
+
+    cursor = c.execute(
+        "SELECT * FROM jobs j WHERE j.state IN ('queued','running') OR (j.state='failed' AND NOT EXISTS (SELECT 1 FROM job_work r WHERE r.kind IN ('retry','dismissed') AND r.owner=j.id) AND NOT EXISTS (SELECT 1 FROM jobs n WHERE n.dedupe=j.dedupe AND n.created>j.created)) ORDER BY j.created,j.id"
+    )
+    names = [d[0] for d in cursor.description]
+    for values in cursor.fetchall():
+        r = dict(zip(names, values, strict=True))
+        options = json.loads(r["options"])
+        state, error, finished = r["state"], r["error"] or None, seconds(r["finished"])
+        if state == "running":
+            state, error, finished = (
+                "failed",
+                "Interrupted: job interrupted: previous worker stopped",
+                seconds(r["started"]),
+            )
+        elif error in OLD_SHUTDOWN:
+            error = "Interrupted: job interrupted by server shutdown"
+        kind = f"{r['domain']}.{r['kind']}"
+        c.execute(
+            "INSERT INTO queue(kind,domain,options,dedupe,resources,state,priority,attempts,timeout_s,created_at,started_at,finished_at,owner,cancel_requested,error,progress) VALUES (?,?,?,?,?,?,0,0,?,?,?,?,?,0,?,?)",
+            (
+                kind,
+                r["domain"],
+                r["options"],
+                dedupe_key(kind, r["domain"], options),
+                r["resources"],
+                state,
+                r["timeout_seconds"],
+                seconds(r["created"]) or 0.0,
+                seconds(r["started"]),
+                finished,
+                "legacy:" + r["id"],
+                error,
+                _progress(r["progress"]),
+            ),
+        )
+    c.execute(
+        "UPDATE job_work SET job_id=(SELECT CAST(q.id AS TEXT) FROM queue q WHERE q.owner='legacy:'||job_work.job_id) WHERE job_id IN (SELECT substr(owner,8) FROM queue WHERE owner LIKE 'legacy:%')"
+    )
+    c.execute("UPDATE queue SET owner=NULL WHERE owner LIKE 'legacy:%'")
 
 
 class CorruptDatabase(RuntimeError):
@@ -96,7 +175,8 @@ def connect() -> sqlite3.Connection:
         if v:
             backup.backup("pre-migration", conn=c)  # an existing database is about to change shape
         for i in range(v, len(SCHEMA)):
-            c.executescript(SCHEMA[i])
+            step = SCHEMA[i]
+            step(c) if callable(step) else c.executescript(step)
         c.execute(f"PRAGMA user_version={len(SCHEMA)}")
         c.commit()
     return c

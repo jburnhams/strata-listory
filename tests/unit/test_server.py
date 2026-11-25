@@ -144,6 +144,7 @@ def test_corrupt_database_gives_503(client, monkeypatch):
 
     client.post("/api/books", json=dict(title="a"))
     monkeypatch.setattr(db, "_checked", set())
+    client.app.state.jobs.queue().engine.dispose()  # the queue's pooled connection would keep serving the old pages from its WAL
     with open(db.path(), "wb") as f:
         f.write(b"junk" * 200)
     r = client.get("/api/books")
