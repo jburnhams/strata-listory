@@ -230,9 +230,8 @@ def test_the_job_queue_migration_carries_what_a_person_still_has_to_see():
         assert carried["system.scan"]["state"] == "queued" and carried["system.scan"]["resources"] == '["book:1"]'
         assert carried["system.scan"]["dedupe"] == dedupe_key("system.scan", "system", dict(n=1))
         assert (
-            carried["system.inspect"]["state"] == "failed"
-            and "previous worker stopped" in carried["system.inspect"]["error"]
-        )
+            carried["system.inspect"]["state"] == "running" and carried["system.inspect"]["claim_token"]
+        )  # its worker is gone: the new worker fails it on start
         assert carried["system.mirror"]["error"] == "Interrupted: job interrupted by server shutdown"
         assert json.loads(carried["system.views"]["progress"]) == dict(done=2, total=5, text="Reading")
         assert c.execute("SELECT job_id FROM job_work WHERE kind='ingest'").fetchone()[0] == str(
@@ -241,3 +240,31 @@ def test_the_job_queue_migration_carries_what_a_person_still_has_to_see():
         assert c.execute("SELECT count(*) FROM jobs").fetchone()[0] == 7  # the old table stays as history
     finally:
         c.close()
+
+
+def test_a_job_the_old_server_left_running_is_failed_with_its_cascade_when_the_new_worker_starts(monkeypatch):
+    import sqlite3
+
+    from app import catalogue
+    from app.jobs import JobQueue
+
+    book = catalogue.add_book(title="Planned")
+    c = sqlite3.connect(db.path())
+    c.execute("DROP TABLE IF EXISTS queue")
+    c.execute("PRAGMA user_version=13")
+    c.execute(
+        "INSERT INTO jobs(id,domain,kind,options,dedupe,state,created,started,resources,timeout_seconds,owner_pid) VALUES ('old','process','run','{}','old','running','2026-11-24T10:00:00+00:00','2026-11-24T10:00:01+00:00','[]',1800,424242)"
+    )
+    c.execute("INSERT INTO job_work VALUES ('plan',?,'old')", (str(book["id"]),))
+    c.execute(
+        "INSERT OR REPLACE INTO process_plan(book_id,state,plan,error,created,updated) VALUES (?,'running',NULL,'','now','now')",
+        (book["id"],),
+    )
+    c.commit()
+    c.close()
+    monkeypatch.setattr("strata_python.tasks.queue.oslib.pid_alive", lambda pid: False)
+    queue = JobQueue(None)
+    (ident,) = [t["id"] for t in queue.tasks("process")]
+    queue.queue().recover()
+    assert queue.get(ident)["state"] == "failed" and "stopped while running" in queue.get(ident)["error"]
+    assert catalogue.get_plan(book["id"])["state"] == "failed"

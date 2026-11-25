@@ -70,8 +70,10 @@ def _progress(raw):
 
 
 def _queue_table(c):
-    """Create the queue and carry over what a person still has to see: queued jobs (they run), failed jobs nobody retried or cleared (they stay on the Processing page) and jobs that were running when the old server stopped (failed, as the old server's own start would have; a stop it asked for is replayed). `job_work` rows that point at a carried job follow it to its new id."""
+    """Create the queue and carry over what a person still has to see: queued jobs (they run), failed jobs nobody retried or cleared (they stay on the Processing page) and jobs that were running when the old server stopped (kept running under the worker that is gone, so the new worker's start fails them with the failure cascade; a stop it asked for is replayed). `job_work` rows that point at a carried job follow it to its new id."""
     import json
+    import socket
+    import uuid
     from datetime import datetime
 
     from strata_python.tasks.queue import dedupe_key
@@ -92,17 +94,11 @@ def _queue_table(c):
         r = dict(zip(names, values, strict=True))
         options = json.loads(r["options"])
         state, error, finished = r["state"], r["error"] or None, seconds(r["finished"])
-        if state == "running":
-            state, error, finished = (
-                "failed",
-                "Interrupted: job interrupted: previous worker stopped",
-                seconds(r["started"]),
-            )
-        elif error in OLD_SHUTDOWN:
+        if error in OLD_SHUTDOWN:
             error = "Interrupted: job interrupted by server shutdown"
         kind = f"{r['domain']}.{r['kind']}"
         c.execute(
-            "INSERT INTO queue(kind,domain,options,dedupe,resources,state,priority,attempts,timeout_s,created_at,started_at,finished_at,owner,cancel_requested,error,progress) VALUES (?,?,?,?,?,?,0,0,?,?,?,?,?,0,?,?)",
+            "INSERT INTO queue(kind,domain,options,dedupe,resources,state,priority,attempts,timeout_s,created_at,started_at,finished_at,owner,cancel_requested,error,progress,owner_pid,claim_token) VALUES (?,?,?,?,?,?,0,0,?,?,?,?,?,0,?,?,?,?)",
             (
                 kind,
                 r["domain"],
@@ -117,10 +113,18 @@ def _queue_table(c):
                 "legacy:" + r["id"],
                 error,
                 _progress(r["progress"]),
+                r["owner_pid"] if state == "running" else None,
+                uuid.uuid4().hex if state == "running" else None,
             ),
         )
     c.execute(
         "UPDATE job_work SET job_id=(SELECT CAST(q.id AS TEXT) FROM queue q WHERE q.owner='legacy:'||job_work.job_id) WHERE job_id IN (SELECT substr(owner,8) FROM queue WHERE owner LIKE 'legacy:%')"
+    )
+    # A job the old server left running stays running, under the worker that is gone: the new worker's start recovers it
+    # (the library fails it) and the failure cascade marks the runs and plans it owned, as the old server's own start did.
+    c.execute(
+        "UPDATE queue SET owner=? || ':' || COALESCE(owner_pid,0) WHERE owner LIKE 'legacy:%' AND state='running'",
+        (socket.gethostname(),),
     )
     c.execute("UPDATE queue SET owner=NULL WHERE owner LIKE 'legacy:%'")
 

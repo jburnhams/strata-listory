@@ -76,6 +76,9 @@ def test_timeout_kills_a_real_job_process_at_idle_priority_and_the_next_job_proc
         assert queue.get(stalled)["error"] == "took longer than 1 s"
         wait_until(lambda: not oslib.pid_alive(seen["pid"]), "the job process gone")
         assert queue.submit("system", "scan", folder="stalled") == stalled  # still shown, not run again by itself
+        queue.timeout_seconds = (
+            30  # a deadline is fixed at submission; a new job process needs seconds to import the app on a slow runner
+        )
         following = queue.submit("system", "scan", folder=str(tmp_path))
         wait_until(lambda: queue.get(following)["state"] == "done", "the next job")
     finally:
