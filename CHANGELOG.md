@@ -10,6 +10,7 @@ strata-models now takes a normal or low priority job only on its bulk endpoint (
 - `tests/unit/test_enrichment.py`: the urlopen monkeypatch is replaced by two tests against `fake_models` (a normal job, an empty answer, a failed job, the service down).
 - `pyproject.toml`, `uv.lock`: strata-python 0.2.22 or later.
 - `.github/workflows/` `unit.yml`, `integration.yml`: on Windows, when Chocolatey leaves no ffmpeg (its feed answered 504 on 2026-11-25, and choco still exited 0), fall back to BtbN's static build, as strata-360's workflow already does.
+- `.github/workflows/unit.yml`: and mp3gain from its SourceForge command-line build when Chocolatey has none, since the gain tests skip without it and the Windows coverage then falls under the floor (92.48% against 93%).
 
 **The job queue is strata-python's `tasks.queue` (branch `claude/project-thread-ewarvp`)**
 
