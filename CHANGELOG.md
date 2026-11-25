@@ -4,6 +4,14 @@ Newest first, grouped by day. One entry per change, in the same commit or PR as 
 
 ## 2026-11-25
 
+**Summaries go to strata-models through strata-python's client (branch `claude/models-bulk`)**
+strata-models now takes a normal or low priority job only on its bulk endpoint (`POST /api/jobs` is for one high priority job), so this app's hand-made `POST /api/jobs` with priority normal would be refused once the service restarts.
+- `src/app/enrichment/run.py`: `call_strata_models_summarise` calls `strata_python.clients.models.run`, which routes a normal job through the bulk endpoint; its errors are RuntimeErrors and TimeoutError, which `summarise_run` already swallows. The unused `base_url` argument is gone.
+- `tests/unit/test_enrichment.py`: the urlopen monkeypatch is replaced by two tests against `fake_models` (a normal job, an empty answer, a failed job, the service down).
+- `pyproject.toml`, `uv.lock`: strata-python 0.2.22 or later.
+- `.github/workflows/` `unit.yml`, `integration.yml`: on Windows, when Chocolatey leaves no ffmpeg (its feed answered 504 on 2026-11-25, and choco still exited 0), fall back to BtbN's static build, as strata-360's workflow already does.
+- `.github/workflows/unit.yml`: and mp3gain from its SourceForge command-line build when Chocolatey has none, since the gain tests skip without it and the Windows coverage then falls under the floor (92.48% against 93%).
+
 **The job queue is strata-python's `tasks.queue` (branch `claude/project-thread-ewarvp`)**
 
 Jonathan chose "jobs and ingest pipeline" for the follow-up to the 0.2.17 upgrade. This is the jobs half; the ingest pipeline is left, with the reason below.

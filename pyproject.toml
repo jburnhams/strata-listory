@@ -13,7 +13,7 @@ dependencies = [
     "uvicorn",
     "pydantic",
     "zstandard; python_version < '3.14'",
-    "strata-python>=0.2.17,<0.3",   # the strata-check gate and the shared server code (PyPI; the changelog says what each release asks of an app)
+    "strata-python>=0.2.22,<0.3",   # the strata-check gate and the shared server code (PyPI; the changelog says what each release asks of an app)
     "tzdata; sys_platform == 'win32'",
 ]
 
