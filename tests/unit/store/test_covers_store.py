@@ -332,7 +332,7 @@ def test_searches_go_on_the_job_queue_one_per_listen_and_run_as_jobs(s, monkeypa
     assert client.get("/api/covers").json()["job"] == dict(running=True, queued=2, current="", error="", failed=[])
     c = db.connect()
     try:
-        assert [r[0] for r in c.execute("SELECT resources FROM jobs ORDER BY created")] == [
+        assert [r[0] for r in c.execute("SELECT resources FROM queue ORDER BY id")] == [
             f'["listen:{a.id}"]',
             f'["listen:{b.id}"]',
         ]

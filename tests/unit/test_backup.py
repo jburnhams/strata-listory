@@ -174,7 +174,97 @@ def test_job_history_index_migration_preserves_existing_deadlines_and_ownership(
     c = db.connect()
     try:
         assert c.execute("SELECT timeout_seconds FROM jobs WHERE id='saved'").fetchone()[0] == 37.5
-        assert tuple(c.execute("SELECT * FROM job_work").fetchone()) == ("ingest", "run", "saved")
         assert c.execute("SELECT name FROM sqlite_master WHERE name='jobs_history_dedupe'").fetchone()
+        # the failed job nobody cleared moved to the queue with its deadline, and what it owned follows it
+        carried = c.execute("SELECT id,kind,state,timeout_s FROM queue").fetchone()
+        assert tuple(carried) == (1, "system.scan", "failed", 37.5)
+        assert tuple(c.execute("SELECT * FROM job_work").fetchone()) == ("ingest", "run", "1")
     finally:
         c.close()
+
+
+def test_the_job_queue_migration_carries_what_a_person_still_has_to_see():
+    import json
+    import sqlite3
+
+    from strata_python.tasks.queue import dedupe_key
+
+    c = sqlite3.connect(db.path())
+    for migration in db.SCHEMA[:13]:
+        c.executescript(migration)
+    c.execute("PRAGMA user_version=13")
+    rows = [  # id, kind, state, error, created
+        ("q", "scan", "queued", "", "2026-11-24T10:00:00+00:00"),
+        ("r", "inspect", "running", "", "2026-11-24T10:01:00+00:00"),
+        ("s", "mirror", "failed", "job interrupted by server shutdown", "2026-11-24T10:02:00+00:00"),
+        ("t", "views", "failed", "boom", "2026-11-24T10:03:00+00:00"),
+        ("u", "bootstrap", "failed", "retried", "2026-11-24T10:04:00+00:00"),
+        ("v", "samples", "failed", "cleared", "2026-11-24T10:05:00+00:00"),
+        ("w", "enrich", "done", "", "2026-11-24T10:06:00+00:00"),
+    ]
+    for ident, kind, state, error, created in rows:
+        c.execute(
+            "INSERT INTO jobs(id,domain,kind,options,dedupe,state,created,error,resources,timeout_seconds,progress) VALUES (?,?,?,?,?,?,?,?,?,1800,?)",
+            (
+                ident,
+                "system",
+                kind,
+                json.dumps(dict(n=1)),
+                ident,
+                state,
+                created,
+                error,
+                '["book:1"]',
+                json.dumps(dict(current="Reading", done=2, total=5)),
+            ),
+        )
+    c.execute("INSERT INTO job_work VALUES ('retry','u','x')")
+    c.execute("INSERT INTO job_work VALUES ('dismissed','v','v')")
+    c.execute("INSERT INTO job_work VALUES ('ingest','run-1','t')")
+    c.commit()
+    c.close()
+    c = db.connect()
+    try:
+        carried = {r["kind"]: r for r in c.execute("SELECT * FROM queue")}
+        assert set(carried) == {"system.scan", "system.inspect", "system.mirror", "system.views"}
+        assert carried["system.scan"]["state"] == "queued" and carried["system.scan"]["resources"] == '["book:1"]'
+        assert carried["system.scan"]["dedupe"] == dedupe_key("system.scan", "system", dict(n=1))
+        assert (
+            carried["system.inspect"]["state"] == "running" and carried["system.inspect"]["claim_token"]
+        )  # its worker is gone: the new worker fails it on start
+        assert carried["system.mirror"]["error"] == "Interrupted: job interrupted by server shutdown"
+        assert json.loads(carried["system.views"]["progress"]) == dict(done=2, total=5, text="Reading")
+        assert c.execute("SELECT job_id FROM job_work WHERE kind='ingest'").fetchone()[0] == str(
+            carried["system.views"]["id"]
+        )
+        assert c.execute("SELECT count(*) FROM jobs").fetchone()[0] == 7  # the old table stays as history
+    finally:
+        c.close()
+
+
+def test_a_job_the_old_server_left_running_is_failed_with_its_cascade_when_the_new_worker_starts(monkeypatch):
+    import sqlite3
+
+    from app import catalogue
+    from app.jobs import JobQueue
+
+    book = catalogue.add_book(title="Planned")
+    c = sqlite3.connect(db.path())
+    c.execute("DROP TABLE IF EXISTS queue")
+    c.execute("PRAGMA user_version=13")
+    c.execute(
+        "INSERT INTO jobs(id,domain,kind,options,dedupe,state,created,started,resources,timeout_seconds,owner_pid) VALUES ('old','process','run','{}','old','running','2026-11-24T10:00:00+00:00','2026-11-24T10:00:01+00:00','[]',1800,424242)"
+    )
+    c.execute("INSERT INTO job_work VALUES ('plan',?,'old')", (str(book["id"]),))
+    c.execute(
+        "INSERT OR REPLACE INTO process_plan(book_id,state,plan,error,created,updated) VALUES (?,'running',NULL,'','now','now')",
+        (book["id"],),
+    )
+    c.commit()
+    c.close()
+    monkeypatch.setattr("strata_python.tasks.queue.oslib.pid_alive", lambda pid: False)
+    queue = JobQueue(None)
+    (ident,) = [t["id"] for t in queue.tasks("process")]
+    queue.queue().recover()
+    assert queue.get(ident)["state"] == "failed" and "stopped while running" in queue.get(ident)["error"]
+    assert catalogue.get_plan(book["id"])["state"] == "failed"
