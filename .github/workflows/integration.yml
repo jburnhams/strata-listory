@@ -34,7 +34,10 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ffmpeg
           elif [ "$RUNNER_OS" = "macOS" ]; then brew install ffmpeg
-          else choco install ffmpeg -y --no-progress; fi
+          else choco install ffmpeg -y --no-progress || true
+            # Windows: the Chocolatey feed has refused ffmpeg (2026-11-25: a 504, "installed 0/0 packages" and exit 0), so fall back to BtbN's static build
+            if ! command -v ffmpeg >/dev/null; then curl -fsSL --retry 4 -o "$RUNNER_TEMP/ffmpeg.zip" https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip && unzip -q "$RUNNER_TEMP/ffmpeg.zip" -d "$RUNNER_TEMP/ffmpeg" && b="$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-win64-gpl/bin" && cygpath -w "$b" >> "$GITHUB_PATH" && export PATH="$b:$PATH"; fi
+          fi
           ffmpeg -version
           ffprobe -version
       - name: Integration tests (CLI and HTTP API end-to-end)

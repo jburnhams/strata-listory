@@ -35,7 +35,11 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ffmpeg && (sudo apt-get install -y mp3gain || true)
           elif [ "$RUNNER_OS" = "macOS" ]; then brew install ffmpeg && (brew install mp3gain || true)
-          else choco install ffmpeg -y --no-progress && (choco install mp3gain -y --no-progress || true); fi
+          else choco install ffmpeg -y --no-progress || true
+            # Windows: the Chocolatey feed has refused ffmpeg (2026-11-25: a 504, "installed 0/0 packages" and exit 0), so fall back to BtbN's static build
+            if ! command -v ffmpeg >/dev/null; then curl -fsSL --retry 4 -o "$RUNNER_TEMP/ffmpeg.zip" https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip && unzip -q "$RUNNER_TEMP/ffmpeg.zip" -d "$RUNNER_TEMP/ffmpeg" && b="$RUNNER_TEMP/ffmpeg/ffmpeg-master-latest-win64-gpl/bin" && cygpath -w "$b" >> "$GITHUB_PATH" && export PATH="$b:$PATH"; fi
+            choco install mp3gain -y --no-progress || true
+          fi
           ffmpeg -version | head -1
       - name: Lockfile, lint, format and types (once, on the newest Python)
         if: matrix.python-version == '3.13' && matrix.os == 'ubuntu-latest'
